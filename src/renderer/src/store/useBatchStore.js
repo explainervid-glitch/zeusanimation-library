@@ -1,0 +1,166 @@
+import { create } from 'zustand'
+
+// Status per asset: idle | queued | processing | done | error
+const useBatchStore = create((set, get) => ({
+  // ── Mode ──────────────────────────────────────────────────────
+  isBatchMode: false,
+
+  // ── Selection ─────────────────────────────────────────────────
+  selectedIds: new Set(),   // Set<assetId>
+
+  // ── Progress per asset ────────────────────────────────────────
+  // Map<assetId, { status, error? }>
+  statusMap: new Map(),
+  // ── Results per asset (tagged data from AI) ────────────────────
+  // Map<assetId, { success, data }>
+  resultsMap: new Map(),
+  // ── Running state ─────────────────────────────────────────────
+  isRunning:   false,
+  doneCount:   0,
+  totalCount:  0,
+
+  // ─────────────────────────────────────────────────────────────
+  enterBatchMode: () => set({
+    isBatchMode:  true,
+    selectedIds:  new Set(),
+    statusMap:    new Map(),
+    resultsMap:   new Map(),
+    isRunning:    false,
+    doneCount:    0,
+    totalCount:   0,
+  }),
+
+  exitBatchMode: () => set({
+    isBatchMode:  false,
+    selectedIds:  new Set(),
+    statusMap:    new Map(),
+    resultsMap:   new Map(),
+    isRunning:    false,
+    doneCount:    0,
+    totalCount:   0,
+  }),
+
+  toggleSelect: (assetId) => set(state => {
+    const next = new Set(state.selectedIds)
+    if (next.has(assetId)) next.delete(assetId)
+    else next.add(assetId)
+    return { selectedIds: next }
+  }),
+
+  selectAll: (assetIds) => set({
+    selectedIds: new Set(assetIds),
+  }),
+
+  deselectAll: () => set({
+    selectedIds: new Set(),
+  }),
+
+  // ─── Run batch ────────────────────────────────────────────────
+  runBatch: async (assets, assetType, onAssetDone) => {
+    const { selectedIds } = get()
+    if (selectedIds.size === 0 || get().isRunning) return
+
+    const targets = assets.filter(a => selectedIds.has(a.id))
+    if (!targets.length) return
+
+    // Init statusMap semua ke queued
+    const initMap = new Map(targets.map(a => [a.id, { status: 'queued' }]))
+    const initResults = new Map()
+    set({ isRunning: true, statusMap: initMap, resultsMap: initResults, totalCount: targets.length, doneCount: 0 })
+
+    for (const asset of targets) {
+      // Tandai processing
+      set(s => {
+        const m = new Map(s.statusMap)
+        m.set(asset.id, { status: 'processing' })
+        return { statusMap: m }
+      })
+
+      // ── Route to correct tagger based on asset type ───────────
+      // animation → /auto-tag-video  (new_main.py, port 8000)
+      // background / character / inspiration → /auto-tag  (new_main.py, port 8000)
+      const VIDEO_EXTS = ['.mp4', '.mov', '.webm', '.avi']
+      const isVideo = (p) => p && VIDEO_EXTS.some(e => p.toLowerCase().endsWith(e))
+
+      let result
+      if (assetType === 'animation') {
+        const videoPath = isVideo(asset.mp4_path)  ? asset.mp4_path
+                        : isVideo(asset.raw_path)  ? asset.raw_path
+                        : null
+        if (!videoPath) {
+          result = { success: false, error: 'No mp4 preview found for this animation asset' }
+        } else {
+          result = await window.api.taggerGenerateVideo({
+            videoPath,
+            jsonPath:  asset.json_path || '',
+            filename:  asset.name,
+          })
+        }
+      } else {
+        // background, character, inspiration — all use image tagger
+        const thumbPath = asset.thumbnail_path || asset.mp4_path || asset.raw_path
+        if (!thumbPath) {
+          result = { success: false, error: 'No preview image found for this asset' }
+        } else {
+          result = await window.api.taggerGenerate({
+            thumbnailPath: thumbPath,
+            jsonPath:      asset.json_path || '',
+            assetType,
+          })
+        }
+      }
+
+      set(s => {
+        const m = new Map(s.statusMap)
+        const r = new Map(s.resultsMap)
+        // Always coerce error to string — FastAPI can return objects
+        const errMsg = result.success ? null
+          : typeof result.error === 'string' ? result.error
+          : JSON.stringify(result.error)
+        m.set(asset.id, result.success
+          ? { status: 'done' }
+          : { status: 'error', error: errMsg }
+        )
+        // Store result data for later save
+        r.set(asset.id, result)
+        return { statusMap: m, resultsMap: r, doneCount: s.doneCount + 1 }
+      })
+
+      // Callback agar AssetCard bisa update preview
+      if (result.success && onAssetDone) {
+        onAssetDone(asset.id, result.data)
+      }
+    }
+
+    set({ isRunning: false })
+  },
+
+  // ─── Save all results to JSON ─────────────────────────────────
+  saveAllResults: async (assets) => {
+    const { resultsMap } = get()
+    const results = { successCount: 0, failureCount: 0, errors: [] }
+
+    for (const [assetId, result] of resultsMap.entries()) {
+      if (!result.success) continue
+
+      const asset = assets.find(a => a.id === assetId)
+      if (!asset) continue
+
+      try {
+        await window.api.writeAssetJson({
+          jsonPath: asset.json_path,
+          assetId,
+          data: result.data,
+        })
+        results.successCount++
+      } catch (err) {
+        results.failureCount++
+        results.errors.push({ assetId, assetName: asset.name, error: err.message })
+      }
+    }
+
+    return results
+  },
+}))
+
+export default useBatchStore

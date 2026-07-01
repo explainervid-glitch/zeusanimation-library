@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      width: 100vw;
+      height: 100vh;
+      background: #000000;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      -webkit-app-region: drag; /* bisa drag window */
+    }
+    #icon {
+      width: 160px;
+      height: 160px;
+      object-fit: contain;
+    }
+
+    .app-name {
+      margin-top: 16px;
+      font-size: 15px;
+      font-weight: 700;
+      color: #ffffff;
+    }
+
+    .loading-text {
+      margin-top: 6px;
+      font-size: 11px;
+      color: rgba(255,255,255,0.3);
+    }
+
+    .dots::after {
+      content: '';
+      animation: dots 1.4s steps(4, end) infinite;
+    }
+
+    @keyframes dots {
+      0%   { content: ''; }
+      25%  { content: '.'; }
+      50%  { content: '..'; }
+      75%  { content: '...'; }
+      100% { content: ''; }
+    }
+  </style>
+</head>
+    <body>
+    <img id="icon" src="./icon.png" alt="loading" />
+    <div class="app-name">ZeusPack</div>
+    <div class="loading-text">Loading<span class="dots"></span></div>
+    </body>
+</html>

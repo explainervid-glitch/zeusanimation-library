@@ -1,0 +1,49 @@
+{
+  "name": "zeusanimation-library",
+  "version": "0.6.0",
+  "description": "ZeusPack is a powerful animation library for creating stunning animations in your projects. With a wide range of features and an easy-to-use API, ZeusPack allows you to bring your ideas to life with smooth and captivating animations.",
+  "main": "./out/main/index.js",
+  "author": "ZeusDev - Tegar",
+  "homepage": "https://electron-vite.org",
+  "scripts": {
+    "format": "prettier --write .",
+    "lint": "eslint --cache .",
+    "start": "electron-vite preview",
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "postinstall": "electron-builder install-app-deps",
+    "build:unpack": "npm run build && electron-builder --dir",
+    "build:win": "npm run build && electron-builder --win",
+    "build:mac": "npm run build && electron-builder --mac",
+    "build:linux": "npm run build && electron-builder --linux"
+  },
+  "dependencies": {
+    "@electron-toolkit/preload": "^3.0.2",
+    "@electron-toolkit/utils": "^4.0.0",
+    "lottie-react": "^2.4.1",
+    "lottie-web": "^5.13.0",
+    "lucide-react": "^1.16.0",
+    "sql.js": "^1.14.1",
+    "zustand": "^5.0.13"
+  },
+  "devDependencies": {
+    "@electron-forge/plugin-vite": "^7.11.1",
+    "@electron-toolkit/eslint-config": "^2.1.0",
+    "@electron-toolkit/eslint-config-prettier": "^3.0.0",
+    "@vitejs/plugin-react": "^5.1.1",
+    "autoprefixer": "^10.5.0",
+    "electron": "^39.2.6",
+    "electron-builder": "^26.0.12",
+    "electron-vite": "^5.0.0",
+    "eslint": "^9.39.1",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.4.24",
+    "postcss": "^8.5.15",
+    "prettier": "^3.7.4",
+    "react": "^19.2.1",
+    "react-dom": "^19.2.1",
+    "tailwindcss": "^3.4.19",
+    "vite": "^7.2.6"
+  }
+}
