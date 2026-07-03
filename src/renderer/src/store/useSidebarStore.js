@@ -5,7 +5,7 @@ const useSidebarStore = create(
   persist(
     (set) => ({
       isOpen: true,
-      width: 224,  // w-56 = 224px default
+      width: 206,  // Fits exactly one style pill (150px) + buttons + padding
 
       toggleSidebar: () => set((state) => ({ isOpen: !state.isOpen })),
       setSidebarWidth: (width) => set({ width }),

@@ -87,7 +87,7 @@ export default function App() {
         <main className="flex-1 overflow-hidden bg-c-base">
           <AssetGrid />
         </main>
-        <AISidebar />
+        {/* <AISidebar /> */}
       </div>
 
     </div>

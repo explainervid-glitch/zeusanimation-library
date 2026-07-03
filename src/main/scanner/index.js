@@ -7,7 +7,8 @@ import {
   insertCategory,
   insertAsset,
   insertAssetFts,
-  saveDb
+  saveDb,
+  reloadFromDisk
 } from '../db/index.js'
 
 const FOLDER_TYPE_MAP = {
@@ -108,73 +109,85 @@ export async function scanAssets(customRoot, onLog = () => {}) {
   log(`Mulai scan: ${customRoot}`)
   clearAll()
 
-  const styleNames  = readStyleNames(customRoot)
-  const styleGroups = {}
+  try {
+    const styleNames  = readStyleNames(customRoot)
+    const styleGroups = {}
 
-  for (const entry of readdirSync(customRoot, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue
-    const match = entry.name.match(FOLDER_REGEX)
-    if (!match) continue
-    const prefix = match[1].toLowerCase()
-    const suffix = match[2] || ''
-    if (!styleGroups[suffix]) styleGroups[suffix] = {}
-    styleGroups[suffix][prefix] = join(customRoot, entry.name)
-  }
-
-  const stats    = { styles: 0, categories: 0, assets: 0, skipped: 0, errors: [] }
-  const suffixes = Object.keys(styleGroups).sort((a, b) => Number(a || 0) - Number(b || 0))
-
-  log(`Ditemukan ${suffixes.length} style group: [${suffixes.map(s => s || '(no suffix)').join(', ')}]`)
-
-  for (const suffix of suffixes) {
-    const styleFolders = styleGroups[suffix]
-    const styleId      = Number(suffix) || 0
-    const styleNameObj = styleNames[String(suffix)] ?? styleNames[String(styleId)]
-    const displayName  = styleNameObj?.name        || null
-    const description  = styleNameObj?.description || null
-
-    insertStyle(styleId, displayName, description)
-    stats.styles++
-
-    log(`Style ${styleId}: "${displayName || '-'}"`)
-
-    for (const [prefix, folderPath] of Object.entries(styleFolders)) {
-      const type = FOLDER_TYPE_MAP[prefix]
-      if (!type) continue
-
-      const styleTypeId = insertStyleType(styleId, type, folderPath)
-
-      let categoryNames = readCategoriesForFolder(customRoot, prefix, suffix)
-      if (categoryNames.length === 0) {
-        categoryNames = collectCategoriesFromFolder(folderPath)
-        log(`  [${prefix}] Fallback scan kategori: ${categoryNames.length} ditemukan`)
-      }
-
-      const categoryIdMap   = {}
-      const categoryNormMap = {}
-
-      for (const catName of categoryNames) {
-        const catId = insertCategory(styleTypeId, catName)
-        categoryIdMap[catName]              = catId
-        categoryNormMap[normalize(catName)] = catId
-        stats.categories++
-      }
-
-      log(`  [${prefix}${suffix}] ${Object.keys(categoryIdMap).length} kategori`)
-
-      const assetCount = scanFolderAssets(folderPath, categoryIdMap, categoryNormMap, styleTypeId, stats, log)
-      log(`  [${prefix}${suffix}] ${assetCount} aset di-assign`)
+    for (const entry of readdirSync(customRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue
+      const match = entry.name.match(FOLDER_REGEX)
+      if (!match) continue
+      const prefix = match[1].toLowerCase()
+      const suffix = match[2] || ''
+      if (!styleGroups[suffix]) styleGroups[suffix] = {}
+      styleGroups[suffix][prefix] = join(customRoot, entry.name)
     }
+
+    const stats    = { styles: 0, categories: 0, assets: 0, skipped: 0, errors: [] }
+    const suffixes = Object.keys(styleGroups).sort((a, b) => Number(a || 0) - Number(b || 0))
+
+    log(`Ditemukan ${suffixes.length} style group: [${suffixes.map(s => s || '(no suffix)').join(', ')}]`)
+
+    for (const suffix of suffixes) {
+      const styleFolders = styleGroups[suffix]
+      const styleId      = Number(suffix) || 0
+      const styleNameObj = styleNames[String(suffix)] ?? styleNames[String(styleId)]
+      const displayName  = styleNameObj?.name        || null
+      const description  = styleNameObj?.description || null
+
+      insertStyle(styleId, displayName, description)
+      stats.styles++
+
+      log(`Style ${styleId}: "${displayName || '-'}"`)
+
+      for (const [prefix, folderPath] of Object.entries(styleFolders)) {
+        const type = FOLDER_TYPE_MAP[prefix]
+        if (!type) continue
+
+        const styleTypeId = insertStyleType(styleId, type, folderPath)
+
+        let categoryNames = readCategoriesForFolder(customRoot, prefix, suffix)
+        if (categoryNames.length === 0) {
+          categoryNames = collectCategoriesFromFolder(folderPath)
+          log(`  [${prefix}] Fallback scan kategori: ${categoryNames.length} ditemukan`)
+        }
+
+        const categoryIdMap   = {}
+        const categoryNormMap = {}
+
+        for (const catName of categoryNames) {
+          const catId = insertCategory(styleTypeId, catName)
+          categoryIdMap[catName]              = catId
+          categoryNormMap[normalize(catName)] = catId
+          stats.categories++
+        }
+
+        log(`  [${prefix}${suffix}] ${Object.keys(categoryIdMap).length} kategori`)
+
+        const assetCount = scanFolderAssets(folderPath, categoryIdMap, categoryNormMap, styleTypeId, stats, log)
+        log(`  [${prefix}${suffix}] ${assetCount} aset di-assign`)
+      }
+    }
+
+    saveDb()
+
+    log(`Selesai — Styles: ${stats.styles} | Kategori: ${stats.categories} | Aset: ${stats.assets} | Skip: ${stats.skipped}`)
+    if (stats.errors.length > 0) {
+      log(`${stats.errors.length} kategori tidak cocok (masuk Uncategorized)`)
+    }
+
+    return stats
+  } catch (err) {
+    log(`❌ Scan gagal: ${err.message}`)
+    log(`Memulihkan database dari backup...`)
+    const restored = reloadFromDisk()
+    if (restored) {
+      log(`✓ Database dipulihkan dari disk`)
+    } else {
+      log(`⚠ Tidak ada backup disk, database dalam kondisi kosong`)
+    }
+    throw err
   }
-
-  saveDb()
-
-  log(`Selesai — Styles: ${stats.styles} | Kategori: ${stats.categories} | Aset: ${stats.assets} | Skip: ${stats.skipped}`)
-  if (stats.errors.length > 0) {
-    log(`${stats.errors.length} kategori tidak cocok (masuk Uncategorized)`)
-  }
-
-  return stats
 }
 
 // ─────────────────────────────────────────────────────────────

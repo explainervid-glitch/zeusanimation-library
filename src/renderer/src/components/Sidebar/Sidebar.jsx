@@ -492,8 +492,8 @@ export default function Sidebar() {
         </div>
       )}
 
-      {/* Category tree */}
-      <div className="flex-1 overflow-y-auto px-2 py-2">
+      {/* Category tree — mr-1 clears the resize handle so the scrollbar doesn't collide */}
+      <div className="flex-1 overflow-y-auto px-2 py-2 mr-1">
         {selectedStyle && selectedStyle.types.map(typeData => (
           <TypeSection key={typeData.id} typeData={typeData} styleId={selectedStyle.id} />
         ))}
@@ -502,7 +502,7 @@ export default function Sidebar() {
       {/* Resize handle */}
       <div
         ref={resizeRef}
-        className="absolute right-0 top-0 w-1 h-full cursor-col-resize hover:bg-c-accent/50 transition-colors"
+        className="absolute right-0 top-0 w-1 h-full cursor-col-resize hover:bg-c-accent/50 transition-colors z-10"
       />
     </div>
   )

@@ -874,7 +874,7 @@ export default function AssetEditModal({ asset, type, styleTypeId, onClose, onSa
 
     load()
     loadCategories()
-  }, [asset, type, styleTypeId, styleName])
+  }, [asset, type, styleTypeId])
 
   useEffect(() => {
     const handler = (e) => { if (e.key === 'Escape') onClose() }

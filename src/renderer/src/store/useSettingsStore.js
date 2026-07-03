@@ -16,7 +16,7 @@ const useSettingsStore = create((set, get) => ({
   saved:   false,
 
   assetPaths:      [{ label: 'Pack 1', path: '' }],
-  activePathIndex: 1,
+  activePathIndex: 0,
   templatePaths: TEMPLATE_DEFS.map(t => ({ id: t.id, path: '' })),
   taggerUrl:      'http://192.168.1.27:8000',
   taggerVideoUrl: 'http://192.168.1.27:8001',

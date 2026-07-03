@@ -161,24 +161,26 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
             </span>
           )}
 
-          {/* Batch Mode: Circle selection indicator - bottom right */}
+          {/* Batch Mode: Modern checkbox - top right */}
           {isBatchMode && (
             <button
               onClick={(e) => {
                 e.stopPropagation()
                 if (onToggleSelect) onToggleSelect(asset.id)
               }}
-              className="absolute bottom-2 right-2 z-20 w-5 h-5 rounded-full 
-                flex items-center justify-center transition-all
-                border-2 cursor-pointer
+              className={`
+                absolute top-2 right-2 z-20 w-6 h-6 rounded-lg
+                flex items-center justify-center cursor-pointer
+                transition-all duration-200 ease-out
                 ${isSelected
-                  ? 'bg-c-accent border-c-accent'
-                  : 'bg-transparent border-c-text-3 hover:border-c-text'
-                }"
+                  ? 'bg-c-accent border-2 border-c-accent shadow-lg shadow-c-accent/30 scale-100'
+                  : 'bg-white/10 backdrop-blur-md border-2 border-white/30 hover:border-white/60 hover:bg-white/20 hover:scale-110'
+                }
+              `}
               title={isSelected ? 'Deselect' : 'Select'}
             >
               {isSelected && (
-                <Check size={12} className="text-c-on-accent stroke-[3]" />
+                <Check size={14} className="text-c-on-accent stroke-[3]" />
               )}
             </button>
           )}
@@ -191,49 +193,51 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
           )}
 
           {/* Action buttons - Left side */}
-          <div className={`
-            absolute top-1.5 left-1.5 z-10 flex gap-1
-            transition-all duration-150
-            ${isHovered ? 'opacity-100' : 'opacity-0'}
-          `}>
+          {!isBatchMode && (
+            <div className={`
+              absolute top-1.5 left-1.5 z-10 flex gap-1
+              transition-all duration-150
+              ${isHovered ? 'opacity-100' : 'opacity-0'}
+            `}>
 
-            {/* Edit */}
-            <button
-              onClick={(e) => { e.stopPropagation(); setEditOpen(true) }}
-              className="p-1.5 rounded-md bg-black/60 backdrop-blur-sm
-                text-white/70 hover:text-white hover:bg-black/80
-                transition-all duration-150"
-              title="Edit asset info"
-            >
-              <Pencil size={11} />
-            </button>
+              {/* Edit */}
+              <button
+                onClick={(e) => { e.stopPropagation(); setEditOpen(true) }}
+                className="p-1.5 rounded-md bg-black/60 backdrop-blur-sm
+                  text-white/70 hover:text-white hover:bg-black/80
+                  transition-all duration-150"
+                title="Edit asset info"
+              >
+                <Pencil size={11} />
+              </button>
 
-            {/* Copy path */}
-            <button
-              onClick={handleCopyPath}
-              disabled={!asset.raw_path}
-              className={`p-1.5 rounded-md backdrop-blur-sm transition-all duration-150
-                ${copied
-                  ? 'bg-green-500/80 text-white'
-                  : 'bg-black/60 text-white/70 hover:text-white hover:bg-black/80'
-                }
-                ${!asset.raw_path ? 'opacity-30 cursor-not-allowed' : ''}`}
-              title={asset.raw_path ? `Copy: ${asset.raw_path}` : 'No raw file'}
-            >
-              {copied ? <Check size={11} /> : <Link size={11} />}
-            </button>
+              {/* Copy path */}
+              <button
+                onClick={handleCopyPath}
+                disabled={!asset.raw_path}
+                className={`p-1.5 rounded-md backdrop-blur-sm transition-all duration-150
+                  ${copied
+                    ? 'bg-green-500/80 text-white'
+                    : 'bg-black/60 text-white/70 hover:text-white hover:bg-black/80'
+                  }
+                  ${!asset.raw_path ? 'opacity-30 cursor-not-allowed' : ''}`}
+                title={asset.raw_path ? `Copy: ${asset.raw_path}` : 'No raw file'}
+              >
+                {copied ? <Check size={11} /> : <Link size={11} />}
+              </button>
 
-          </div>
+            </div>
+          )}
 
           {/* Action buttons - Right side */}
-          <div className={`
-            absolute top-1.5 right-1.5 z-10 flex gap-1
-            transition-all duration-150
-            ${isHovered ? 'opacity-100' : 'opacity-0'}
-          `}>
+          {!isBatchMode && showAppend && (
+            <div className={`
+              absolute top-1.5 right-1.5 z-10 flex gap-1
+              transition-all duration-150
+              ${isHovered ? 'opacity-100' : 'opacity-0'}
+            `}>
 
-            {/* Append to Blender — hanya untuk .blend */}
-            {showAppend && (
+              {/* Append to Blender — hanya untuk .blend */}
               <button
                 onClick={(e) => { e.stopPropagation(); setAppendOpen(true) }}
                 className="p-1.5 rounded-md bg-black/60 backdrop-blur-sm
@@ -243,9 +247,9 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
               >
                 <ArrowRightFromLine size={11} />
               </button>
-            )}
 
-          </div>
+            </div>
+          )}
         </div>
 
         {/* Label */}

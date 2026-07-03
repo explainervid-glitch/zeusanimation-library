@@ -38,7 +38,7 @@ export default function AssetGrid() {
   // ── Pack belum di-scan ────────────────────────────────────────
   if (packNeedsRescan) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-4 text-c-text-4">
+      <div className="w-full h-full flex flex-col items-center justify-center gap-4 text-c-text-4">
         <Layers size={40} strokeWidth={1} />
         <div className="text-center space-y-1">
           <p className="text-sm font-medium text-c-text-2">Pack ini belum punya database</p>
@@ -60,7 +60,7 @@ export default function AssetGrid() {
   // ── Loading tree ──────────────────────────────────────────────
   if (treeLoading) {
     return (
-      <div className="flex-1 flex items-center justify-center gap-2 text-c-text-3 text-sm">
+      <div className="w-full h-full flex items-center justify-center gap-2 text-c-text-3 text-sm">
         <div className="w-4 h-4 border border-c-border-2 border-t-c-accent rounded-full animate-spin" />
         Memuat pack...
       </div>
@@ -80,7 +80,7 @@ export default function AssetGrid() {
   // ── Loading assets / search ───────────────────────────────────
   if (isLoading) {
     return (
-      <div className="flex-1 flex items-center justify-center gap-2 text-c-text-3 text-sm">
+      <div className="w-full h-full flex items-center justify-center gap-2 text-c-text-3 text-sm">
         <div className="w-4 h-4 border border-c-border-2 border-t-c-accent rounded-full animate-spin" />
         {isSearchMode ? 'Searching...' : 'Loading assets...'}
       </div>
