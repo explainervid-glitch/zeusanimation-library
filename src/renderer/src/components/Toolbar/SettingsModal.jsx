@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { X, FolderOpen, Save, Check, RefreshCw, Plus, Trash2, File, Loader, Database } from 'lucide-react'
+import { X, FolderOpen, Save, Check, RefreshCw, Plus, Trash2, File, Loader, Database, Sun, Moon } from 'lucide-react'
 import useSettingsStore, { TEMPLATE_DEFS } from '../../store/useSettingsStore'
 import useAssetStore from '../../store/useAssetStore'
 
@@ -13,6 +13,7 @@ export default function SettingsModal() {
     taggerUrl, updateTaggerUrl,
     ragUrl, updateRagUrl,
     loading, saved, saveSettings,
+    theme, setTheme,
   } = useSettingsStore()
   
   const { rescan, scanning } = useAssetStore()
@@ -200,6 +201,27 @@ export default function SettingsModal() {
           {/* ── Right column: Templates + Tagger ── */}
           <div className="px-6 py-5 overflow-y-auto space-y-3 scrollbar-thin">
             
+            {/* ── Theme Toggle ── */}
+            <div className="pb-3 border-b border-c-border">
+              <label className="text-xs font-semibold text-c-text uppercase tracking-wider block mb-2">
+                Appearance
+              </label>
+              <button
+                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                className="flex items-center gap-2 text-[11px] text-c-text-3 hover:text-c-text transition-colors"
+                title={theme === 'dark' ? 'Switch to light' : 'Switch to dark'}
+              >
+                <span className="relative inline-block w-8 h-4 rounded-full bg-c-raised border border-c-border-2 transition-colors">
+                  <span
+                    className={`absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-c-accent transition-all duration-200
+                      ${theme === 'dark' ? 'left-0.5' : 'left-4'}`}
+                  />
+                </span>
+                {theme === 'dark' ? <Moon size={12} /> : <Sun size={12} />}
+                <span className="capitalize">{theme}</span>
+              </button>
+            </div>
+
             {/* Unified Template Files Box */}
             <div>
               <label className="text-xs font-semibold text-c-text uppercase tracking-wider block mb-1">

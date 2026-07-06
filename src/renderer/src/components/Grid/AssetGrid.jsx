@@ -129,7 +129,7 @@ export default function AssetGrid() {
         {isBatchMode && (
           <>
             <span className="ml-2 px-2 py-1 rounded-full text-xs font-medium
-              bg-c-accent/20 text-c-accent border border-c-accent/30">
+              bg-c-accent/20 text-c-accent border border-c-accent">
               {selectedIds.size} selected
             </span>
 
@@ -139,7 +139,7 @@ export default function AssetGrid() {
                 onClick={() => selectAll(displayAssets.map(a => a.id))}
                 disabled={selectedIds.size === displayAssets.length}
                 className="px-2 py-1 text-[11px] font-medium rounded
-                  bg-c-accent/20 text-c-accent border border-c-accent/30
+                  bg-c-accent/20 text-c-accent border border-c-accent
                   hover:bg-c-accent/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Select All
@@ -149,7 +149,7 @@ export default function AssetGrid() {
                 onClick={() => deselectAll()}
                 disabled={selectedIds.size === 0}
                 className="px-2 py-1 text-[11px] font-medium rounded
-                  bg-c-text-4/20 text-c-text-3 border border-c-text-4/30
+                  bg-c-text-4/20 text-c-text-3 border border-c-border-2
                   hover:bg-c-text-4/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Clear

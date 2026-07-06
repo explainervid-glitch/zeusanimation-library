@@ -79,8 +79,7 @@ function createSplash() {
   const splash = new BrowserWindow({
     width:           340,
     height:          340,
-    frame:           false,       // no title bar
-    transparent:     true,        // rounded look
+    frame:           false,      // no title bar / border
     resizable:       false,
     center:          true,
     alwaysOnTop:     true,

@@ -99,7 +99,7 @@ function TypeSection({ typeData, styleId }) {
 
           {/* Uncategorized — paling bawah, hanya tampil jika ada */}
           {typeData.categories.filter(cat => cat.name === '⚠ Uncategorized').map(cat => (
-            <div key={cat.id} className="mt-1 pt-1 border-t border-c-border/40">
+            <div key={cat.id} className="mt-1 pt-1 border-t border-c-border">
               <CategoryItem
                 category={cat}
                 styleId={styleId}

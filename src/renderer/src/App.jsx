@@ -5,6 +5,7 @@ import AssetGrid from './components/Grid/AssetGrid'
 import AISidebar from './components/AISidebar/AiSidebar'
 import useAssetStore from './store/useAssetStore'
 import useAISidebarStore from './store/useAISidebarStore'
+import useSettingsStore from './store/useSettingsStore'
 
 function ScanOverlay({ logs }) {
   const bottomRef = useRef(null)
@@ -57,6 +58,8 @@ function ScanOverlay({ logs }) {
 
 export default function App() {
   const { switchPack, error, clearError, scanning, scanLogs, startDbPolling, stopDbPolling } = useAssetStore()
+  const { theme } = useSettingsStore()
+
   useEffect(() => {
     switchPack(0)
     startDbPolling()
@@ -64,7 +67,7 @@ export default function App() {
   }, [])
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-c-base text-c-text overflow-hidden">
+    <div className={`h-screen w-screen flex flex-col bg-c-base text-c-text overflow-hidden theme-${theme}`}>
 
       {/* Scan overlay */}
       {scanning && <ScanOverlay logs={scanLogs} />}

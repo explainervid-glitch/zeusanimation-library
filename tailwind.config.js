@@ -4,6 +4,7 @@ export default {
     "./index.html",
     "./src/**/*.{js,jsx}",
   ],
+  darkMode: 'class',
   theme: {
     extend: {
       fontFamily: {
@@ -11,34 +12,35 @@ export default {
       },
       colors: {
         // ═══════════════════════════════════════════════════
-        //   TEMA WARNA APLIKASI — Edit hex di sini saja
+        //   TEMA WARNA APLIKASI — CSS Variables
+        //   Dark & Light themes defined in index.css
         // ═══════════════════════════════════════════════════
 
-        // Background layers (dari paling gelap ke paling terang)
-        'c-base':     '#09090b',   // Background utama app
-        'c-surface':  '#18181b',   // Sidebar, panel
-        'c-raised':   '#27272a',   // Card, input field
-        'c-hover':    '#3f3f46',   // Hover state
+        // Background layers
+        'c-base':     'var(--c-base)',
+        'c-surface':  'var(--c-surface)',
+        'c-raised':   'var(--c-raised)',
+        'c-hover':    'var(--c-hover)',
 
         // Border
-        'c-border':   '#27272a',   // Border tipis (divider)
-        'c-border-2': '#3f3f46',   // Border tebal (card)
+        'c-border':   'var(--c-border)',
+        'c-border-2': 'var(--c-border-2)',
 
-        // Teks (dari terang ke redup)
-        'c-text':     '#f4f4f5',   // Teks utama
-        'c-text-2':   '#a1a1aa',   // Teks sekunder
-        'c-text-3':   '#71717a',   // Teks muted
-        'c-text-4':   '#52525b',   // Teks sangat redup / ghost
+        // Text
+        'c-text':     'var(--c-text)',
+        'c-text-2':   'var(--c-text-2)',
+        'c-text-3':   'var(--c-text-3)',
+        'c-text-4':   'var(--c-text-4)',
 
-        // Aksen / brand color
-        'c-accent':   '#8c57ff',   // Warna aksen utama (tombol, selected)
-        'c-accent-h': '#a982fc',   // Aksen saat hover
-        'c-accent-d': '#9668fb',   // Aksen gelap (badge di atas aksen)
-        'c-on-accent':'#fafaf9',   // Warna teks di atas background aksen
+        // Accent / brand
+        'c-accent':   'var(--c-accent)',
+        'c-accent-h': 'var(--c-accent-h)',
+        'c-accent-d': 'var(--c-accent-d)',
+        'c-on-accent':'var(--c-on-accent)',
 
         // Status
-        'c-error':    '#ef4444',   // Merah error
-        'c-error-bg': '#7f1d1d',   // Background error toast
+        'c-error':    'var(--c-error)',
+        'c-error-bg': 'var(--c-error-bg)',
       }
     }
   },

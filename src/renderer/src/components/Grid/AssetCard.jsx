@@ -123,7 +123,7 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
             ? 'border-c-accent bg-c-accent/5 shadow-lg shadow-c-accent/10'
             : isHovered && !isBatchMode
             ? 'border-c-accent/60 shadow-lg shadow-c-accent/10 scale-[1.02]'
-            : 'border-c-border/40 hover:border-c-border'
+            : 'border-c-border hover:border-c-border-2'
           }
         `}
       >
@@ -156,7 +156,7 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
           {ragScore != null && (
             <span className="absolute bottom-1.5 left-1.5 z-10 px-1.5 py-0.5 rounded-md
               text-[10px] font-mono font-medium backdrop-blur-sm
-              bg-black/60 text-white/90 border border-white/10">
+              bg-black/60 text-white/90 border border-white/5">
               {Math.round(ragScore * 100)}%
             </span>
           )}
@@ -174,7 +174,7 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
                 transition-all duration-200 ease-out
                 ${isSelected
                   ? 'bg-c-accent border-2 border-c-accent shadow-lg shadow-c-accent/30 scale-100'
-                  : 'bg-white/10 backdrop-blur-md border-2 border-white/30 hover:border-white/60 hover:bg-white/20 hover:scale-110'
+                  : 'bg-white/5 backdrop-blur-md border-2 border-white/10 hover:border-white/25 hover:bg-white/10 hover:scale-110'
                 }
               `}
               title={isSelected ? 'Deselect' : 'Select'}

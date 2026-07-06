@@ -4,21 +4,86 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ═══════════════════════════════════════════════════════════
+   THEME VARIABLES — Dark (default) & Light
+   ═══════════════════════════════════════════════════════════ */
+:root,
+.theme-dark {
+  --c-base:      #09090b;
+  --c-surface:   #18181b;
+  --c-raised:    #27272a;
+  --c-hover:     #3f3f46;
+
+  --c-border:    #27272a;
+  --c-border-2:  #3f3f46;
+
+  --c-text:      #f4f4f5;
+  --c-text-2:    #a1a1aa;
+  --c-text-3:    #71717a;
+  --c-text-4:    #52525b;
+
+  --c-accent:    #8c57ff;
+  --c-accent-h:  #a982fc;
+  --c-accent-d:  #9668fb;
+  --c-on-accent: #fafaf9;
+
+  --c-error:     #ef4444;
+  --c-error-bg:  #7f1d1d;
+
+  --scrollbar-thumb: #3f3f46;
+  --scrollbar-hover: #52525b;
+}
+
+.theme-light {
+  --c-base:      #fafafa;
+  --c-surface:   #ffffff;
+  --c-raised:    #f4f4f5;
+  --c-hover:     #e4e4e7;
+
+  --c-border:    #e4e4e7;
+  --c-border-2:  #d4d4d8;
+
+  --c-text:      #18181b;
+  --c-text-2:    #52525b;
+  --c-text-3:    #71717a;
+  --c-text-4:    #a1a1aa;
+
+  --c-accent:    #7c3aed;
+  --c-accent-h:  #6d28d9;
+  --c-accent-d:  #8b5cf6;
+  --c-on-accent: #ffffff;
+
+  --c-error:     #dc2626;
+  --c-error-bg:  #fee2e2;
+
+  --scrollbar-thumb: #d4d4d8;
+  --scrollbar-hover: #a1a1aa;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Re-enable text selection for inputs and textareas */
+input,
+textarea {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 html, body, #root {
   height: 100%;
   width: 100%;
   overflow: hidden;
-  background: #09090b;
+  background: var(--c-base);
   font-family: 'Inter', sans-serif;
 }
 
-/* Custom scrollbar - tipis dan dark */
+/* Custom scrollbar - tipis */
 ::-webkit-scrollbar {
   width: 4px;
 }
@@ -26,11 +91,11 @@ html, body, #root {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #3f3f46;
+  background: var(--scrollbar-thumb);
   border-radius: 99px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #52525b;
+  background: var(--scrollbar-hover);
 }
 
 /* Drag region untuk titlebar (opsional) */

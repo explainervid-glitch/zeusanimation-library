@@ -31,4 +31,7 @@ $ npm run build:mac
 
 # For Linux
 $ npm run build:linux
+
+#Custom Launcher Release
+$ npm run release
 ```

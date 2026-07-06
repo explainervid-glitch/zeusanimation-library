@@ -19,6 +19,7 @@ const DEFAULT_SETTINGS = {
   taggerUrl:      'http://192.168.1.27:8000',
   taggerVideoUrl: 'http://192.168.1.27:8001',
   ragUrl:         'http://192.168.1.27:8001',
+  theme:          'dark',
 }
 
 function getSettingsPath() {

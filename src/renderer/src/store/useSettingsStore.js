@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 
 const MAX_PATHS = 5
 
@@ -10,45 +11,61 @@ export const TEMPLATE_DEFS = [
   { id: 'bg_3d',   label: '3D Background', filename: 'tmp_3d_background.blend'},
 ]
 
-const useSettingsStore = create((set, get) => ({
-  isOpen:  false,
-  loading: false,
-  saved:   false,
+const useSettingsStore = create(
+  persist(
+    (set, get) => ({
+      isOpen:  false,
+      loading: false,
+      saved:   false,
 
-  assetPaths:      [{ label: 'Pack 1', path: '' }],
-  activePathIndex: 0,
-  templatePaths: TEMPLATE_DEFS.map(t => ({ id: t.id, path: '' })),
-  taggerUrl:      'http://192.168.1.27:8000',
-  taggerVideoUrl: 'http://192.168.1.27:8001',
-  ragUrl:         'http://192.168.1.27:8001',
+      // Theme: 'dark' | 'light'
+      theme: 'dark',
 
-  // ─── OPEN / CLOSE ─────────────────────────────────────────────
-  openSettings: async () => {
-    set({ isOpen: true, loading: true, saved: false })
-    try {
-      const result = await window.api.getSettings()
-      if (result.success) {
-        const d = result.data
-        // Merge templatePaths dari server dengan TEMPLATE_DEFS
-        const mergedTemplates = TEMPLATE_DEFS.map(t => {
-          const saved = d.templatePaths?.find(s => s.id === t.id)
-          return { id: t.id, path: saved?.path || '' }
-        })
-        set({
-          assetPaths:      d.assetPaths      ?? [{ label: 'Pack 1', path: '' }],
-          activePathIndex: d.activePathIndex ?? 0,
-          templatePaths:   mergedTemplates,
-          taggerUrl:       d.taggerUrl       ?? 'http://192.168.1.27:8000',
-          taggerVideoUrl:  d.taggerVideoUrl  ?? 'http://192.168.1.27:8001',
-          ragUrl:          d.ragUrl          ?? 'http://192.168.1.27:8001',
-          loading: false,
-        })
-      }
-    } catch (err) {
-      console.error('getSettings error:', err)
-      set({ loading: false })
-    }
-  },
+      assetPaths:      [{ label: 'Pack 1', path: '' }],
+      activePathIndex: 0,
+      templatePaths: TEMPLATE_DEFS.map(t => ({ id: t.id, path: '' })),
+      taggerUrl:      'http://192.168.1.27:8000',
+      taggerVideoUrl: 'http://192.168.1.27:8001',
+      ragUrl:         'http://192.168.1.27:8001',
+
+      // ─── THEME ────────────────────────────────────────────────────
+      setTheme: (theme) => {
+        set({ theme })
+        applyThemeToDocument(theme)
+      },
+      toggleTheme: () => {
+        const next = get().theme === 'dark' ? 'light' : 'dark'
+        set({ theme: next })
+        applyThemeToDocument(next)
+      },
+
+      // ─── OPEN / CLOSE ─────────────────────────────────────────────
+      openSettings: async () => {
+        set({ isOpen: true, loading: true, saved: false })
+        try {
+          const result = await window.api.getSettings()
+          if (result.success) {
+            const d = result.data
+            // Merge templatePaths dari server dengan TEMPLATE_DEFS
+            const mergedTemplates = TEMPLATE_DEFS.map(t => {
+              const saved = d.templatePaths?.find(s => s.id === t.id)
+              return { id: t.id, path: saved?.path || '' }
+            })
+            set({
+              assetPaths:      d.assetPaths      ?? [{ label: 'Pack 1', path: '' }],
+              activePathIndex: d.activePathIndex ?? 0,
+              templatePaths:   mergedTemplates,
+              taggerUrl:       d.taggerUrl       ?? 'http://192.168.1.27:8000',
+              taggerVideoUrl:  d.taggerVideoUrl  ?? 'http://192.168.1.27:8001',
+              ragUrl:          d.ragUrl          ?? 'http://192.168.1.27:8001',
+              loading: false,
+            })
+          }
+        } catch (err) {
+          console.error('getSettings error:', err)
+          set({ loading: false })
+        }
+      },
 
   closeSettings: () => set({ isOpen: false, saved: false }),
 
@@ -117,6 +134,27 @@ const useSettingsStore = create((set, get) => ({
       set({ loading: false })
     }
   },
-}))
+}),
+    {
+      name: 'settings-store',  // localStorage key for persist
+    }
+  )
+)
+
+// ─── Helper: apply theme class to document ────────────────────
+function applyThemeToDocument(theme) {
+  const root = document.getElementById('root')
+  if (!root) return
+  root.classList.remove('theme-dark', 'theme-light')
+  root.classList.add(`theme-${theme}`)
+}
+
+// Apply theme on store rehydration
+useSettingsStore.subscribe((state) => {
+  applyThemeToDocument(state.theme)
+})
+
+// Apply initial theme
+applyThemeToDocument(useSettingsStore.getState().theme)
 
 export default useSettingsStore
