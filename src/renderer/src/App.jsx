@@ -4,9 +4,12 @@ import Sidebar from './components/Sidebar/Sidebar'
 import AssetGrid from './components/Grid/AssetGrid'
 import AISidebar from './components/AISidebar/AiSidebar'
 import ThemeIntroModal from './components/ThemeIntroModal'
+import Panel from './components/Panel'
+import BottomBar from './components/BottomBar'
 import useAssetStore from './store/useAssetStore'
 import useAISidebarStore from './store/useAISidebarStore'
 import useSettingsStore from './store/useSettingsStore'
+import useLayoutStore from './store/useLayoutStore'
 
 function ScanOverlay({ logs }) {
   const bottomRef = useRef(null)
@@ -60,6 +63,7 @@ function ScanOverlay({ logs }) {
 export default function App() {
   const { switchPack, error, clearError, scanning, scanLogs, startDbPolling, stopDbPolling } = useAssetStore()
   const { theme } = useSettingsStore()
+  const splitOpen = useLayoutStore((s) => s.splitOpen)
 
   useEffect(() => {
     switchPack(0)
@@ -88,14 +92,23 @@ export default function App() {
       {/* Top Toolbar */}
       <Toolbar />
 
-      {/* Main Layout: Sidebar + Grid + AI Sidebar */}
+      {/* Main Layout: [ main panel ] + optional [ secondary panel ] */}
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar />
-        <main className="flex-1 overflow-hidden bg-c-base">
-          <AssetGrid />
-        </main>
-        {/* <AISidebar /> */}
+        {/* Main (left) panel — uses the default/global asset store */}
+        <div className="flex flex-1 min-w-0 overflow-hidden">
+          <Sidebar />
+          <main className="flex-1 overflow-hidden bg-c-base">
+            <AssetGrid />
+          </main>
+          {/* <AISidebar /> */}
+        </div>
+
+        {/* Secondary (right) panel — independent browse view */}
+        {splitOpen && <Panel />}
       </div>
+
+      {/* Bottom status bar — active project */}
+      <BottomBar />
 
     </div>
   )

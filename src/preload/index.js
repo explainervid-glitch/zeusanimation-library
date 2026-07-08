@@ -20,6 +20,9 @@ const api = {
   addCategory:         (payload)     => ipcRenderer.invoke('add-category', payload),
   deleteCategory:      (payload)     => ipcRenderer.invoke('delete-category', payload),
   createAsset:         (payload)     => ipcRenderer.invoke('create-asset', payload),
+  createProject:       (payload)     => ipcRenderer.invoke('create-project', payload),
+  sendToProject:       (payload)     => ipcRenderer.invoke('send-to-project', payload),
+  openPath:            (path)        => ipcRenderer.invoke('open-path', path),
 
   // Blender Bridge — ganti 3 baris lama dengan ini
   blenderScanPorts:      ()                                  => ipcRenderer.invoke('blender-scan-ports'),

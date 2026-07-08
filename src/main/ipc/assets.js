@@ -1,5 +1,5 @@
 import { ipcMain, shell, dialog } from 'electron'
-import { readFileSync, writeFileSync, existsSync, copyFileSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync, copyFileSync, mkdirSync, rmSync } from 'fs'
 import { scanAssets, writeStyleName, readStyleNames } from '../scanner/index.js'
 import {
   getDb, switchDb, reinitDb,
@@ -9,7 +9,7 @@ import {
   getDbMtime, reloadFromDisk
 } from '../db/index.js'
 import { readSettings, writeSettings, getActiveAssetPath, getTemplatePath } from '../settings.js'
-import { join } from 'path'
+import { join, basename } from 'path'
 
 // Track DB mtime untuk deteksi perubahan remote
 let lastDbMtime = 0
@@ -333,6 +333,116 @@ export async function registerIpcHandlers() {
       }
       return { success: true, data: result.filePaths[0] }
     } catch (err) { return { success: false, error: err.message } }
+  })
+
+  // ─── CREATE PROJECT ──────────────────────────────────────────
+  // Scaffolds a new project folder + its standard sub-folder tree.
+  // Aborts if a folder with the same name already exists at parentPath.
+  ipcMain.handle('create-project', async (_e, { parentPath, projectName } = {}) => {
+    // Standard project sub-folder tree (relative to the project root).
+    // recursive mkdir on each leaf creates all intermediate folders too.
+    const PROJECT_FOLDER_TREE = [
+      'Bahan/Aset Klien',
+      'Bahan/Aset Visual',
+      'Chars',
+      'File Animator/File Blender',
+      'File Editing/Adobe Premiere Pro Audio Previews',
+      'File Editing/Adobe Premiere Pro Auto-Save',
+      'File Editing/Premiere Composer Files',
+      'File Editing/SFX',
+      'File Storyboard/File Animate/File Animate Blender',
+      'File Storyboard/File Animate/Portrait Version/Revisions/Rev 1',
+      'File Storyboard/File Animate/Portrait Version/Revisions/Rev 2',
+      'File Storyboard/File Animate/Portrait Version/Revisions/Rev 3',
+      'File Storyboard/File Animate/Revisions/Rev 1',
+      'File Storyboard/File Animate/Revisions/Rev 2',
+      'File Storyboard/File Animate/Revisions/Rev 3',
+      'File Storyboard/File Animate/Square Version/Revisions/Rev 1',
+      'File Storyboard/File Animate/Square Version/Revisions/Rev 2',
+      'File Storyboard/File Animate/Square Version/Revisions/Rev 3',
+      'File Storyboard/File Blender/Rendered Image',
+      'Font',
+      'VO',
+    ]
+
+    try {
+      const parent = (parentPath || '').trim()
+      const name   = (projectName || '').trim()
+
+      if (!parent)  return { success: false, error: 'Please choose where to create the project.' }
+      if (!name)    return { success: false, error: 'Please enter a project name.' }
+      // Reject characters Windows/most filesystems disallow in folder names.
+      if (/[\\/:*?"<>|]/.test(name)) {
+        return { success: false, error: 'Project name contains invalid characters ( \\ / : * ? " < > | ).' }
+      }
+      if (!existsSync(parent)) {
+        return { success: false, error: 'The selected location no longer exists.' }
+      }
+
+      const projectPath = join(parent, name)
+
+      // Duplicate check — abort without touching anything.
+      if (existsSync(projectPath)) {
+        return { success: false, exists: true, error: `A folder named "${name}" already exists in this location.` }
+      }
+
+      // Create the tree. If it fails partway, roll back the folder we just
+      // started so disk stays clean and a retry isn't blocked by a stray dir.
+      try {
+        for (const rel of PROJECT_FOLDER_TREE) {
+          mkdirSync(join(projectPath, rel), { recursive: true })
+        }
+      } catch (mkErr) {
+        try { rmSync(projectPath, { recursive: true, force: true }) } catch { /* best effort */ }
+        return { success: false, error: `Failed to create project folders: ${mkErr.message}` }
+      }
+
+      return { success: true, data: projectPath }
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  // ─── SEND TO PROJECT ─────────────────────────────────────────
+  // Copies a character asset into {projectPath}/Chars and returns the new path.
+  // If the file already exists in the project, it is NOT overwritten (so any
+  // edits made inside the project are preserved) — the existing copy is opened.
+  ipcMain.handle('send-to-project', async (_e, { sourcePath, projectPath } = {}) => {
+    try {
+      if (!sourcePath || !existsSync(sourcePath)) {
+        return { success: false, error: 'Source asset file not found.' }
+      }
+      if (!projectPath || !existsSync(projectPath)) {
+        return { success: false, error: 'Active project folder not found. Create or select a project first.' }
+      }
+
+      const charsDir = join(projectPath, 'Chars')
+      if (!existsSync(charsDir)) mkdirSync(charsDir, { recursive: true })
+
+      const destPath = join(charsDir, basename(sourcePath))
+
+      let copied = false
+      if (!existsSync(destPath)) {
+        copyFileSync(sourcePath, destPath)
+        copied = true
+      }
+
+      return { success: true, data: destPath, copied }
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  // ─── OPEN PATH (file or folder) in the OS ────────────────────
+  ipcMain.handle('open-path', async (_e, targetPath) => {
+    try {
+      if (!targetPath) return { success: false, error: 'No path provided' }
+      const err = await shell.openPath(targetPath)
+      if (err) return { success: false, error: err }
+      return { success: true }
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
   })
 
   // ─── GET STYLE NAMES ─────────────────────────────────────────

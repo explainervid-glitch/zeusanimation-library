@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import useAssetStore from '../../store/useAssetStore'
+import { usePanelStore } from '../../store/PanelStoreContext'
 import useBatchStore from '../../store/useBatchStore'
 import AssetCard from './AssetCard'
 import { Layers, MousePointerClick, RefreshCw, Search } from 'lucide-react'
@@ -18,15 +19,20 @@ const TYPE_MIN_WIDTH = {
 
 const DEFAULT_MIN_WIDTH = '160px'
 
-export default function AssetGrid() {
+export default function AssetGrid({ enableBatch = true }) {
+  // Workspace-level (shared): pack/tree/scan state from the main store.
+  const { treeLoading, packNeedsRescan, rescan, scanning } = useAssetStore()
+  // Panel-level: this panel's category/assets/search from context.
   const {
-    assets, selectedCategory, selectedStyleId,
-    assetsLoading, treeLoading,
-    packNeedsRescan, rescan, scanning,
+    assets, selectedCategory, selectedStyleId, assetsLoading,
     searchQuery, searchResults, searchLoading, isSearchMode, searchMode,
-  } = useAssetStore()
+  } = usePanelStore()
 
-  const { isBatchMode, selectedIds, statusMap, toggleSelect, selectAll, deselectAll } = useBatchStore()
+  const {
+    isBatchMode: batchModeRaw, selectedIds, statusMap, toggleSelect, selectAll, deselectAll,
+  } = useBatchStore()
+  // Batch tagging is a main-panel-only feature.
+  const isBatchMode = enableBatch && batchModeRaw
 
   const [gridScale, setGridScale] = useState(1)
 

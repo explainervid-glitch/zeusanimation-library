@@ -1,5 +1,7 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
-import { FileX, Pencil, Link, Check, ArrowRightFromLine, Loader } from 'lucide-react'
+import { FileX, Pencil, Link, Check, ArrowRightFromLine, Loader, FolderInput } from 'lucide-react'
+import { usePanelStore } from '../../store/PanelStoreContext'
+import useProjectStore from '../../store/useProjectStore'
 import useAssetStore from '../../store/useAssetStore'
 import AssetEditModal from './AssetEditModal'
 import BlenderAppendModal from './BlenderAppendModal'
@@ -69,13 +71,16 @@ function isBlendFile(path) {
 }
 
 export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBatchMode, isSelected, onToggleSelect, processingStatus, ragScore = null }) {
-  const { openAsset, reloadCurrentCategory } = useAssetStore()
+  const openAsset             = usePanelStore((s) => s.openAsset)
+  const reloadCurrentCategory = usePanelStore((s) => s.reloadCurrentCategory)
+  const activeProject         = useProjectStore((s) => s.activeProject)
   const [asset, setAsset]                 = useState(initialAsset)
   const [isHovered, setIsHovered]         = useState(false)
   const [previewError, setPreviewError]   = useState(false)
   const [editOpen, setEditOpen]           = useState(false)
   const [appendOpen, setAppendOpen]       = useState(false)
   const [copied, setCopied]               = useState(false)
+  const [sending, setSending]             = useState(false)
   const videoRef = useRef(null)
 
   useEffect(() => { setAsset(initialAsset); setPreviewError(false) }, [initialAsset])
@@ -108,7 +113,37 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
     await reloadCurrentCategory()
   }, [reloadCurrentCategory])
 
-  const showAppend = isBlendFile(asset.raw_path) && type === 'animation'
+  const showAppend        = isBlendFile(asset.raw_path) && type === 'animation'
+  const showSendToProject = type === 'character'
+
+  // Send to Project: copy this character into {project}/Chars, then open it from there.
+  const handleSendToProject = useCallback(async (e) => {
+    e.stopPropagation()
+    if (!activeProject?.path) {
+      useAssetStore.getState().setError('No active project — create or select one in the bottom bar first.')
+      return
+    }
+    if (!asset.raw_path) {
+      useAssetStore.getState().setError('This asset has no source file to send.')
+      return
+    }
+    setSending(true)
+    try {
+      const result = await window.api.sendToProject({
+        sourcePath:  asset.raw_path,
+        projectPath: activeProject.path,
+      })
+      if (result.success) {
+        await openAsset(result.data)   // open from {project}/Chars, not the library path
+      } else {
+        useAssetStore.getState().setError(result.error || 'Failed to send asset to project.')
+      }
+    } catch (err) {
+      useAssetStore.getState().setError(err.message)
+    } finally {
+      setSending(false)
+    }
+  }, [activeProject, asset.raw_path, openAsset])
 
   return (
     <>
@@ -230,7 +265,7 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
           )}
 
           {/* Action buttons - Right side */}
-          {!isBatchMode && showAppend && (
+          {!isBatchMode && (showAppend || showSendToProject) && (
             <div className={`
               absolute top-1.5 right-1.5 z-10 flex gap-1
               transition-all duration-150
@@ -238,15 +273,37 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
             `}>
 
               {/* Append to Blender — hanya untuk .blend */}
-              <button
-                onClick={(e) => { e.stopPropagation(); setAppendOpen(true) }}
-                className="p-1.5 rounded-md bg-black/60 backdrop-blur-sm
-                  text-white/70 hover:text-white hover:bg-black/80
-                  transition-all duration-150"
-                title="Append to Blender"
-              >
-                <ArrowRightFromLine size={11} />
-              </button>
+              {showAppend && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); setAppendOpen(true) }}
+                  className="p-1.5 rounded-md bg-black/60 backdrop-blur-sm
+                    text-white/70 hover:text-white hover:bg-black/80
+                    transition-all duration-150"
+                  title="Append to Blender"
+                >
+                  <ArrowRightFromLine size={11} />
+                </button>
+              )}
+
+              {/* Send to Project — copy into {project}/Chars then open from there */}
+              {showSendToProject && (
+                <button
+                  onClick={handleSendToProject}
+                  disabled={!activeProject || sending}
+                  className="p-1.5 rounded-md bg-black/60 backdrop-blur-sm
+                    text-white/70 hover:text-white hover:bg-black/80
+                    transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed"
+                  title={
+                    !activeProject ? 'Select a project first (bottom bar)'
+                    : sending       ? 'Sending…'
+                    : `Send to ${activeProject.name}\\Chars`
+                  }
+                >
+                  {sending
+                    ? <Loader size={11} className="animate-spin" />
+                    : <FolderInput size={11} />}
+                </button>
+              )}
 
             </div>
           )}

@@ -4,7 +4,8 @@ import {
   Pencil, Check, X, PersonStanding, Users, PanelLeftClose, PanelLeftOpen, Lightbulb,
 } from 'lucide-react'
 import useAssetStore from '../../store/useAssetStore'
-import useSidebarStore from '../../store/useSidebarStore'
+import { usePanelStore, usePanelStoreApi } from '../../store/PanelStoreContext'
+import { usePanelSidebarStore } from '../../store/SidebarStoreContext'
 import EditCategoryModal from './EditCategoryModal'
 
 const TYPE_ICON = {
@@ -22,7 +23,8 @@ const TYPE_LABEL = {
 
 // ─── CATEGORY ITEM ────────────────────────────────────────────
 function CategoryItem({ category, styleId, type, styleTypeId, isUncategorized }) {
-  const { selectedCategory, selectCategory } = useAssetStore()
+  const selectedCategory = usePanelStore((s) => s.selectedCategory)
+  const selectCategory   = usePanelStore((s) => s.selectCategory)
   const isSelected = selectedCategory?.id === category.id
   const assetCount = category.asset_count ?? 0
   const isEmpty    = assetCount === 0
@@ -385,9 +387,14 @@ function StyleScrollBar({ tree, selectedStyleId, onSelectStyle }) {
 
 // ─── SIDEBAR ──────────────────────────────────────────────────
 export default function Sidebar() {
-  // FIX: ganti 'loading' → 'treeLoading' sesuai nama di store
-  const { tree, treeLoading, scanning, clearSearch, selectedStyleId, selectStyle } = useAssetStore()
-  const { isOpen, width, toggleSidebar, setSidebarWidth } = useSidebarStore()
+  // Workspace-level state (tree/pack/scan) is shared → read from the main store.
+  const { tree, treeLoading, scanning } = useAssetStore()
+  // Panel-level state (style/category/search) → read from this panel's store.
+  const selectedStyleId = usePanelStore((s) => s.selectedStyleId)
+  const selectStyle     = usePanelStore((s) => s.selectStyle)
+  const clearSearch     = usePanelStore((s) => s.clearSearch)
+  const panelApi        = usePanelStoreApi()
+  const { isOpen, width, toggleSidebar, setSidebarWidth } = usePanelSidebarStore()
 
   useEffect(() => {
     if (tree.length > 0 && selectedStyleId === null) {
@@ -399,7 +406,7 @@ export default function Sidebar() {
   const handleSelectStyle = (styleId) => {
     if (styleId === selectedStyleId) return
     selectStyle(styleId)
-    useAssetStore.getState().selectCategory(null)
+    panelApi.getState().selectCategory(null)
     clearSearch()
   }
 

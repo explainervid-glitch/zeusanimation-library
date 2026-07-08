@@ -41,6 +41,9 @@ const mockApi = {
   addCategory:         (payload)     => Promise.resolve({ success: false, error: 'Browser mode' }),
   deleteCategory:      (payload)     => Promise.resolve({ success: false, error: 'Browser mode' }),
   createAsset:         (payload)     => Promise.resolve({ success: false, error: 'Browser mode' }),
+  createProject:       (payload)     => Promise.resolve({ success: false, error: 'Browser mode' }),
+  sendToProject:       (payload)     => Promise.resolve({ success: false, error: 'Browser mode' }),
+  openPath:            (path)        => Promise.resolve({ success: false, error: 'Browser mode' }),
 
   // Blender Bridge
   blenderScanPorts:      ()                                  => Promise.resolve([]),

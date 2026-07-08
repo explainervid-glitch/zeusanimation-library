@@ -275,6 +275,7 @@ const useAssetStore = create((set, get) => ({
     if (!result.success) set({ error: result.error })
   },
 
+  setError:             (error) => set({ error }),
   clearError:           () => set({ error: null }),
   clearPackNeedsRescan: () => set({ packNeedsRescan: false }),
 

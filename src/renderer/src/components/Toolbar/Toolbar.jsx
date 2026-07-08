@@ -1,10 +1,12 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Plus, Settings, ChevronDown, Check, Package, Search, X, Astroid, RefreshCw, Sparkles } from 'lucide-react'
+import { Plus, Settings, ChevronDown, Check, Package, Search, X, Astroid, RefreshCw, Sparkles, Columns2, FolderPlus, FilePlus, MoreVertical } from 'lucide-react'
 import useAssetStore    from '../../store/useAssetStore'
 import useSettingsStore from '../../store/useSettingsStore'
 import useBatchStore    from '../../store/useBatchStore'
+import useLayoutStore   from '../../store/useLayoutStore'
 import SettingsModal    from './SettingsModal'
 import AddModal         from './AddModal'
+import AddProjectModal  from './AddProjectModal'
 import BatchTaggerModal from './BatchTaggerModal'
 import WindowControls   from './WindowControls'
 import icon from '../../assets/icon.png'
@@ -214,12 +216,147 @@ function SearchBar() {
   )
 }
 
+// ─── ADD DROPDOWN ─────────────────────────────────────────────
+function AddDropdown({ disabled, onAddProject, onAddAsset }) {
+  const [open, setOpen] = useState(false)
+  const ref             = useRef(null)
+
+  useEffect(() => {
+    const handler = (e) => { if (!ref.current?.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const pick = (fn) => { setOpen(false); fn() }
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => !disabled && setOpen(o => !o)}
+        disabled={disabled}
+        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs
+          border transition-all
+          ${disabled
+            ? 'bg-c-raised text-c-text-4 border-c-border cursor-not-allowed'
+            : 'bg-c-accent text-c-on-accent border-c-accent hover:bg-c-accent-h font-semibold'
+          }`}
+      >
+        <Plus size={13} />
+        Add
+        <ChevronDown size={11} className={`transition-transform duration-150 ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-1.5 z-50
+          bg-c-surface border border-c-border rounded-xl shadow-xl
+          min-w-[210px] overflow-hidden py-1"
+        >
+          <button
+            onClick={() => pick(onAddProject)}
+            className="w-full flex items-start gap-2.5 px-3 py-2 text-left
+              text-c-text-2 hover:bg-c-raised hover:text-c-text transition-all"
+          >
+            <FolderPlus size={14} className="text-c-accent flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-xs font-medium">Project</p>
+              <p className="text-[10px] text-c-text-4">New project folder + structure</p>
+            </div>
+          </button>
+          <button
+            onClick={() => pick(onAddAsset)}
+            className="w-full flex items-start gap-2.5 px-3 py-2 text-left
+              text-c-text-2 hover:bg-c-raised hover:text-c-text transition-all"
+          >
+            <FilePlus size={14} className="text-c-accent flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-xs font-medium">Asset</p>
+              <p className="text-[10px] text-c-text-4">Add an asset to a category</p>
+            </div>
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── OVERFLOW MENU (Split view / Sync / Settings) ─────────────
+function MenuDropdown({ splitOpen, onToggleSplit, onSync, syncing, synced, syncDisabled, onSettings }) {
+  const [open, setOpen] = useState(false)
+  const ref             = useRef(null)
+
+  useEffect(() => {
+    const handler = (e) => { if (!ref.current?.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const item = 'w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs transition-all'
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        title="More options"
+        className={`flex items-center justify-center w-8 h-8 rounded-lg border transition-all
+          ${open
+            ? 'bg-c-hover border-c-accent text-c-text'
+            : 'bg-c-raised text-c-text-3 hover:bg-c-hover hover:text-c-text border-c-border-2'
+          }`}
+      >
+        <MoreVertical size={15} />
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full mt-1.5 z-50
+          bg-c-surface border border-c-border rounded-xl shadow-xl
+          min-w-[190px] overflow-hidden py-1"
+        >
+          {/* Split view — toggles, keeps menu open feedback via check */}
+          <button
+            onClick={() => { setOpen(false); onToggleSplit() }}
+            className={`${item} ${splitOpen ? 'text-c-accent' : 'text-c-text-2 hover:bg-c-raised hover:text-c-text'}`}
+          >
+            <Columns2 size={14} className="flex-shrink-0" />
+            <span className="flex-1">Split view</span>
+            {splitOpen && <Check size={13} className="flex-shrink-0" />}
+          </button>
+
+          {/* Sync — stays open so the spinner / "Synced" state is visible */}
+          <button
+            onClick={onSync}
+            disabled={syncDisabled}
+            title="Sync latest changes from NAS (auto every 15s)"
+            className={`${item} disabled:opacity-40 disabled:cursor-not-allowed
+              ${synced ? 'text-green-400' : 'text-c-text-2 hover:bg-c-raised hover:text-c-text'}`}
+          >
+            <RefreshCw size={14} className={`flex-shrink-0 ${syncing ? 'animate-spin' : ''}`} />
+            <span className="flex-1">{syncing ? 'Syncing…' : synced ? 'Synced' : 'Sync from NAS'}</span>
+          </button>
+
+          <div className="my-1 border-t border-c-border" />
+
+          {/* Settings */}
+          <button
+            onClick={() => { setOpen(false); onSettings() }}
+            className={`${item} text-c-text-2 hover:bg-c-raised hover:text-c-text`}
+          >
+            <Settings size={14} className="flex-shrink-0" />
+            <span className="flex-1">Settings</span>
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── TOOLBAR ──────────────────────────────────────────────────
 export default function Toolbar() {
   const { scanning, selectedCategory, assets, checkDbUpdated } = useAssetStore()
   const { openSettings } = useSettingsStore()
   const { isBatchMode, selectedIds, enterBatchMode, exitBatchMode } = useBatchStore()
+  const { splitOpen, toggleSplit } = useLayoutStore()
   const [showAddModal, setShowAddModal]   = useState(false)
+  const [showProjectModal, setShowProjectModal] = useState(false)
   const [showBatchModal, setShowBatchModal] = useState(false)
   const [refreshing, setRefreshing]       = useState(false)
   const [refreshed, setRefreshed]         = useState(false)
@@ -308,43 +445,22 @@ export default function Toolbar() {
             </>
           )}
 
-          <button
-            onClick={() => setShowAddModal(true)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
-              border transition-all
-              ${scanning
-                ? 'bg-c-raised text-c-text-4 border-c-border cursor-not-allowed'
-                : 'bg-c-accent text-c-on-accent border-c-accent hover:bg-c-accent-h font-semibold'
-              }`}
-          >
-            <Plus size={13} />
-            Add
-          </button>
+          <AddDropdown
+            disabled={scanning}
+            onAddProject={() => setShowProjectModal(true)}
+            onAddAsset={() => setShowAddModal(true)}
+          />
 
-          {/* Refresh DB */}
-          <button
-            onClick={handleRefresh}
-            disabled={refreshing || scanning}
-            title="Sync latest changes from NAS (auto every 15s)"
-            className={`flex items-center justify-center w-8 h-8 rounded-lg border transition-all
-              ${refreshed
-                ? 'bg-green-500/15 border-green-500/40 text-green-400'
-                : 'bg-c-raised text-c-text-3 hover:bg-c-hover hover:text-c-text border-c-border-2'
-              }
-              disabled:opacity-40`}
-          >
-            <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
-          </button>
-
-          <button
-            onClick={openSettings}
-            className="flex items-center justify-center w-8 h-8 rounded-lg
-              bg-c-raised text-c-text-3 hover:bg-c-hover hover:text-c-text
-              border border-c-border-2 transition-all"
-            title="Settings"
-          >
-            <Settings size={14} />
-          </button>
+          {/* Overflow menu — Split view / Sync / Settings */}
+          <MenuDropdown
+            splitOpen={splitOpen}
+            onToggleSplit={toggleSplit}
+            onSync={handleRefresh}
+            syncing={refreshing}
+            synced={refreshed}
+            syncDisabled={refreshing || scanning}
+            onSettings={openSettings}
+          />
 
         </div>
 
@@ -353,6 +469,7 @@ export default function Toolbar() {
       </header>
 
       <AddModal isOpen={showAddModal} onClose={() => setShowAddModal(false)} />
+      <AddProjectModal isOpen={showProjectModal} onClose={() => setShowProjectModal(false)} />
       <SettingsModal />
       <BatchTaggerModal isOpen={showBatchModal} onClose={() => setShowBatchModal(false)} />
     </>
