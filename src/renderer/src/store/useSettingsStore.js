@@ -19,13 +19,16 @@ const useSettingsStore = create(
       saved:   false,
 
       // Theme: 'dark' | 'light'
-      theme: 'dark',
+      theme: 'light',
+
+      // One-time theme intro popup (persisted). Shown until dismissed.
+      themeIntroSeen: false,
+      dismissThemeIntro: () => set({ themeIntroSeen: true }),
 
       assetPaths:      [{ label: 'Pack 1', path: '' }],
       activePathIndex: 0,
       templatePaths: TEMPLATE_DEFS.map(t => ({ id: t.id, path: '' })),
       taggerUrl:      'http://192.168.1.27:8000',
-      taggerVideoUrl: 'http://192.168.1.27:8001',
       ragUrl:         'http://192.168.1.27:8001',
 
       // ─── THEME ────────────────────────────────────────────────────
@@ -56,7 +59,6 @@ const useSettingsStore = create(
               activePathIndex: d.activePathIndex ?? 0,
               templatePaths:   mergedTemplates,
               taggerUrl:       d.taggerUrl       ?? 'http://192.168.1.27:8000',
-              taggerVideoUrl:  d.taggerVideoUrl  ?? 'http://192.168.1.27:8001',
               ragUrl:          d.ragUrl          ?? 'http://192.168.1.27:8001',
               loading: false,
             })
@@ -102,7 +104,6 @@ const useSettingsStore = create(
 
   // ─── TAGGER ───────────────────────────────────────────────────
   updateTaggerUrl:      (url) => set({ taggerUrl: url }),
-  updateTaggerVideoUrl: (url) => set({ taggerVideoUrl: url }),
   updateRagUrl:         (url) => set({ ragUrl: url }),
 
   // ─── TEMPLATE PATHS ───────────────────────────────────────────
@@ -121,10 +122,10 @@ const useSettingsStore = create(
 
   // ─── SAVE ─────────────────────────────────────────────────────
   saveSettings: async () => {
-    const { assetPaths, activePathIndex, templatePaths, taggerUrl, taggerVideoUrl, ragUrl } = get()
+    const { assetPaths, activePathIndex, templatePaths, taggerUrl, ragUrl } = get()
     set({ loading: true })
     try {
-      const result = await window.api.saveSettings({ assetPaths, activePathIndex, templatePaths, taggerUrl, taggerVideoUrl, ragUrl })
+      const result = await window.api.saveSettings({ assetPaths, activePathIndex, templatePaths, taggerUrl, ragUrl })
       if (result.success) {
         set({ loading: false, saved: true })
         setTimeout(() => set({ saved: false }), 2000)

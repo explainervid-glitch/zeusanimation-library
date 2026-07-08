@@ -17,9 +17,8 @@ const DEFAULT_SETTINGS = {
   activePathIndex: 0,
   templatePaths: DEFAULT_TEMPLATES.map(t => ({ id: t.id, path: t.path })),
   taggerUrl:      'http://192.168.1.27:8000',
-  taggerVideoUrl: 'http://192.168.1.27:8001',
   ragUrl:         'http://192.168.1.27:8001',
-  theme:          'dark',
+  theme:          'light',
 }
 
 function getSettingsPath() {

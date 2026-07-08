@@ -16,6 +16,13 @@ const noopAsyncArray = async () => []
 const noopAsyncObj = async () => ({})
 
 const mockApi = {
+  // Window controls (no-op in browser mode)
+  windowMinimize:           ()   => {},
+  windowToggleMaximize:     ()   => {},
+  windowClose:              ()   => {},
+  windowIsMaximized:        ()   => Promise.resolve(false),
+  onWindowMaximizedChanged: (cb) => () => {},
+
   // Assets
   getAssetTree:        ()            => Promise.resolve([]),
   getAssetsByCategory: (id)          => Promise.resolve([]),
@@ -42,7 +49,7 @@ const mockApi = {
 
   // Settings
   getSettings:         ()            => Promise.resolve({
-    assetPaths: [], activePathIndex: 0, templatePaths: [], taggerUrl: '', taggerVideoUrl: '', ragUrl: ''
+    assetPaths: [], activePathIndex: 0, templatePaths: [], taggerUrl: '', ragUrl: ''
   }),
   saveSettings:        (settings)    => Promise.resolve({ success: false, error: 'Browser mode' }),
   selectFolder:        ()            => Promise.resolve({ canceled: true }),

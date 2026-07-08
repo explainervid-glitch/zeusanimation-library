@@ -2,7 +2,10 @@
 <html>
 <head>
   <meta charset="UTF-8" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet" />
+  <!-- No remote webfont: a <link rel="stylesheet"> to fonts.googleapis.com is
+       render-blocking, so the splash (and its Lottie) won't paint until that
+       network request resolves or times out. The system font stack below is
+       used instead so the splash appears instantly, even offline. -->
   <script src="./lottie.min.js"></script>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }

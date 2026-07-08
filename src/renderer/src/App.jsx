@@ -3,6 +3,7 @@ import Toolbar from './components/Toolbar/Toolbar'
 import Sidebar from './components/Sidebar/Sidebar'
 import AssetGrid from './components/Grid/AssetGrid'
 import AISidebar from './components/AISidebar/AiSidebar'
+import ThemeIntroModal from './components/ThemeIntroModal'
 import useAssetStore from './store/useAssetStore'
 import useAISidebarStore from './store/useAISidebarStore'
 import useSettingsStore from './store/useSettingsStore'
@@ -68,6 +69,9 @@ export default function App() {
 
   return (
     <div className={`h-screen w-screen flex flex-col bg-c-base text-c-text overflow-hidden theme-${theme}`}>
+
+      {/* One-time theme intro popup */}
+      <ThemeIntroModal />
 
       {/* Scan overlay */}
       {scanning && <ScanOverlay logs={scanLogs} />}

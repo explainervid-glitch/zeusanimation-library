@@ -64,7 +64,7 @@
 //   }
 // })
 
-import { app, shell, BrowserWindow } from 'electron'
+import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
 import { electronApp, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -84,8 +84,13 @@ function createSplash() {
     center:          true,
     alwaysOnTop:     true,
     skipTaskbar:     true,        // tidak muncul di taskbar
+    show:            false,       // tunggu paint pertama → tampil bersama Lottie
     webPreferences:  { sandbox: false },
   })
+
+  // Show only once the content has painted, so the Lottie appears with the
+  // window instead of an empty frame flashing first.
+  splash.once('ready-to-show', () => splash.show())
 
   splash.loadFile(join(__dirname, '../../resources/splash.html'))
   return splash
@@ -99,6 +104,7 @@ function createWindow(splash) {
     minWidth:        900,
     minHeight:       600,
     show:            false,       // tunggu sampai ready
+    frame:           false,       // no native title bar — custom controls in Toolbar
     autoHideMenuBar: true,
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
@@ -116,6 +122,10 @@ function createWindow(splash) {
     mainWindow.show()
   })
 
+  // Keep the renderer's maximize/restore icon in sync with actual window state
+  mainWindow.on('maximize',   () => mainWindow.webContents.send('window:maximized-changed', true))
+  mainWindow.on('unmaximize', () => mainWindow.webContents.send('window:maximized-changed', false))
+
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
     return { action: 'deny' }
@@ -129,8 +139,27 @@ function createWindow(splash) {
 }
 
 // ─── APP READY ────────────────────────────────────────────────
+// ─── WINDOW CONTROL IPC ───────────────────────────────────────
+// Registered once. Each handler resolves the window from the sender,
+// so it works regardless of how many windows exist.
+function registerWindowControls() {
+  ipcMain.on('window:minimize', (e) => BrowserWindow.fromWebContents(e.sender)?.minimize())
+  ipcMain.on('window:toggle-maximize', (e) => {
+    const w = BrowserWindow.fromWebContents(e.sender)
+    if (!w) return
+    if (w.isMaximized()) w.unmaximize()
+    else w.maximize()
+  })
+  ipcMain.on('window:close', (e) => BrowserWindow.fromWebContents(e.sender)?.close())
+  ipcMain.handle('window:is-maximized', (e) =>
+    BrowserWindow.fromWebContents(e.sender)?.isMaximized() ?? false
+  )
+}
+
 app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.zeusanimation.library')
+
+  registerWindowControls()
 
   // 1. Tampilkan splash dulu
   const splash = createSplash()

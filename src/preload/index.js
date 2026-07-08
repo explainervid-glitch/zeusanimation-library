@@ -34,6 +34,17 @@ const api = {
 
   // AI Chat
   aiChat:              (payload)     => ipcRenderer.invoke('ai-chat', payload),
+
+  // Window controls (frameless title bar)
+  windowMinimize:       ()  => ipcRenderer.send('window:minimize'),
+  windowToggleMaximize: ()  => ipcRenderer.send('window:toggle-maximize'),
+  windowClose:          ()  => ipcRenderer.send('window:close'),
+  windowIsMaximized:    ()  => ipcRenderer.invoke('window:is-maximized'),
+  onWindowMaximizedChanged: (cb) => {
+    const handler = (_e, v) => cb(v)
+    ipcRenderer.on('window:maximized-changed', handler)
+    return () => ipcRenderer.removeListener('window:maximized-changed', handler)
+  },
 }
 
 if (process.contextIsolated) {

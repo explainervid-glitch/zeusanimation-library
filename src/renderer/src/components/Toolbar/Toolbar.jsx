@@ -6,6 +6,7 @@ import useBatchStore    from '../../store/useBatchStore'
 import SettingsModal    from './SettingsModal'
 import AddModal         from './AddModal'
 import BatchTaggerModal from './BatchTaggerModal'
+import WindowControls   from './WindowControls'
 import icon from '../../assets/icon.png'
 
 const PACK_LIST = [
@@ -141,7 +142,7 @@ function SearchBar() {
     : (scopeLabel ? `Search in ${scopeLabel}...` : 'Select a category first')
 
   return (
-    <div className="flex items-center gap-1.5 flex-1 max-w-xs">
+    <div className="flex items-center gap-1.5 flex-1 max-w-xs" style={{ WebkitAppRegion: 'no-drag' }}>
       {/* AI Search toggle */}
       <button
         onClick={handleToggleAi}
@@ -234,12 +235,15 @@ export default function Toolbar() {
 
   return (
     <>
-      <header className="h-12 bg-c-surface border-b border-c-border flex items-center px-4 gap-3 flex-shrink-0">
+      <header
+        className="h-12 bg-c-surface border-b border-c-border flex items-center px-4 gap-3 flex-shrink-0"
+        style={{ WebkitAppRegion: 'drag' }}
+      >
 
         {/* Logo + Pack switcher */}
-        <div className="flex items-center gap-2.5 flex-shrink-0">
+        <div className="flex items-center gap-2.5 flex-shrink-0" style={{ WebkitAppRegion: 'no-drag' }}>
           <img src={icon} alt="Zeus" style={{ width: 25, height: 25 }} />
-          {/* <span className="text-sm font-bold text-c-text tracking-tight">ZeusPack</span> */}
+          <span className="text-sm font-bold text-c-text tracking-tight">ZeusPack</span>
           <span className="w-px h-4 bg-c-border-2" />
           <PackDropdown />
         </div>
@@ -250,7 +254,7 @@ export default function Toolbar() {
         </div>
 
         {/* Actions */}
-        <div className="flex items-center gap-2 flex-shrink-0">
+        <div className="flex items-center gap-2 flex-shrink-0" style={{ WebkitAppRegion: 'no-drag' }}>
 
           {/* Batch Mode: NOT Active */}
           {!isBatchMode && (
@@ -343,6 +347,9 @@ export default function Toolbar() {
           </button>
 
         </div>
+
+        {/* Window controls — flush to the top-right corner */}
+        <WindowControls />
       </header>
 
       <AddModal isOpen={showAddModal} onClose={() => setShowAddModal(false)} />
