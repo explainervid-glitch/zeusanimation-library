@@ -1,12 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Plus, Settings, ChevronDown, Check, Package, Search, X, Astroid, RefreshCw, Sparkles, Columns2, FolderPlus, FilePlus, MoreVertical } from 'lucide-react'
+import { Plus, Settings, ChevronDown, Check, Package, Search, X, Astroid, RefreshCw, Sparkles, Columns2, FilePlus, MoreVertical } from 'lucide-react'
 import useAssetStore    from '../../store/useAssetStore'
 import useSettingsStore from '../../store/useSettingsStore'
 import useBatchStore    from '../../store/useBatchStore'
 import useLayoutStore   from '../../store/useLayoutStore'
 import SettingsModal    from './SettingsModal'
 import AddModal         from './AddModal'
-import AddProjectModal  from './AddProjectModal'
 import BatchTaggerModal from './BatchTaggerModal'
 import WindowControls   from './WindowControls'
 import icon from '../../assets/icon.png'
@@ -217,7 +216,7 @@ function SearchBar() {
 }
 
 // ─── ADD DROPDOWN ─────────────────────────────────────────────
-function AddDropdown({ disabled, onAddProject, onAddAsset }) {
+function AddDropdown({ disabled, onAddAsset, onBatchTag, batchDisabled, batchTitle }) {
   const [open, setOpen] = useState(false)
   const ref             = useRef(null)
 
@@ -252,14 +251,17 @@ function AddDropdown({ disabled, onAddProject, onAddAsset }) {
           min-w-[210px] overflow-hidden py-1"
         >
           <button
-            onClick={() => pick(onAddProject)}
+            onClick={() => { if (!batchDisabled) pick(onBatchTag) }}
+            disabled={batchDisabled}
+            title={batchTitle}
             className="w-full flex items-start gap-2.5 px-3 py-2 text-left
-              text-c-text-2 hover:bg-c-raised hover:text-c-text transition-all"
+              text-c-text-2 hover:bg-c-raised hover:text-c-text transition-all
+              disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
           >
-            <FolderPlus size={14} className="text-c-accent flex-shrink-0 mt-0.5" />
+            <Astroid size={14} className="text-c-accent flex-shrink-0 mt-0.5" />
             <div>
-              <p className="text-xs font-medium">Project</p>
-              <p className="text-[10px] text-c-text-4">New project folder + structure</p>
+              <p className="text-xs font-medium">Batch Tag</p>
+              <p className="text-[10px] text-c-text-4">Tag multiple assets at once</p>
             </div>
           </button>
           <button
@@ -356,7 +358,6 @@ export default function Toolbar() {
   const { isBatchMode, selectedIds, enterBatchMode, exitBatchMode } = useBatchStore()
   const { splitOpen, toggleSplit } = useLayoutStore()
   const [showAddModal, setShowAddModal]   = useState(false)
-  const [showProjectModal, setShowProjectModal] = useState(false)
   const [showBatchModal, setShowBatchModal] = useState(false)
   const [refreshing, setRefreshing]       = useState(false)
   const [refreshed, setRefreshed]         = useState(false)
@@ -393,29 +394,6 @@ export default function Toolbar() {
         {/* Actions */}
         <div className="flex items-center gap-2 flex-shrink-0" style={{ WebkitAppRegion: 'no-drag' }}>
 
-          {/* Batch Mode: NOT Active */}
-          {!isBatchMode && (
-            <button
-              onClick={() => enterBatchMode()}
-              disabled={!selectedCategory || assets.length === 0 || scanning}
-              title={
-                !selectedCategory ? 'Select a category first'
-                : assets.length === 0 ? 'No assets in this category'
-                : scanning ? 'Cannot tag while scanning'
-                : 'Batch Tagger'
-              }
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
-                border transition-all
-                ${scanning || !selectedCategory || assets.length === 0
-                  ? 'bg-c-raised text-c-text-4 border-c-border cursor-not-allowed opacity-50'
-                  : 'bg-c-raised text-c-text-2 border-c-border-2 hover:bg-c-hover hover:text-c-text'
-                }`}
-            >
-              <Astroid size={13} />
-              Batch
-            </button>
-          )}
-
           {/* Batch Mode: ACTIVE - Cancel & Start Tagging buttons */}
           {isBatchMode && (
             <>
@@ -447,8 +425,16 @@ export default function Toolbar() {
 
           <AddDropdown
             disabled={scanning}
-            onAddProject={() => setShowProjectModal(true)}
             onAddAsset={() => setShowAddModal(true)}
+            onBatchTag={() => enterBatchMode()}
+            batchDisabled={isBatchMode || !selectedCategory || assets.length === 0 || scanning}
+            batchTitle={
+              isBatchMode ? 'Already tagging'
+              : !selectedCategory ? 'Select a category first'
+              : assets.length === 0 ? 'No assets in this category'
+              : scanning ? 'Cannot tag while scanning'
+              : 'Tag multiple assets at once'
+            }
           />
 
           {/* Overflow menu — Split view / Sync / Settings */}
@@ -469,7 +455,6 @@ export default function Toolbar() {
       </header>
 
       <AddModal isOpen={showAddModal} onClose={() => setShowAddModal(false)} />
-      <AddProjectModal isOpen={showProjectModal} onClose={() => setShowProjectModal(false)} />
       <SettingsModal />
       <BatchTaggerModal isOpen={showBatchModal} onClose={() => setShowBatchModal(false)} />
     </>
