@@ -64,22 +64,26 @@ export default function BottomBar() {
           ) : (
             <button
               onClick={handleSelect}
-              className="text-c-text hover:text-c-text transition-colors flex-shrink-0"
+              className="flex items-center px-3 py-1.5 rounded-lg text-xs font-medium
+                bg-c-raised border border-c-border-2 text-c-text-2
+                hover:bg-c-hover hover:text-c-text transition-all flex-shrink-0"
               title="Pick an existing project folder"
             >
               Select Project
             </button>
           )}
 
-          <button
-            onClick={() => setShowProjectModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
-              bg-c-accent text-c-on-accent hover:bg-c-accent-h transition-all"
-            title="Create a new project folder + structure"
-          >
-            <FolderPlus size={13} />
-            Add Project
-          </button>
+          {!activeProject && (
+            <button
+              onClick={() => setShowProjectModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
+                bg-c-accent text-c-on-accent hover:bg-c-accent-h transition-all"
+              title="Create a new project folder + structure"
+            >
+              <FolderPlus size={13} />
+              Add Project
+            </button>
+          )}
 
           {activeProject && (
             <button

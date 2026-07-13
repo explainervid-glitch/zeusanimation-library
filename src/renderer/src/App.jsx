@@ -10,6 +10,7 @@ import useAssetStore from './store/useAssetStore'
 import useAISidebarStore from './store/useAISidebarStore'
 import useSettingsStore from './store/useSettingsStore'
 import useLayoutStore from './store/useLayoutStore'
+import useSessionStore from './store/useSessionStore'
 
 function ScanOverlay({ logs }) {
   const bottomRef = useRef(null)
@@ -61,14 +62,34 @@ function ScanOverlay({ logs }) {
 }
 
 export default function App() {
-  const { switchPack, error, clearError, scanning, scanLogs, startDbPolling, stopDbPolling } = useAssetStore()
+  const { restoreSession, error, clearError, scanning, scanLogs, startDbPolling, stopDbPolling } = useAssetStore()
   const { theme } = useSettingsStore()
   const splitOpen = useLayoutStore((s) => s.splitOpen)
 
   useEffect(() => {
-    switchPack(0)
+    // Capture the saved view BEFORE anything mutates the store.
+    const saved = useSessionStore.getState()
+
+    // Mirror pack/style/category changes back into the persisted session so
+    // the next launch reopens here. Only writes when one of them changes.
+    let prev = { packIndex: null, styleId: null, category: null }
+    const unsub = useAssetStore.subscribe((state) => {
+      if (state.activePackIndex !== prev.packIndex
+        || state.selectedStyleId !== prev.styleId
+        || state.selectedCategory !== prev.category) {
+        prev = {
+          packIndex: state.activePackIndex,
+          styleId:   state.selectedStyleId,
+          category:  state.selectedCategory,
+        }
+        useSessionStore.getState().setView(prev)
+      }
+    })
+
+    restoreSession({ packIndex: saved.packIndex, styleId: saved.styleId, category: saved.category })
     startDbPolling()
-    return () => stopDbPolling()
+
+    return () => { stopDbPolling(); unsub() }
   }, [])
 
   return (

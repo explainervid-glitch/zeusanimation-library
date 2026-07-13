@@ -234,6 +234,30 @@ const useAssetStore = create((set, get) => ({
     }
   },
 
+  // ─── RESTORE LAST SESSION ────────────────────────────────────
+  // Reopen the last view: pack → style → category (loads its assets).
+  // Each step verifies the target still exists in the freshly-loaded tree.
+  restoreSession: async (session) => {
+    const packIndex = session?.packIndex ?? 0
+    await get().switchPack(packIndex)
+
+    const { tree } = get()
+    if (!tree?.length) return
+
+    const styleId = session?.styleId
+    if (styleId != null && tree.some(s => s.id === styleId)) {
+      set({ selectedStyleId: styleId })
+    }
+
+    const category = session?.category
+    if (category?.id != null) {
+      const exists = tree.some(s =>
+        (s.types || []).some(t => (t.categories || []).some(c => c.id === category.id))
+      )
+      if (exists) await get().selectCategory(category)
+    }
+  },
+
   // ─── SWITCH PACK ─────────────────────────────────────────────
   switchPack: async (index) => {
     set({

@@ -6,6 +6,7 @@ import {
 import useAssetStore from '../../store/useAssetStore'
 import { usePanelStore, usePanelStoreApi } from '../../store/PanelStoreContext'
 import { usePanelSidebarStore } from '../../store/SidebarStoreContext'
+import useSessionStore from '../../store/useSessionStore'
 import EditCategoryModal from './EditCategoryModal'
 
 const TYPE_ICON = {
@@ -57,15 +58,25 @@ function CategoryItem({ category, styleId, type, styleTypeId, isUncategorized })
 
 // ─── TYPE SECTION ─────────────────────────────────────────────
 function TypeSection({ typeData, styleId }) {
-  const [open, setOpen]             = useState(false)
+  const toggleOpenType = useSessionStore(s => s.toggleOpenType)
+  // Init from the persisted session so expanded sections restore on launch.
+  const [open, setOpen] = useState(() => useSessionStore.getState().openTypeIds.includes(typeData.id))
   const [editCatOpen, setEditCatOpen] = useState(false)
+
+  const handleToggle = () => {
+    setOpen(o => {
+      const next = !o
+      toggleOpenType(typeData.id, next)
+      return next
+    })
+  }
 
   return (
     <div className="mb-1">
       <div className="flex items-center group/type">
         {/* Expand toggle + label */}
         <button
-          onClick={() => setOpen(o => !o)}
+          onClick={handleToggle}
           className="flex-1 flex items-center gap-1.5 pl-2 pr-1 py-1.5
             text-[11px] font-semibold text-c-text uppercase tracking-wider
             hover:text-c-text transition-colors min-w-0"
@@ -412,105 +423,117 @@ export default function Sidebar() {
 
   const selectedStyle = tree.find(s => s.id === selectedStyleId) || null
 
-  const resizeRef  = useRef(null)
   const sidebarRef = useRef(null)
   const isResizing = useRef(false)
+  // true while dragging the resize handle → temporarily disables the width
+  // transition so the sidebar tracks the cursor instantly instead of lagging.
+  const [dragging, setDragging] = useState(false)
 
   useEffect(() => {
-    const handleMouseDown = (e) => {
-      if (e.button !== 0) return
-      isResizing.current = true
-      e.preventDefault()
-    }
     const handleMouseMove = (e) => {
       if (!isResizing.current || !sidebarRef.current) return
       const rect     = sidebarRef.current.parentElement.getBoundingClientRect()
       const newWidth = e.clientX - rect.left
       if (newWidth > 150 && newWidth < 500) setSidebarWidth(newWidth)
     }
-    const handleMouseUp = () => { isResizing.current = false }
-
-    resizeRef.current?.addEventListener('mousedown', handleMouseDown)
+    const handleMouseUp = () => {
+      if (isResizing.current) { isResizing.current = false; setDragging(false) }
+    }
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
     return () => {
-      resizeRef.current?.removeEventListener('mousedown', handleMouseDown)
       document.removeEventListener('mousemove', handleMouseMove)
       document.removeEventListener('mouseup', handleMouseUp)
     }
   }, [setSidebarWidth])
 
-  if (!isOpen) {
-    return (
-      <div className="w-14 h-full bg-c-surface border-r border-c-border flex flex-col items-center justify-start pt-3 flex-shrink-0">
-        <button
-          onClick={toggleSidebar}
-          className="p-2 rounded-lg bg-c-raised hover:bg-c-hover text-c-text-3 hover:text-c-text transition-all"
-          title="Show sidebar"
-        >
-          <PanelLeftOpen size={18} />
-        </button>
-      </div>
-    )
+  const startResize = (e) => {
+    if (e.button !== 0) return
+    isResizing.current = true
+    setDragging(true)
+    e.preventDefault()
   }
+
+  // Single container whose WIDTH animates between collapsed (56px) and the
+  // user's width, so hiding/showing the sidebar slides instead of snapping.
+  const COLLAPSED_W = 56
 
   return (
     <div
       ref={sidebarRef}
-      className="h-full bg-c-surface border-r border-c-border flex flex-col overflow-hidden flex-shrink-0 relative"
-      style={{ width: `${width}px` }}
+      className={`h-full bg-c-surface border-r border-c-border flex flex-col overflow-hidden flex-shrink-0 relative
+        ${dragging ? '' : 'transition-[width] duration-300 ease-in-out'}`}
+      style={{ width: `${isOpen ? width : COLLAPSED_W}px` }}
     >
-      {/* Header */}
-      <div className="px-3 py-2.5 border-b border-c-border flex items-center justify-between flex-shrink-0">
-        <p className="text-[10px] text-c-text-4 uppercase tracking-widest font-medium">
-          Assets Library
-        </p>
-        <button
-          onClick={toggleSidebar}
-          className="p-1 rounded hover:bg-c-hover text-c-text-3 hover:text-c-text transition-all"
-          title="Hide sidebar"
-        >
-          <PanelLeftClose size={16} />
-        </button>
-      </div>
+      {!isOpen ? (
+        /* Collapsed — just the reopen button */
+        <div className="flex flex-col items-center pt-3">
+          <button
+            onClick={toggleSidebar}
+            className="p-2 rounded-lg bg-c-raised hover:bg-c-hover text-c-text-3 hover:text-c-text transition-all"
+            title="Show sidebar"
+          >
+            <PanelLeftOpen size={18} />
+          </button>
+        </div>
+      ) : (
+        /* Expanded — fixed inner width so content doesn't reflow mid-animation */
+        <div className="h-full flex flex-col" style={{ width: `${width}px` }}>
+          {/* Header */}
+          <div className="px-3 py-2.5 border-b border-c-border flex items-center justify-between flex-shrink-0">
+            <p className="text-[10px] text-c-text-4 uppercase tracking-widest font-medium">
+              Assets Library
+            </p>
+            <button
+              onClick={toggleSidebar}
+              className="p-1 rounded hover:bg-c-hover text-c-text-3 hover:text-c-text transition-all"
+              title="Hide sidebar"
+            >
+              <PanelLeftClose size={16} />
+            </button>
+          </div>
 
-      {/* Style horizontal scroll */}
-      {!treeLoading && !scanning && tree.length > 0 && (
-        <StyleScrollBar
-          tree={tree}
-          selectedStyleId={selectedStyleId}
-          onSelectStyle={handleSelectStyle}
+          {/* Style horizontal scroll */}
+          {!treeLoading && !scanning && tree.length > 0 && (
+            <StyleScrollBar
+              tree={tree}
+              selectedStyleId={selectedStyleId}
+              onSelectStyle={handleSelectStyle}
+            />
+          )}
+
+          {/* Loading */}
+          {(treeLoading || scanning) && (
+            <div className="flex items-center gap-2 px-3 py-4 text-c-text-3 text-xs">
+              <div className="w-3 h-3 border border-c-border-2 border-t-c-accent rounded-full animate-spin" />
+              {scanning ? 'Scanning folder...' : 'Memuat aset...'}
+            </div>
+          )}
+
+          {/* Empty */}
+          {!treeLoading && !scanning && tree.length === 0 && (
+            <div className="px-3 py-4 text-c-text-4 text-xs text-center">
+              <p>No assets found.</p>
+              <p className="mt-1">Click Rescan in the toolbar.</p>
+            </div>
+          )}
+
+          {/* Category tree — mr-1 clears the resize handle so the scrollbar doesn't collide */}
+          <div className="flex-1 overflow-y-auto px-2 py-2 mr-1">
+            {selectedStyle && selectedStyle.types.map(typeData => (
+              <TypeSection key={typeData.id} typeData={typeData} styleId={selectedStyle.id} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Resize handle — only when expanded */}
+      {isOpen && (
+        <div
+          onMouseDown={startResize}
+          className="absolute right-0 top-0 w-1 h-full cursor-col-resize hover:bg-c-accent/50 transition-colors z-10"
         />
       )}
-
-      {/* Loading */}
-      {(treeLoading || scanning) && (
-        <div className="flex items-center gap-2 px-3 py-4 text-c-text-3 text-xs">
-          <div className="w-3 h-3 border border-c-border-2 border-t-c-accent rounded-full animate-spin" />
-          {scanning ? 'Scanning folder...' : 'Memuat aset...'}
-        </div>
-      )}
-
-      {/* Empty */}
-      {!treeLoading && !scanning && tree.length === 0 && (
-        <div className="px-3 py-4 text-c-text-4 text-xs text-center">
-          <p>No assets found.</p>
-          <p className="mt-1">Click Rescan in the toolbar.</p>
-        </div>
-      )}
-
-      {/* Category tree — mr-1 clears the resize handle so the scrollbar doesn't collide */}
-      <div className="flex-1 overflow-y-auto px-2 py-2 mr-1">
-        {selectedStyle && selectedStyle.types.map(typeData => (
-          <TypeSection key={typeData.id} typeData={typeData} styleId={selectedStyle.id} />
-        ))}
-      </div>
-
-      {/* Resize handle */}
-      <div
-        ref={resizeRef}
-        className="absolute right-0 top-0 w-1 h-full cursor-col-resize hover:bg-c-accent/50 transition-colors z-10"
-      />
     </div>
   )
 }

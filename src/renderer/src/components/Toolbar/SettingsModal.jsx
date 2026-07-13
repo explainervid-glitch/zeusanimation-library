@@ -418,25 +418,25 @@ export default function SettingsModal() {
             {embedStatus === 'error' && 'Embed Failed'}
           </button>
 
-          {/* Save — right */}
+          {/* Actions — right (OK is the primary/accent button) */}
           <div className="flex gap-2">
-            <button
-              onClick={saveSettings}
-              disabled={loading}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-c-raised border border-c-border-2 text-c-text-2 hover:bg-c-hover hover:text-c-text transition-all disabled:opacity-40"
-            >
-              {saved
-                ? <><Check size={12} className="text-green-400" /> Saved</>
-                : <><Save size={12} /> Save</>
-              }
-            </button>
             <button
               onClick={handleSaveAndRescan}
               disabled={loading || scanning}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-c-accent text-c-on-accent hover:bg-c-accent-h transition-all disabled:opacity-40"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-c-raised border border-c-border-2 text-c-text-2 hover:bg-c-hover hover:text-c-text transition-all disabled:opacity-40"
             >
               <RefreshCw size={12} className={scanning ? 'animate-spin' : ''} />
               Save & Rescan
+            </button>
+            <button
+              onClick={saveSettings}
+              disabled={loading}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-c-accent text-c-on-accent hover:bg-c-accent-h transition-all disabled:opacity-40"
+            >
+              {saved
+                ? <><Check size={12} /> Saved</>
+                : <><Save size={12} /> OK</>
+              }
             </button>
           </div>
         </div>
