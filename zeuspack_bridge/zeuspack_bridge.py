@@ -6,7 +6,7 @@
 bl_info = {
     "name":        "ZeusPack Bridge",
     "author":      "ZeusDev - Tegar",
-    "version":     (0, 8, 0),
+    "version":     (0, 9, 3),
     "blender":     (3, 0, 0),
     "location":    "View3D > Sidebar > ZeusPack",
     "description": "Bridge between ZeusPack and Blender for appending collections",
@@ -274,8 +274,106 @@ class ZEUS_OT_create_temp_scene(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _find_collection_parent(col):
+    """Search every scene's collection tree for the direct parent of `col`.
+    Returns (parent_collection, owning_scene) or (None, None) if not found."""
+    for scene in bpy.data.scenes:
+        def search(c):
+            if col.name in c.children.keys():
+                return c
+            for child in c.children:
+                found = search(child)
+                if found is not None:
+                    return found
+            return None
+        parent = search(scene.collection)
+        if parent is not None:
+            return parent, scene
+    return None, None
+
+
+def _collect_all_objects(col, seen=None):
+    """Recursively gather every object in `col` and its nested sub-collections."""
+    if seen is None:
+        seen = set()
+    objs = []
+    for o in col.objects:
+        if o.name not in seen:
+            seen.add(o.name)
+            objs.append(o)
+    for child in col.children:
+        objs.extend(_collect_all_objects(child, seen))
+    return objs
+
+
+def _snap_collection_to_cursor(col, target_scene):
+    """Move the top-level (parentless) object(s) inside `col` so the
+    collection lands at the *target scene's* 3D cursor (each Scene keeps
+    its own independent cursor — we deliberately do NOT use context.scene,
+    since that may still be the scene the user is switching FROM),
+    preserving relative offsets if there's more than one root object."""
+    all_objs = _collect_all_objects(col)
+    roots = [o for o in all_objs if o.parent is None]
+    if not roots:
+        return False
+
+    cursor_loc = target_scene.cursor.location
+    anchor = roots[0]
+    delta = cursor_loc - anchor.location.copy()
+    for o in roots:
+        o.location = o.location + delta
+    return True
+
+
+class ZEUS_OT_move_to_main_scene(bpy.types.Operator):
+    """Move the currently selected/active Outliner collection into the
+    main 'Scene', unlinking it from wherever it currently lives (works for
+    plain collections and library-override collections alike)"""
+    bl_idname  = "zeus.move_to_main_scene"
+    bl_label   = "Move to Main Scene"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        col = context.collection
+
+        main_scene = bpy.data.scenes.get(MAIN_SCENE_NAME)
+        if main_scene is None:
+            self.report({'ERROR'}, f"Scene '{MAIN_SCENE_NAME}' not found")
+            return {'CANCELLED'}
+
+        if col is None or col == main_scene.collection:
+            self.report({'ERROR'}, "Select a collection in the Outliner first")
+            return {'CANCELLED'}
+
+        parent, parent_scene = _find_collection_parent(col)
+        if parent is None:
+            self.report({'WARNING'}, f"Could not find current parent of '{col.name}'")
+            return {'CANCELLED'}
+
+        if parent == main_scene.collection and parent_scene == main_scene:
+            self.report({'INFO'}, f"'{col.name}' is already in '{MAIN_SCENE_NAME}'")
+            return {'CANCELLED'}
+
+        main_scene.collection.children.link(col)
+        parent.children.unlink(col)
+
+        snapped = _snap_collection_to_cursor(col, main_scene)
+
+        # Switch the active scene to the target now that the collection has
+        # actually landed there — lets you see the result immediately instead
+        # of staying on the (now empty, for this collection) source scene.
+        context.window.scene = main_scene
+
+        if snapped:
+            self.report({'INFO'}, f"Moved '{col.name}' to '{MAIN_SCENE_NAME}' at 3D cursor, switched scene")
+        else:
+            self.report({'INFO'}, f"Moved '{col.name}' to '{MAIN_SCENE_NAME}' (no root object found to snap), switched scene")
+        return {'FINISHED'}
+
+
 class ZEUS_OT_delete_temp_scene(bpy.types.Operator):
-    """Delete the 'Temporary' scene and switch back to 'Scene'"""
+    """Delete the 'Temporary' scene, switch back to 'Scene', and purge all
+    unused (orphan) data left behind"""
     bl_idname  = "zeus.delete_temp_scene"
     bl_label   = "Delete Temporary Scene"
     bl_options = {'REGISTER'}
@@ -298,17 +396,119 @@ class ZEUS_OT_delete_temp_scene(bpy.types.Operator):
 
         context.window.scene = target          # leave Temporary before removing it
         bpy.data.scenes.remove(temp)
-        self.report({'INFO'}, f"Deleted '{TEMP_SCENE_NAME}', switched to '{target.name}'")
+
+        # Purge orphan data left behind. Multiple passes because purging can
+        # cascade (e.g. freeing a collection frees meshes, which frees images).
+        for _ in range(3):
+            bpy.data.orphans_purge(do_local_ids=True, do_linked_ids=True, do_recursive=True)
+
+        self.report({'INFO'}, f"Deleted '{TEMP_SCENE_NAME}', purged unused data, switched to '{target.name}'")
+        return {'FINISHED'}
+
+
+class ZEUS_OT_localize(bpy.types.Operator):
+    """Make the selection local — breaks the library link so it can be edited
+    here. Works on the selected object(s) + their child hierarchy, OR on the
+    active Outliner collection + everything inside it (objects, sub-collections,
+    and their data-blocks)."""
+    bl_idname  = "zeus.localize"
+    bl_label   = "Localize Selected"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        if context.selected_objects:
+            return True
+        # Also enable when a real (non-master) collection is active/selected.
+        col = context.collection
+        return col is not None and col != context.scene.collection
+
+    @staticmethod
+    def _make_objects_local(context, objs):
+        """Select the objects that are in the view layer, then make them + their
+        data + materials local (the operator handles collection housekeeping)."""
+        selected = []
+        for o in objs:
+            try:
+                o.select_set(True)
+                selected.append(o)
+            except RuntimeError:
+                pass  # not in the active view layer — skip it
+        if not selected:
+            return 0
+        if context.view_layer.objects.active not in selected:
+            context.view_layer.objects.active = selected[0]
+        try:
+            bpy.ops.object.make_local(type='SELECT_OBDATA_MATERIAL')
+        except RuntimeError:
+            pass
+        return len(selected)
+
+    def execute(self, context):
+        active_col    = context.collection
+        is_collection = active_col is not None and active_col != context.scene.collection
+
+        if is_collection:
+            # ── Collection mode: the collection + its whole tree ──
+            cols, objs = [], []
+            seen_c, seen_o = set(), set()
+
+            def walk(c):
+                if c.name in seen_c:
+                    return
+                seen_c.add(c.name)
+                cols.append(c)
+                for o in c.objects:
+                    if o.name not in seen_o:
+                        seen_o.add(o.name)
+                        objs.append(o)
+                for ch in c.children:
+                    walk(ch)
+
+            walk(active_col)
+
+            # 1) Make the collection data-blocks themselves local first, so the
+            #    containers are local before their contents get localized.
+            for c in cols:
+                if c.library is not None:
+                    try:
+                        c.make_local()
+                    except Exception:
+                        pass
+
+            # 2) Make the objects (+ data + materials) inside them local.
+            n = self._make_objects_local(context, objs)
+            self.report({'INFO'}, f"Localized collection '{active_col.name}' ({n} object(s))")
+            return {'FINISHED'}
+
+        # ── Object mode: selected objects + their full child hierarchy ──
+        roots = list(context.selected_objects)
+        if not roots:
+            self.report({'WARNING'}, "Select an object or a collection first")
+            return {'CANCELLED'}
+
+        objs, seen, stack = [], set(), list(roots)
+        while stack:
+            o = stack.pop()
+            if o.name in seen:
+                continue
+            seen.add(o.name)
+            objs.append(o)
+            for child in o.children:
+                stack.append(child)
+
+        n = self._make_objects_local(context, objs)
+        self.report({'INFO'}, f"Localized {n} object(s) + data")
         return {'FINISHED'}
 
 
 # ─── PANEL ────────────────────────────────────────────────────
 class ZEUS_PT_status(bpy.types.Panel):
-    bl_label       = "Bridge Status"
+    bl_label       = "Bridge"
     bl_idname      = "ZEUS_PT_status"
     bl_space_type  = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category    = 'Bridge - ZeusPack'
+    bl_category    = 'ZeusPack - Bridge'
 
     def draw(self, context):
         layout = self.layout
@@ -320,23 +520,38 @@ class ZEUS_PT_status(bpy.types.Panel):
         layout.separator()
         layout.label(text="Temp Scene:")
         col = layout.column(align=True)
-        col.operator("zeus.create_temp_scene", text="Create Scene", icon='ADD')
-        col.operator("zeus.delete_temp_scene", text="Delete Scene", icon='TRASH')
+        col.operator("zeus.create_temp_scene", text="Temporary Scene", icon='ADD')
+        col.operator("zeus.move_to_main_scene", text="Move to Scene", icon='FORWARD')
+        col.operator("zeus.delete_temp_scene", text="Delete Temporary Scene", icon='TRASH')
+
+        layout.separator()
+        layout.label(text="Selection:")
+        layout.operator("zeus.localize", text="Localize", icon='UNLINKED')
+
+
+# ─── OUTLINER CONTEXT MENU ─────────────────────────────────────
+def draw_move_to_main_in_collection_menu(self, context):
+    self.layout.separator()
+    self.layout.operator("zeus.move_to_main_scene", text="Move to Main Scene", icon='FORWARD')
 
 
 # ─── REGISTER ─────────────────────────────────────────────────
 _classes = (
     ZEUS_OT_create_temp_scene,
+    ZEUS_OT_move_to_main_scene,
     ZEUS_OT_delete_temp_scene,
-    ZEUS_PT_status, 
+    ZEUS_OT_localize,
+    ZEUS_PT_status,
 )
 
 def register():
     for cls in _classes:
         bpy.utils.register_class(cls)
+    bpy.types.OUTLINER_MT_collection.append(draw_move_to_main_in_collection_menu)
     start_server()
 
 def unregister():
+    bpy.types.OUTLINER_MT_collection.remove(draw_move_to_main_in_collection_menu)
     for cls in reversed(_classes):
         bpy.utils.unregister_class(cls)
     stop_server()

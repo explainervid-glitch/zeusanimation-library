@@ -3,7 +3,7 @@
 bl_info = {
     "name":        "ZeusPack Bridge",
     "author":      "ZeusDev - Tegar",
-    "version":     (0, 8, 0),
+    "version":     (0, 9, 3),
     "blender":     (4, 0, 0),
     "location":    "View3D > Sidebar > Bridge - ZeusPack",
     "description": "Bridge between ZeusPack and Blender (append, temp scene tools)",
