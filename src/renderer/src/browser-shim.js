@@ -43,12 +43,14 @@ const mockApi = {
   createAsset:         (payload)     => Promise.resolve({ success: false, error: 'Browser mode' }),
   createProject:       (payload)     => Promise.resolve({ success: false, error: 'Browser mode' }),
   sendToProject:       (payload)     => Promise.resolve({ success: false, error: 'Browser mode' }),
+  deleteProjectFile:   (filePath)    => Promise.resolve({ success: false, error: 'Browser mode' }),
   openPath:            (path)        => Promise.resolve({ success: false, error: 'Browser mode' }),
 
   // Blender Bridge
   blenderScanPorts:      ()                                  => Promise.resolve([]),
   blenderGetCollections: (filePath, port)                    => Promise.resolve([]),
   blenderAppend:         ({ filePath, collection, port })    => Promise.resolve({ success: false, error: 'Browser mode' }),
+  blenderLink:           ({ filePath, collection, port })    => Promise.resolve({ success: false, error: 'Browser mode' }),
 
   // Settings
   getSettings:         ()            => Promise.resolve({

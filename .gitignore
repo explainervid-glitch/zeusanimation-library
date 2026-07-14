@@ -6,3 +6,5 @@ build/
 .vscode/
 npm-debug.log*
 yarn-error.log*
+__pycache__/
+*.pyc

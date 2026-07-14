@@ -22,12 +22,14 @@ const api = {
   createAsset:         (payload)     => ipcRenderer.invoke('create-asset', payload),
   createProject:       (payload)     => ipcRenderer.invoke('create-project', payload),
   sendToProject:       (payload)     => ipcRenderer.invoke('send-to-project', payload),
+  deleteProjectFile:   (filePath)    => ipcRenderer.invoke('delete-project-file', filePath),
   openPath:            (path)        => ipcRenderer.invoke('open-path', path),
 
   // Blender Bridge — ganti 3 baris lama dengan ini
   blenderScanPorts:      ()                                  => ipcRenderer.invoke('blender-scan-ports'),
   blenderGetCollections: (filePath, port)                    => ipcRenderer.invoke('blender-get-collections', filePath, port),
   blenderAppend:         ({ filePath, collection, port })    => ipcRenderer.invoke('blender-append', { filePath, collection, port }),
+  blenderLink:           ({ filePath, collection, port })    => ipcRenderer.invoke('blender-link', { filePath, collection, port }),
 
   // Settings
   getSettings:         ()            => ipcRenderer.invoke('get-settings'),

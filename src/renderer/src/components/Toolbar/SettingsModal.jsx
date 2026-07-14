@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { X, FolderOpen, Save, Check, RefreshCw, Plus, Trash2, File, Loader, Database, Sun, Moon } from 'lucide-react'
+import { X, FolderOpen, Save, Check, RefreshCw, Plus, Trash2, File, Loader, Database, Sun, Moon, Link2 } from 'lucide-react'
 import useSettingsStore, { TEMPLATE_DEFS } from '../../store/useSettingsStore'
 import useAssetStore from '../../store/useAssetStore'
 
@@ -14,6 +14,7 @@ export default function SettingsModal() {
     ragUrl, updateRagUrl,
     loading, saved, saveSettings,
     theme, setTheme,
+    blenderLinkEnabled, toggleBlenderLinkEnabled,
   } = useSettingsStore()
   
   const { rescan, scanning } = useAssetStore()
@@ -220,6 +221,32 @@ export default function SettingsModal() {
                 {theme === 'dark' ? <Moon size={12} /> : <Sun size={12} />}
                 <span className="capitalize">{theme}</span>
               </button>
+            </div>
+
+            {/* ── Import Behavior Toggle ── */}
+            <div className="pb-3 border-b border-c-border">
+              <label className="text-xs font-semibold text-c-text uppercase tracking-wider block mb-2">
+                Character Import
+              </label>
+              <button
+                onClick={toggleBlenderLinkEnabled}
+                className="flex items-center gap-2 text-[11px] text-c-text-3 hover:text-c-text transition-colors"
+                title={blenderLinkEnabled ? 'Disable Link to Blender' : 'Enable Link to Blender'}
+              >
+                <span className="relative inline-block w-8 h-4 rounded-full bg-c-raised border border-c-border-2 transition-colors">
+                  <span
+                    className={`absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-c-accent transition-all duration-200
+                      ${blenderLinkEnabled ? 'left-4' : 'left-0.5'}`}
+                  />
+                </span>
+                <Link2 size={12} />
+                <span>{blenderLinkEnabled ? 'Link to Blender' : 'Send to Project only'}</span>
+              </button>
+              <p className="text-[10px] text-c-text-4 mt-1.5 leading-relaxed">
+                {blenderLinkEnabled
+                  ? 'Import copies a character into the project AND links it into Blender.'
+                  : 'Import only copies a character into the project and opens the file.'}
+              </p>
             </div>
 
             {/* Unified Template Files Box */}

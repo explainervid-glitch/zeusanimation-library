@@ -1,10 +1,12 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
-import { FileX, Pencil, Link, Check, ArrowRightFromLine, Loader, FolderInput } from 'lucide-react'
+import { FileX, Pencil, Link, Check, ArrowRightFromLine, Loader, Import } from 'lucide-react'
 import { usePanelStore } from '../../store/PanelStoreContext'
 import useProjectStore from '../../store/useProjectStore'
 import useAssetStore from '../../store/useAssetStore'
+import useSettingsStore from '../../store/useSettingsStore'
 import AssetEditModal from './AssetEditModal'
 import BlenderAppendModal from './BlenderAppendModal'
+import BlenderLinkModal from './BlenderLinkModal'
 
 const TYPE_RATIO = {
   background: [285, 161],
@@ -74,11 +76,13 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
   const openAsset             = usePanelStore((s) => s.openAsset)
   const reloadCurrentCategory = usePanelStore((s) => s.reloadCurrentCategory)
   const activeProject         = useProjectStore((s) => s.activeProject)
+  const blenderLinkEnabled    = useSettingsStore((s) => s.blenderLinkEnabled)
   const [asset, setAsset]                 = useState(initialAsset)
   const [isHovered, setIsHovered]         = useState(false)
   const [previewError, setPreviewError]   = useState(false)
   const [editOpen, setEditOpen]           = useState(false)
   const [appendOpen, setAppendOpen]       = useState(false)
+  const [linkOpen, setLinkOpen]           = useState(false)
   const [copied, setCopied]               = useState(false)
   const [sending, setSending]             = useState(false)
   const videoRef = useRef(null)
@@ -113,8 +117,13 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
     await reloadCurrentCategory()
   }, [reloadCurrentCategory])
 
-  const showAppend        = isBlendFile(asset.raw_path) && type === 'animation'
-  const showSendToProject = type === 'character'
+  const showAppend = isBlendFile(asset.raw_path) && type === 'animation'
+
+  // Single "Import" button for Character cards. The two flows underneath stay
+  // completely separate — this just decides which one runs, based on the
+  // Settings toggle AND whether the file is even linkable (a .blend).
+  const showImport = type === 'character'
+  const canLink     = blenderLinkEnabled && isBlendFile(asset.raw_path)
 
   // Send to Project: copy this character into {project}/Chars, then open it from there.
   const handleSendToProject = useCallback(async (e) => {
@@ -144,6 +153,17 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
       setSending(false)
     }
   }, [activeProject, asset.raw_path, openAsset])
+
+  // Import button router — picks one of the two independent flows above.
+  // Does not change either flow's own logic, just which one runs.
+  const handleImportClick = useCallback((e) => {
+    if (canLink) {
+      e.stopPropagation()
+      setLinkOpen(true)          // BlenderLinkModal: copy + link into Blender
+    } else {
+      handleSendToProject(e)     // plain copy + open from project
+    }
+  }, [canLink, handleSendToProject])
 
   return (
     <>
@@ -265,7 +285,7 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
           )}
 
           {/* Action buttons - Right side */}
-          {!isBatchMode && (showAppend || showSendToProject) && (
+          {!isBatchMode && (showAppend || showImport) && (
             <div className={`
               absolute top-1.5 right-1.5 z-10 flex gap-1
               transition-all duration-150
@@ -285,10 +305,11 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
                 </button>
               )}
 
-              {/* Send to Project — copy into {project}/Chars then open from there */}
-              {showSendToProject && (
+              {/* Import — routes to Send-to-Project or Link-to-Blender per the
+                  Settings toggle (Character Import). Same button either way. */}
+              {showImport && (
                 <button
-                  onClick={handleSendToProject}
+                  onClick={handleImportClick}
                   disabled={!activeProject || sending}
                   className="p-1.5 rounded-md bg-black/60 backdrop-blur-sm
                     text-white/70 hover:text-white hover:bg-black/80
@@ -296,12 +317,13 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
                   title={
                     !activeProject ? 'Select a project first (bottom bar)'
                     : sending       ? 'Sending…'
-                    : `Send to ${activeProject.name}\\Chars`
+                    : canLink       ? `Import & Link to Blender (${activeProject.name}\\Chars)`
+                    : `Import to ${activeProject.name}\\Chars`
                   }
                 >
                   {sending
                     ? <Loader size={11} className="animate-spin" />
-                    : <FolderInput size={11} />}
+                    : <Import size={11} />}
                 </button>
               )}
 
@@ -336,6 +358,15 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
         <BlenderAppendModal
           asset={asset}
           onClose={() => setAppendOpen(false)}
+        />
+      )}
+
+      {/* Blender Link Modal — copies into project, then links from there */}
+      {linkOpen && (
+        <BlenderLinkModal
+          asset={asset}
+          projectPath={activeProject?.path}
+          onClose={() => setLinkOpen(false)}
         />
       )}
     </>

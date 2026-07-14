@@ -1,5 +1,5 @@
 import { ipcMain, shell, dialog } from 'electron'
-import { readFileSync, writeFileSync, existsSync, copyFileSync, mkdirSync, rmSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync, copyFileSync, mkdirSync, rmSync, unlinkSync, statSync } from 'fs'
 import { scanAssets, writeStyleName, readStyleNames } from '../scanner/index.js'
 import {
   getDb, switchDb, reinitDb,
@@ -426,6 +426,21 @@ export async function registerIpcHandlers() {
       }
 
       return { success: true, data: destPath, copied }
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  // ─── DELETE PROJECT FILE ─────────────────────────────────────
+  // Cleanup for cancelled Send-to-Project / Link-to-Blender flows — removes
+  // a file that was just copied into the project. Only ever unlinks a FILE
+  // (never a directory), and is a no-op if it's already gone.
+  ipcMain.handle('delete-project-file', async (_e, filePath) => {
+    try {
+      if (!filePath || !existsSync(filePath)) return { success: true }
+      if (!statSync(filePath).isFile()) return { success: false, error: 'Refusing to delete: not a file' }
+      unlinkSync(filePath)
+      return { success: true }
     } catch (err) {
       return { success: false, error: err.message }
     }
@@ -901,6 +916,23 @@ export async function registerIpcHandlers() {
       return { success: true, data }
     } catch (err) {
       return { success: false, error: `Append gagal: ${err.message}` }
+    }
+  })
+
+  // Link (bukan append) collection ke Blender di port spesifik
+  ipcMain.handle('blender-link', async (_e, { filePath, collection, port = BLENDER_PORT_START }) => {
+    try {
+      const res  = await fetch(`http://localhost:${port}/link`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ file: filePath, collection }),
+        signal:  AbortSignal.timeout(15000),
+      })
+      const data = await res.json()
+      if (!res.ok) return { success: false, error: data.error }
+      return { success: true, data }
+    } catch (err) {
+      return { success: false, error: `Link gagal: ${err.message}` }
     }
   })
 
