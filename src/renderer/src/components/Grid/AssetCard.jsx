@@ -4,6 +4,7 @@ import { usePanelStore } from '../../store/PanelStoreContext'
 import useProjectStore from '../../store/useProjectStore'
 import useAssetStore from '../../store/useAssetStore'
 import useSettingsStore from '../../store/useSettingsStore'
+import useCompileStore from '../../store/useCompileStore'
 import AssetEditModal from './AssetEditModal'
 import BlenderAppendModal from './BlenderAppendModal'
 import BlenderImportModal from './BlenderImportModal'
@@ -78,6 +79,10 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
   const activeProject         = useProjectStore((s) => s.activeProject)
   const blenderImportEnabled  = useSettingsStore((s) => s.blenderImportEnabled)
   const blenderImportMode     = useSettingsStore((s) => s.blenderImportMode)
+  const isCompileMode         = useCompileStore((s) => s.isCompileMode)
+  const compileCharacterId    = useCompileStore((s) => s.character?.id)
+  const compileMovementId     = useCompileStore((s) => s.movement?.id)
+  const pickForCompile        = useCompileStore((s) => s.pickAsset)
   const [asset, setAsset]                 = useState(initialAsset)
   const [isHovered, setIsHovered]         = useState(false)
   const [previewError, setPreviewError]   = useState(false)
@@ -126,6 +131,13 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
   const showImport   = type === 'character'
   const canImport    = blenderImportEnabled && isBlendFile(asset.raw_path)
 
+  // Compile mode: character + animation cards are pickable into the tray slots.
+  const isCompilePickable = isCompileMode && (type === 'character' || type === 'animation')
+  const isCompileSelected = isCompileMode && (
+    (type === 'character' && compileCharacterId === asset.id) ||
+    (type === 'animation' && compileMovementId  === asset.id)
+  )
+
   // Send to Project: copy this character into {project}/Chars, then open it from there.
   const handleSendToProject = useCallback(async (e) => {
     e.stopPropagation()
@@ -169,13 +181,16 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
   return (
     <>
       <div
-        onClick={() => !isBatchMode && openAsset(asset.raw_path)}
+        onClick={() => {
+          if (isCompileMode) { if (isCompilePickable) pickForCompile(asset, type); return }
+          if (!isBatchMode) openAsset(asset.raw_path)
+        }}
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
         className={`
           group relative flex flex-col rounded-md overflow-hidden cursor-pointer
           bg-c-raised border transition-all duration-200
-          ${isSelected && isBatchMode
+          ${(isSelected && isBatchMode) || isCompileSelected
             ? 'border-c-accent bg-c-accent/5 shadow-lg shadow-c-accent/10'
             : isHovered && !isBatchMode
             ? 'border-c-accent/60 shadow-lg shadow-c-accent/10 scale-[1.02]'
@@ -249,7 +264,7 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
           )}
 
           {/* Action buttons - Left side */}
-          {!isBatchMode && (
+          {!isBatchMode && !isCompileMode && (
             <div className={`
               absolute top-1.5 left-1.5 z-10 flex gap-1
               transition-all duration-150
@@ -286,7 +301,7 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
           )}
 
           {/* Action buttons - Right side */}
-          {!isBatchMode && (showAppend || showImport) && (
+          {!isBatchMode && !isCompileMode && (showAppend || showImport) && (
             <div className={`
               absolute top-1.5 right-1.5 z-10 flex gap-1
               transition-all duration-150

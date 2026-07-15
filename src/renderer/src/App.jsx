@@ -6,10 +6,12 @@ import AISidebar from './components/AISidebar/AiSidebar'
 import ThemeIntroModal from './components/ThemeIntroModal'
 import Panel from './components/Panel'
 import BottomBar from './components/BottomBar'
+import CompileTray from './components/Compile/CompileTray'
 import useAssetStore from './store/useAssetStore'
 import useAISidebarStore from './store/useAISidebarStore'
 import useSettingsStore from './store/useSettingsStore'
 import useLayoutStore from './store/useLayoutStore'
+import useCompileStore from './store/useCompileStore'
 import useSessionStore from './store/useSessionStore'
 
 function ScanOverlay({ logs }) {
@@ -65,6 +67,16 @@ export default function App() {
   const { restoreSession, error, clearError, scanning, scanLogs, startDbPolling, stopDbPolling } = useAssetStore()
   const { theme } = useSettingsStore()
   const splitOpen = useLayoutStore((s) => s.splitOpen)
+
+  // Compile is 3D-pack + Import-to-Blender only; leave the mode if either drops.
+  const activePackIndex      = useAssetStore((s) => s.activePackIndex)
+  const blenderImportEnabled = useSettingsStore((s) => s.blenderImportEnabled)
+  const isCompileMode        = useCompileStore((s) => s.isCompileMode)
+  useEffect(() => {
+    if (isCompileMode && !(activePackIndex === 1 && blenderImportEnabled)) {
+      useCompileStore.getState().exitCompileMode()
+    }
+  }, [isCompileMode, activePackIndex, blenderImportEnabled])
 
   useEffect(() => {
     // Capture the saved view BEFORE anything mutates the store.
@@ -130,6 +142,9 @@ export default function App() {
 
       {/* Bottom status bar — active project */}
       <BottomBar />
+
+      {/* Compile tray (3D pack) */}
+      <CompileTray />
 
     </div>
   )

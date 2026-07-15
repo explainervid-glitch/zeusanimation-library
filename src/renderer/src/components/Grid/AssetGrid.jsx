@@ -34,7 +34,7 @@ export default function AssetGrid({ enableBatch = true }) {
   // Batch tagging is a main-panel-only feature.
   const isBatchMode = enableBatch && batchModeRaw
 
-  const [gridScale, setGridScale] = useState(1)
+  const [gridScale, setGridScale] = useState(0.8)
 
   // ── Tentukan data dan loading state ──────────────────────────
   const displayAssets = isSearchMode ? searchResults : assets

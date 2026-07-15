@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Plus, Settings, ChevronDown, Check, Package, Search, X, Astroid, RefreshCw, Sparkles, Columns2, FilePlus, MoreVertical } from 'lucide-react'
+import { Plus, Settings, ChevronDown, Check, Package, Search, X, Astroid, RefreshCw, Sparkles, Columns2, FilePlus, MoreVertical, Combine } from 'lucide-react'
 import useAssetStore    from '../../store/useAssetStore'
 import useSettingsStore from '../../store/useSettingsStore'
 import useBatchStore    from '../../store/useBatchStore'
 import useLayoutStore   from '../../store/useLayoutStore'
+import useCompileStore  from '../../store/useCompileStore'
 import SettingsModal    from './SettingsModal'
 import AddModal         from './AddModal'
 import BatchTaggerModal from './BatchTaggerModal'
@@ -353,10 +354,14 @@ function MenuDropdown({ splitOpen, onToggleSplit, onSync, syncing, synced, syncD
 
 // ─── TOOLBAR ──────────────────────────────────────────────────
 export default function Toolbar() {
-  const { scanning, selectedCategory, assets, checkDbUpdated } = useAssetStore()
-  const { openSettings } = useSettingsStore()
+  const { scanning, selectedCategory, assets, checkDbUpdated, activePackIndex } = useAssetStore()
+  const { openSettings, blenderImportEnabled } = useSettingsStore()
   const { isBatchMode, selectedIds, enterBatchMode, exitBatchMode } = useBatchStore()
   const { splitOpen, toggleSplit } = useLayoutStore()
+  const { isCompileMode, toggleCompileMode } = useCompileStore()
+
+  // "Compile" is exclusive to the 3D pack, and only when Import to Blender is on.
+  const canCompile = activePackIndex === 1 && blenderImportEnabled
   const [showAddModal, setShowAddModal]   = useState(false)
   const [showBatchModal, setShowBatchModal] = useState(false)
   const [refreshing, setRefreshing]       = useState(false)
@@ -421,6 +426,23 @@ export default function Toolbar() {
                 Start Tagging ({selectedIds.size})
               </button>
             </>
+          )}
+
+          {/* Compile toggle — 3D pack + Import to Blender only */}
+          {canCompile && (
+            <button
+              onClick={toggleCompileMode}
+              title={isCompileMode ? 'Exit Compile mode' : 'Compile mode — pick a Character + a Movement'}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
+                border transition-all
+                ${isCompileMode
+                  ? 'bg-c-accent/15 border-c-accent text-c-accent'
+                  : 'bg-c-raised text-c-text-2 border-c-border-2 hover:bg-c-hover hover:text-c-text'
+                }`}
+            >
+              <Combine size={13} />
+              Compile
+            </button>
           )}
 
           <AddDropdown

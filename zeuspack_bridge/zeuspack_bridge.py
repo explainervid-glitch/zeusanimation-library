@@ -6,7 +6,7 @@
 bl_info = {
     "name":        "ZeusPack Bridge",
     "author":      "ZeusDev - Tegar",
-    "version":     (0, 9, 6),
+    "version":     (0, 9, 5),
     "blender":     (3, 0, 0),
     "location":    "View3D > Sidebar > ZeusPack",
     "description": "Bridge between ZeusPack and Blender for appending collections",
@@ -561,14 +561,9 @@ def register():
     for cls in _classes:
         bpy.utils.register_class(cls)
     bpy.types.OUTLINER_MT_collection.append(draw_move_to_main_in_collection_menu)
-    # General Outliner right-click menu (guarded — name may vary by version).
-    if hasattr(bpy.types, "OUTLINER_MT_context_menu"):
-        bpy.types.OUTLINER_MT_context_menu.append(draw_temp_scene_in_outliner_menu)
     start_server()
 
 def unregister():
-    if hasattr(bpy.types, "OUTLINER_MT_context_menu"):
-        bpy.types.OUTLINER_MT_context_menu.remove(draw_temp_scene_in_outliner_menu)
     bpy.types.OUTLINER_MT_collection.remove(draw_move_to_main_in_collection_menu)
     for cls in reversed(_classes):
         bpy.utils.unregister_class(cls)
