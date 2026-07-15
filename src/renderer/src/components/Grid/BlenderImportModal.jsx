@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { X, Link2, Loader, Check, AlertCircle, RefreshCw, Monitor } from 'lucide-react'
+import { X, Import, Loader, Check, AlertCircle, RefreshCw, Monitor } from 'lucide-react'
 
 // ─── STATUS DOT ───────────────────────────────────────────────
 function StatusDot({ status }) {
@@ -16,12 +16,16 @@ function basename(filePath) {
   return filePath.split(/[\\/]/).pop()
 }
 
-// Link a Character asset into an active Blender instance.
-// Flow: 1) copy asset into {project}/Chars (skips if already there — preserves
-// any edits made on the project copy)  2) scan for a running Blender  3) list
-// collections FROM THE PROJECT COPY (not the library path)  4) link (not
-// append) the chosen collection into the target Blender's active scene.
-export default function BlenderLinkModal({ asset, projectPath, onClose }) {
+// Import a Character asset into a running Blender instance.
+// Flow (identical for both methods): 1) copy asset into {project}/Chars (skips
+// if already there — preserves any edits on the project copy)  2) scan for a
+// running Blender  3) list collections FROM THE PROJECT COPY (not the library
+// path)  4) append OR link (per `mode`) the chosen collection into Blender's
+// Temporary scene.
+export default function BlenderImportModal({ asset, projectPath, mode = 'append', onClose }) {
+  const isAppend = mode !== 'link'
+  const Verb     = isAppend ? 'Append' : 'Link'
+
   const [stage, setStage] = useState('preparing')   // preparing | ready | error
   const [prepError, setPrepError] = useState(null)
   const [projectFilePath, setProjectFilePath] = useState(null)
@@ -36,8 +40,8 @@ export default function BlenderLinkModal({ asset, projectPath, onClose }) {
   const [collections, setCollections] = useState([])
   const [loadingCols, setLoadingCols] = useState(false)
   const [selected,    setSelected]    = useState(null)
-  const [linking,     setLinking]     = useState(false)
-  const [linked,      setLinked]      = useState(false)
+  const [working,     setWorking]     = useState(false)
+  const [done,        setDone]        = useState(false)
   const [error,       setError]       = useState(null)
 
   // ── Step 1: copy the asset into {project}/Chars ───────────────
@@ -45,7 +49,7 @@ export default function BlenderLinkModal({ asset, projectPath, onClose }) {
     let cancelled = false
     ;(async () => {
       if (!asset.raw_path) {
-        setPrepError('This asset has no source file (.blend) to link.')
+        setPrepError('This asset has no source file (.blend) to import.')
         setStage('error')
         return
       }
@@ -113,19 +117,19 @@ export default function BlenderLinkModal({ asset, projectPath, onClose }) {
 
   // Kept fresh every render so requestClose (used by a mount-once key listener,
   // and by button handlers) never reads stale state via closures.
-  const closeStateRef = useRef({ linked, copiedFresh, projectFilePath })
+  const closeStateRef = useRef({ done, copiedFresh, projectFilePath })
   useEffect(() => {
-    closeStateRef.current = { linked, copiedFresh, projectFilePath }
+    closeStateRef.current = { done, copiedFresh, projectFilePath }
   })
 
   // Dismiss the modal. If the asset was freshly copied into the project this
-  // session and never actually got linked, delete that copy — otherwise a
+  // session and never actually got imported, delete that copy — otherwise a
   // cancelled attempt would leave an orphaned file in {project}/Chars.
-  // Never deletes a successfully-linked file (Blender is now pointing at it),
-  // and never deletes a copy that already existed before this modal opened.
+  // Never deletes a successfully-imported file (Blender may point at it, for
+  // link), and never deletes a copy that already existed before this opened.
   const requestClose = async () => {
-    const { linked: wasLinked, copiedFresh: wasCopied, projectFilePath: path } = closeStateRef.current
-    if (!wasLinked && wasCopied && path) {
+    const { done: wasDone, copiedFresh: wasCopied, projectFilePath: path } = closeStateRef.current
+    if (!wasDone && wasCopied && path) {
       try { await window.api.deleteProjectFile(path) } catch { /* best effort */ }
     }
     onClose()
@@ -138,22 +142,21 @@ export default function BlenderLinkModal({ asset, projectPath, onClose }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // ── Step 4: link ────────────────────────────────────────────────
-  const handleLink = async () => {
+  // ── Step 4: append or link ────────────────────────────────────
+  const handleImport = async () => {
     if (!selected || !target || !projectFilePath) return
-    setLinking(true)
+    setWorking(true)
     setError(null)
 
-    const result = await window.api.blenderLink({
-      filePath:   projectFilePath,
-      collection: selected,
-      port:       target.port,
-    })
-    setLinking(false)
+    const result = isAppend
+      ? await window.api.blenderAppend({ filePath: projectFilePath, collection: selected, port: target.port, tempScene: true })
+      : await window.api.blenderLink({ filePath: projectFilePath, collection: selected, port: target.port })
+
+    setWorking(false)
 
     if (result.success) {
-      setLinked(true)
-      setTimeout(onClose, 1200)   // successful link — do NOT clean up the copy
+      setDone(true)
+      setTimeout(onClose, 1200)   // success — do NOT clean up the copy
     } else {
       setError(result.error)
     }
@@ -171,8 +174,8 @@ export default function BlenderLinkModal({ asset, projectPath, onClose }) {
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-c-border">
           <div className="flex items-center gap-2.5">
-            <Link2 size={15} className="text-c-accent" />
-            <h2 className="text-sm font-bold text-c-text">Link Character to Blender</h2>
+            <Import size={15} className="text-c-accent" />
+            <h2 className="text-sm font-bold text-c-text">{Verb} Character to Blender</h2>
           </div>
           <button onClick={requestClose}
             className="text-c-text-3 hover:text-c-text p-1 rounded-lg hover:bg-c-raised transition-colors">
@@ -333,17 +336,17 @@ export default function BlenderLinkModal({ asset, projectPath, onClose }) {
           </button>
           {stage === 'ready' && (
             <button
-              onClick={handleLink}
-              disabled={!selected || !target || linking || linked}
+              onClick={handleImport}
+              disabled={!selected || !target || working || done}
               className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold
                 bg-c-accent text-c-on-accent hover:bg-c-accent-h transition-all disabled:opacity-40"
             >
-              {linked ? (
-                <><Check size={12} /> Linked!</>
-              ) : linking ? (
-                <><Loader size={12} className="animate-spin" /> Linking...</>
+              {done ? (
+                <><Check size={12} /> {isAppend ? 'Appended!' : 'Linked!'}</>
+              ) : working ? (
+                <><Loader size={12} className="animate-spin" /> {isAppend ? 'Appending…' : 'Linking…'}</>
               ) : (
-                <><Link2 size={12} /> Link to Blender</>
+                <><Import size={12} /> {Verb} to Blender</>
               )}
             </button>
           )}

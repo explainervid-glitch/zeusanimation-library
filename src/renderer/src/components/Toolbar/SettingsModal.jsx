@@ -14,7 +14,8 @@ export default function SettingsModal() {
     ragUrl, updateRagUrl,
     loading, saved, saveSettings,
     theme, setTheme,
-    blenderLinkEnabled, toggleBlenderLinkEnabled,
+    blenderImportEnabled, toggleBlenderImportEnabled,
+    blenderImportMode, setBlenderImportMode,
   } = useSettingsStore()
   
   const { rescan, scanning } = useAssetStore()
@@ -223,29 +224,51 @@ export default function SettingsModal() {
               </button>
             </div>
 
-            {/* ── Import Behavior Toggle ── */}
+            {/* ── Import Behavior Toggles ── */}
             <div className="pb-3 border-b border-c-border">
               <label className="text-xs font-semibold text-c-text uppercase tracking-wider block mb-2">
                 Character Import
               </label>
+
+              {/* Toggle 1 — import to Blender on/off */}
               <button
-                onClick={toggleBlenderLinkEnabled}
+                onClick={toggleBlenderImportEnabled}
                 className="flex items-center gap-2 text-[11px] text-c-text-3 hover:text-c-text transition-colors"
-                title={blenderLinkEnabled ? 'Disable Link to Blender' : 'Enable Link to Blender'}
+                title={blenderImportEnabled ? 'Disable import to Blender' : 'Enable import to Blender'}
               >
                 <span className="relative inline-block w-8 h-4 rounded-full bg-c-raised border border-c-border-2 transition-colors">
                   <span
                     className={`absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-c-accent transition-all duration-200
-                      ${blenderLinkEnabled ? 'left-4' : 'left-0.5'}`}
+                      ${blenderImportEnabled ? 'left-4' : 'left-0.5'}`}
                   />
                 </span>
                 <Link2 size={12} />
-                <span>{blenderLinkEnabled ? 'Link to Blender' : 'Send to Project only'}</span>
+                <span>{blenderImportEnabled ? 'Import to Blender' : 'Send to Project only'}</span>
               </button>
+
+              {/* Toggle 2 — append vs link method (only when import is on) */}
+              {blenderImportEnabled && (
+                <button
+                  onClick={() => setBlenderImportMode(blenderImportMode === 'append' ? 'link' : 'append')}
+                  className="flex items-center gap-2 text-[11px] text-c-text-3 hover:text-c-text transition-colors mt-2 pl-0.5"
+                  title="Switch import method"
+                >
+                  <span className="relative inline-block w-8 h-4 rounded-full bg-c-raised border border-c-border-2 transition-colors">
+                    <span
+                      className={`absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-c-accent transition-all duration-200
+                        ${blenderImportMode === 'link' ? 'left-4' : 'left-0.5'}`}
+                    />
+                  </span>
+                  <span>Method: <span className="text-c-text font-medium capitalize">{blenderImportMode}</span></span>
+                </button>
+              )}
+
               <p className="text-[10px] text-c-text-4 mt-1.5 leading-relaxed">
-                {blenderLinkEnabled
-                  ? 'Import copies a character into the project AND links it into Blender.'
-                  : 'Import only copies a character into the project and opens the file.'}
+                {!blenderImportEnabled
+                  ? 'Import only copies a character into the project and opens the file.'
+                  : blenderImportMode === 'append'
+                    ? 'Import copies a character into the project, then appends its collection into Blender.'
+                    : 'Import copies a character into the project, then links its collection into Blender.'}
               </p>
             </div>
 

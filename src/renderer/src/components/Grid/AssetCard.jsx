@@ -6,7 +6,7 @@ import useAssetStore from '../../store/useAssetStore'
 import useSettingsStore from '../../store/useSettingsStore'
 import AssetEditModal from './AssetEditModal'
 import BlenderAppendModal from './BlenderAppendModal'
-import BlenderLinkModal from './BlenderLinkModal'
+import BlenderImportModal from './BlenderImportModal'
 
 const TYPE_RATIO = {
   background: [285, 161],
@@ -76,7 +76,8 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
   const openAsset             = usePanelStore((s) => s.openAsset)
   const reloadCurrentCategory = usePanelStore((s) => s.reloadCurrentCategory)
   const activeProject         = useProjectStore((s) => s.activeProject)
-  const blenderLinkEnabled    = useSettingsStore((s) => s.blenderLinkEnabled)
+  const blenderImportEnabled  = useSettingsStore((s) => s.blenderImportEnabled)
+  const blenderImportMode     = useSettingsStore((s) => s.blenderImportMode)
   const [asset, setAsset]                 = useState(initialAsset)
   const [isHovered, setIsHovered]         = useState(false)
   const [previewError, setPreviewError]   = useState(false)
@@ -121,9 +122,9 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
 
   // Single "Import" button for Character cards. The two flows underneath stay
   // completely separate — this just decides which one runs, based on the
-  // Settings toggle AND whether the file is even linkable (a .blend).
-  const showImport = type === 'character'
-  const canLink     = blenderLinkEnabled && isBlendFile(asset.raw_path)
+  // Settings toggles AND whether the file can be imported into Blender (.blend).
+  const showImport   = type === 'character'
+  const canImport    = blenderImportEnabled && isBlendFile(asset.raw_path)
 
   // Send to Project: copy this character into {project}/Chars, then open it from there.
   const handleSendToProject = useCallback(async (e) => {
@@ -157,13 +158,13 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
   // Import button router — picks one of the two independent flows above.
   // Does not change either flow's own logic, just which one runs.
   const handleImportClick = useCallback((e) => {
-    if (canLink) {
+    if (canImport) {
       e.stopPropagation()
-      setLinkOpen(true)          // BlenderLinkModal: copy + link into Blender
+      setLinkOpen(true)          // BlenderImportModal: copy + append/link into Blender
     } else {
       handleSendToProject(e)     // plain copy + open from project
     }
-  }, [canLink, handleSendToProject])
+  }, [canImport, handleSendToProject])
 
   return (
     <>
@@ -305,8 +306,8 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
                 </button>
               )}
 
-              {/* Import — routes to Send-to-Project or Link-to-Blender per the
-                  Settings toggle (Character Import). Same button either way. */}
+              {/* Import — routes to Send-to-Project or Append/Link-to-Blender per
+                  the Settings toggles (Character Import). Same button either way. */}
               {showImport && (
                 <button
                   onClick={handleImportClick}
@@ -317,7 +318,7 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
                   title={
                     !activeProject ? 'Select a project first (bottom bar)'
                     : sending       ? 'Sending…'
-                    : canLink       ? `Import & Link to Blender (${activeProject.name}\\Chars)`
+                    : canImport     ? `Import & ${blenderImportMode === 'link' ? 'Link' : 'Append'} to Blender (${activeProject.name}\\Chars)`
                     : `Import to ${activeProject.name}\\Chars`
                   }
                 >
@@ -361,11 +362,12 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
         />
       )}
 
-      {/* Blender Link Modal — copies into project, then links from there */}
+      {/* Blender Import Modal — copies into project, then appends/links from there */}
       {linkOpen && (
-        <BlenderLinkModal
+        <BlenderImportModal
           asset={asset}
           projectPath={activeProject?.path}
+          mode={blenderImportMode}
           onClose={() => setLinkOpen(false)}
         />
       )}

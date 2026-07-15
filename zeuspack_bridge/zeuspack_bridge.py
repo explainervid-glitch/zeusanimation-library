@@ -6,7 +6,7 @@
 bl_info = {
     "name":        "ZeusPack Bridge",
     "author":      "ZeusDev - Tegar",
-    "version":     (0, 9, 3),
+    "version":     (0, 9, 6),
     "blender":     (3, 0, 0),
     "location":    "View3D > Sidebar > ZeusPack",
     "description": "Bridge between ZeusPack and Blender for appending collections",
@@ -130,6 +130,11 @@ class ZeusHandler(BaseHTTPRequestHandler):
 
                 def run_in_main():
                     try:
+                        # Optionally land the append in the Temporary scene — used
+                        # by the character "Append to project" flow so it mirrors
+                        # /link. Omitted by the animation append (current scene).
+                        if data.get('temp_scene', False):
+                            ensure_temp_scene(bpy.context)
                         directory = os.path.join(filepath, "Collection") + os.sep
                         bpy.ops.wm.append(
                             filepath             = os.path.join(filepath, "Collection", collection),
@@ -533,6 +538,14 @@ class ZEUS_PT_status(bpy.types.Panel):
 def draw_move_to_main_in_collection_menu(self, context):
     self.layout.separator()
     self.layout.operator("zeus.move_to_main_scene", text="Move to Main Scene", icon='FORWARD')
+    self.layout.operator("zeus.delete_temp_scene", text="Delete Temporary Scene", icon='TRASH')
+
+
+def draw_temp_scene_in_outliner_menu(self, context):
+    # General Outliner right-click (no collection/object needed).
+    self.layout.separator()
+    self.layout.operator("zeus.create_temp_scene", text="Temporary Scene", icon='ADD')
+    self.layout.operator("zeus.delete_temp_scene", text="Delete Temporary Scene", icon='TRASH')
 
 
 # ─── REGISTER ─────────────────────────────────────────────────
@@ -548,9 +561,14 @@ def register():
     for cls in _classes:
         bpy.utils.register_class(cls)
     bpy.types.OUTLINER_MT_collection.append(draw_move_to_main_in_collection_menu)
+    # General Outliner right-click menu (guarded — name may vary by version).
+    if hasattr(bpy.types, "OUTLINER_MT_context_menu"):
+        bpy.types.OUTLINER_MT_context_menu.append(draw_temp_scene_in_outliner_menu)
     start_server()
 
 def unregister():
+    if hasattr(bpy.types, "OUTLINER_MT_context_menu"):
+        bpy.types.OUTLINER_MT_context_menu.remove(draw_temp_scene_in_outliner_menu)
     bpy.types.OUTLINER_MT_collection.remove(draw_move_to_main_in_collection_menu)
     for cls in reversed(_classes):
         bpy.utils.unregister_class(cls)

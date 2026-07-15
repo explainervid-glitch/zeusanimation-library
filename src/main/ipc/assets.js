@@ -903,12 +903,12 @@ export async function registerIpcHandlers() {
   })
 
   // Append collection ke Blender di port spesifik
-  ipcMain.handle('blender-append', async (_e, { filePath, collection, port = BLENDER_PORT_START }) => {
+  ipcMain.handle('blender-append', async (_e, { filePath, collection, port = BLENDER_PORT_START, tempScene = false }) => {
     try {
       const res  = await fetch(`http://localhost:${port}/append`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ file: filePath, collection }),
+        body:    JSON.stringify({ file: filePath, collection, temp_scene: tempScene }),
         signal:  AbortSignal.timeout(15000),
       })
       const data = await res.json()

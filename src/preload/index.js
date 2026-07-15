@@ -28,7 +28,7 @@ const api = {
   // Blender Bridge — ganti 3 baris lama dengan ini
   blenderScanPorts:      ()                                  => ipcRenderer.invoke('blender-scan-ports'),
   blenderGetCollections: (filePath, port)                    => ipcRenderer.invoke('blender-get-collections', filePath, port),
-  blenderAppend:         ({ filePath, collection, port })    => ipcRenderer.invoke('blender-append', { filePath, collection, port }),
+  blenderAppend:         ({ filePath, collection, port, tempScene }) => ipcRenderer.invoke('blender-append', { filePath, collection, port, tempScene }),
   blenderLink:           ({ filePath, collection, port })    => ipcRenderer.invoke('blender-link', { filePath, collection, port }),
 
   // Settings

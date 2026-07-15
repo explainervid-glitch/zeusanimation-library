@@ -25,13 +25,19 @@ const useSettingsStore = create(
       themeIntroSeen: false,
       dismissThemeIntro: () => set({ themeIntroSeen: true }),
 
-      // Character "Import" button behavior: when enabled, Import copies the
-      // asset into the project AND opens the Link-to-Blender flow. When
-      // disabled, Import just copies into the project and opens the file
-      // (the plain Send-to-Project behavior).
-      blenderLinkEnabled: false,
-      setBlenderLinkEnabled: (v) => set({ blenderLinkEnabled: v }),
-      toggleBlenderLinkEnabled: () => set(s => ({ blenderLinkEnabled: !s.blenderLinkEnabled })),
+      // Character "Import" button behavior.
+      // blenderImportEnabled (default off): when ON, Import copies the asset
+      // into the project AND imports its collection into a running Blender.
+      // When OFF, Import just copies into the project and opens the file.
+      // blenderImportMode ('append' | 'link', default 'append'): which method
+      // that Blender import uses. Only relevant when blenderImportEnabled.
+      blenderImportEnabled: false,
+      setBlenderImportEnabled:    (v) => set({ blenderImportEnabled: v }),
+      toggleBlenderImportEnabled: ()  => set(s => ({ blenderImportEnabled: !s.blenderImportEnabled })),
+
+      blenderImportMode: 'append',
+      setBlenderImportMode:    (mode) => set({ blenderImportMode: mode }),
+      toggleBlenderImportMode: ()     => set(s => ({ blenderImportMode: s.blenderImportMode === 'append' ? 'link' : 'append' })),
 
       assetPaths:      [{ label: 'Pack 1', path: '' }],
       activePathIndex: 0,
