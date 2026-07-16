@@ -442,7 +442,7 @@ export async function registerIpcHandlers() {
   // Copies a character asset into {projectPath}/Chars and returns the new path.
   // If the file already exists in the project, it is NOT overwritten (so any
   // edits made inside the project are preserved) — the existing copy is opened.
-  ipcMain.handle('send-to-project', async (_e, { sourcePath, projectPath } = {}) => {
+  ipcMain.handle('send-to-project', async (_e, { sourcePath, projectPath, targetName } = {}) => {
     try {
       if (!sourcePath || !existsSync(sourcePath)) {
         return { success: false, error: 'Source asset file not found.' }
@@ -454,7 +454,21 @@ export async function registerIpcHandlers() {
       const charsDir = join(projectPath, 'Chars')
       if (!existsSync(charsDir)) mkdirSync(charsDir, { recursive: true })
 
-      const destPath = join(charsDir, basename(sourcePath))
+      // Destination filename: custom name if provided, else the source name.
+      // basename() strips any path parts (no traversal); invalid chars rejected;
+      // the source extension is re-appended if the custom name dropped it.
+      let fileName = basename(sourcePath)
+      if (targetName && targetName.trim()) {
+        let cleaned = basename(targetName.trim())
+        if (/[\\/:*?"<>|]/.test(cleaned)) {
+          return { success: false, error: 'File name contains invalid characters ( \\ / : * ? " < > | ).' }
+        }
+        const srcExt = extname(sourcePath)
+        if (srcExt && !extname(cleaned)) cleaned += srcExt
+        fileName = cleaned
+      }
+
+      const destPath = join(charsDir, fileName)
 
       let copied = false
       if (!existsSync(destPath)) {

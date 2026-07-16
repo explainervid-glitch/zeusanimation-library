@@ -91,9 +91,34 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
   const [linkOpen, setLinkOpen]           = useState(false)
   const [copied, setCopied]               = useState(false)
   const [sending, setSending]             = useState(false)
-  const videoRef = useRef(null)
+  const [renaming, setRenaming]           = useState(false)
+  const [renameValue, setRenameValue]     = useState('')
+  const [renameAnchor, setRenameAnchor]   = useState(null)   // button DOMRect
+  const videoRef   = useRef(null)
+  const renameRef  = useRef(null)
+  const popoverRef = useRef(null)
 
-  useEffect(() => { setAsset(initialAsset); setPreviewError(false) }, [initialAsset])
+  useEffect(() => { setAsset(initialAsset); setPreviewError(false); setRenaming(false) }, [initialAsset])
+
+  // Focus the rename input and pre-select the name stem (keeps the extension).
+  useEffect(() => {
+    if (renaming && renameRef.current) {
+      const el  = renameRef.current
+      el.focus()
+      const dot = el.value.lastIndexOf('.')
+      el.setSelectionRange(0, dot > 0 ? dot : el.value.length)
+    }
+  }, [renaming])
+
+  // Close the rename popover on an outside click (dropdown behavior).
+  useEffect(() => {
+    if (!renaming) return
+    const onDown = (e) => {
+      if (popoverRef.current && !popoverRef.current.contains(e.target)) setRenaming(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [renaming])
 
   const [rw, rh]   = TYPE_RATIO[type] || DEFAULT_RATIO
   const paddingTop  = `${(rh / rw) * 100}%`
@@ -138,45 +163,68 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
     (type === 'animation' && compileMovementId  === asset.id)
   )
 
-  // Send to Project: copy this character into {project}/Chars, then open it from there.
-  const handleSendToProject = useCallback(async (e) => {
-    e.stopPropagation()
+  // Copy this character into {project}/Chars (optionally under a custom name),
+  // then open it from there. Returns true on success.
+  const runSendToProject = useCallback(async (targetName) => {
     if (!activeProject?.path) {
       useAssetStore.getState().setError('No active project — create or select one in the bottom bar first.')
-      return
+      return false
     }
     if (!asset.raw_path) {
       useAssetStore.getState().setError('This asset has no source file to send.')
-      return
+      return false
     }
     setSending(true)
     try {
       const result = await window.api.sendToProject({
         sourcePath:  asset.raw_path,
         projectPath: activeProject.path,
+        targetName,
       })
       if (result.success) {
         await openAsset(result.data)   // open from {project}/Chars, not the library path
-      } else {
-        useAssetStore.getState().setError(result.error || 'Failed to send asset to project.')
+        return true
       }
+      useAssetStore.getState().setError(result.error || 'Failed to send asset to project.')
+      return false
     } catch (err) {
       useAssetStore.getState().setError(err.message)
+      return false
     } finally {
       setSending(false)
     }
   }, [activeProject, asset.raw_path, openAsset])
 
-  // Import button router — picks one of the two independent flows above.
-  // Does not change either flow's own logic, just which one runs.
-  const handleImportClick = useCallback((e) => {
-    if (canImport) {
-      e.stopPropagation()
-      setLinkOpen(true)          // BlenderImportModal: copy + append/link into Blender
-    } else {
-      handleSendToProject(e)     // plain copy + open from project
+  // ── Inline rename (Send-to-Project-only mode) ──────────────────
+  const baseName = (p) => (p ? p.split(/[\\/]/).pop() : '')
+  const startRename = (rect) => {
+    if (!activeProject?.path) {
+      useAssetStore.getState().setError('No active project — create or select one in the bottom bar first.')
+      return
     }
-  }, [canImport, handleSendToProject])
+    setRenameValue(baseName(asset.raw_path))
+    setRenameAnchor(rect || null)
+    setRenaming(true)
+  }
+  const confirmRename = async () => {
+    const name = renameValue.trim()
+    if (!name || sending) return
+    const ok = await runSendToProject(name)
+    if (ok) setRenaming(false)
+  }
+  const handleRenameKey = (e) => {
+    if (e.key === 'Enter')  { e.preventDefault(); confirmRename() }
+    if (e.key === 'Escape') { e.preventDefault(); setRenaming(false) }
+  }
+
+  // Import button router. When importing into Blender is off (Send-to-Project
+  // only), reveal an inline rename input instead of copying immediately.
+  const handleImportClick = useCallback((e) => {
+    e.stopPropagation()
+    if (canImport) setLinkOpen(true)                             // BlenderImportModal
+    else           startRename(e.currentTarget.getBoundingClientRect())  // floating rename
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canImport, activeProject, asset.raw_path])
 
   return (
     <>
@@ -264,7 +312,7 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
           )}
 
           {/* Action buttons - Left side */}
-          {!isBatchMode && !isCompileMode && (
+          {!isBatchMode && !isCompileMode && !renaming && (
             <div className={`
               absolute top-1.5 left-1.5 z-10 flex gap-1
               transition-all duration-150
@@ -301,7 +349,7 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
           )}
 
           {/* Action buttons - Right side */}
-          {!isBatchMode && !isCompileMode && (showAppend || showImport) && (
+          {!isBatchMode && !isCompileMode && !renaming && (showAppend || showImport) && (
             <div className={`
               absolute top-1.5 right-1.5 z-10 flex gap-1
               transition-all duration-150
@@ -385,6 +433,49 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
           mode={blenderImportMode}
           onClose={() => setLinkOpen(false)}
         />
+      )}
+
+      {/* Floating rename popover (Send-to-Project-only) — anchored under the
+          Import button, rendered here so the card's overflow can't clip it. */}
+      {renaming && renameAnchor && (
+        <div
+          ref={popoverRef}
+          style={{
+            position: 'fixed',
+            top:   renameAnchor.bottom + 6,
+            right: Math.max(8, window.innerWidth - renameAnchor.right),
+            zIndex: 60,
+          }}
+          className="w-60 bg-c-surface border border-c-border rounded-xl shadow-2xl p-2.5
+            animate-[compileSlideIn_140ms_ease-out]"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <p className="text-[9px] uppercase tracking-wider text-c-text-4 px-0.5 pb-1.5">
+            Rename → send to project
+          </p>
+          <div className="flex items-center gap-1.5">
+            <input
+              ref={renameRef}
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onKeyDown={handleRenameKey}
+              disabled={sending}
+              placeholder="File name"
+              className="flex-1 min-w-0 px-2.5 py-1.5 rounded-lg text-xs
+                bg-c-raised text-c-text placeholder-c-text-4
+                border border-c-border-2 focus:border-c-accent outline-none transition-colors"
+            />
+            <button
+              onClick={confirmRename}
+              disabled={sending || !renameValue.trim()}
+              title="Copy into project"
+              className="flex-shrink-0 p-1.5 rounded-lg bg-c-accent text-c-on-accent
+                hover:bg-c-accent-h transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {sending ? <Loader size={13} className="animate-spin" /> : <Check size={13} />}
+            </button>
+          </div>
+        </div>
       )}
     </>
   )
