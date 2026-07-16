@@ -3,10 +3,11 @@ import { X, Astroid, AlertCircle, CheckCircle, Loader } from 'lucide-react'
 import useAssetStore from '../../store/useAssetStore'
 import useBatchStore from '../../store/useBatchStore'
 
-export default function BatchTaggerModal({ isOpen, onClose }) {
+export default function BatchTaggerModal() {
   const { assets, selectedCategory } = useAssetStore()
   const {
-    isBatchMode, selectedIds, statusMap, isRunning, doneCount, totalCount,
+    isModalOpen, closeModal, batchAssets, batchAssetType,
+    selectedIds, statusMap, isRunning, doneCount, totalCount,
     runBatch, saveAllResults, exitBatchMode,
   } = useBatchStore()
 
@@ -14,25 +15,24 @@ export default function BatchTaggerModal({ isOpen, onClose }) {
   const [saveInProgress, setSaveInProgress] = useState(false)
   const [saveResult, setSaveResult] = useState(null)
 
-  // Reset state ketika modal dibuka
+  // Reset transient state when the modal opens
   useEffect(() => {
-    if (isOpen) {
+    if (isModalOpen) {
       setTaggingComplete(false)
       setSaveResult(null)
     }
-  }, [isOpen])
+  }, [isModalOpen])
 
   const handleClose = useCallback(() => {
-    onClose()
+    closeModal()
     // Don't exit batch mode - user can cancel tagging and go back to selection
-  }, [onClose])
+  }, [closeModal])
 
   const handleCancel = useCallback(() => {
     setTaggingComplete(false)
     setSaveResult(null)
-    exitBatchMode()
-    onClose()
-  }, [exitBatchMode, onClose])
+    exitBatchMode()   // also closes the modal (clears isModalOpen)
+  }, [exitBatchMode])
 
   // Detect tagging completion
   useEffect(() => {
@@ -41,10 +41,13 @@ export default function BatchTaggerModal({ isOpen, onClose }) {
     }
   }, [isRunning, totalCount, doneCount, taggingComplete])
 
-  const selectedAssets = assets.filter(a => selectedIds.has(a.id))
-  // Normalize type: movement folders are tagged as 'animation'
+  // Pool: type-batch assets when present, else the active category's assets.
+  const pool = (batchAssets && batchAssets.length) ? batchAssets : assets
+  const selectedAssets = pool.filter(a => selectedIds.has(a.id))
+  // Asset type: from the type-batch if set, else derived from the category.
+  // (movement folders are tagged as 'animation')
   const rawType   = selectedCategory?.type || 'background'
-  const assetType = rawType === 'movement' ? 'animation' : rawType
+  const assetType = batchAssetType ?? (rawType === 'movement' ? 'animation' : rawType)
 
   const handleStartTagging = useCallback(async () => {
     if (selectedIds.size === 0) return
@@ -64,10 +67,9 @@ export default function BatchTaggerModal({ isOpen, onClose }) {
       const result = await saveAllResults(selectedAssets)
       setSaveResult(result)
       
-      // Auto-close after showing result
+      // Auto-close after showing result (exitBatchMode also closes the modal)
       setTimeout(() => {
         exitBatchMode()
-        onClose()
       }, 2000)
     } catch (err) {
       setSaveResult({
@@ -78,9 +80,9 @@ export default function BatchTaggerModal({ isOpen, onClose }) {
     } finally {
       setSaveInProgress(false)
     }
-  }, [selectedAssets, selectedIds.size, saveAllResults, exitBatchMode, onClose])
+  }, [selectedAssets, selectedIds.size, saveAllResults, exitBatchMode])
 
-  if (!isOpen) return null
+  if (!isModalOpen) return null
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
@@ -156,56 +158,67 @@ export default function BatchTaggerModal({ isOpen, onClose }) {
           {/* Selected Assets Count */}
           <div className="mb-4">
             <p className="text-sm font-medium text-c-text-2 mb-2">
-              Selected Assets: {selectedIds.size} of {assets.length}
+              Selected Assets: {selectedIds.size} of {pool.length}
             </p>
             {selectedIds.size === 0 && (
               <p className="text-xs text-c-text-4">No assets selected. Select at least one asset to tag.</p>
             )}
           </div>
 
-          {/* Preview Grid of selected assets */}
+          {/* List of selected assets — preview + name + per-asset status */}
           {selectedIds.size > 0 && (
-            <div className="grid grid-cols-4 gap-2 max-h-48 overflow-y-auto">
-              {selectedAssets.slice(0, 8).map(asset => {
-                const status = statusMap.get(asset.id)
+            <div className="border border-c-border rounded-lg divide-y divide-c-border/60 max-h-72 overflow-y-auto scrollbar-thin">
+              {selectedAssets.map(asset => {
+                const status      = statusMap.get(asset.id)
                 const previewPath = asset.thumbnail_path || asset.mp4_path
+                const isVideo     = !asset.thumbnail_path && !!asset.mp4_path
+                const previewSrc  = previewPath
+                  ? `file:///${previewPath.replace(/\\/g, '/').replace(/^\w:/, m => m.toLowerCase())}`
+                  : null
                 return (
-                  <div key={asset.id} className="relative aspect-square rounded border border-c-border overflow-hidden bg-c-base flex-shrink-0">
-                    {previewPath && (
-                      <img
-                        src={`file:///${previewPath.replace(/\\/g, '/').replace(/^\w:/, m => m.toLowerCase())}`}
-                        alt={asset.name}
-                        className="w-full h-full object-cover"
-                        onError={e => { e.target.style.display = 'none' }}
-                      />
-                    )}
-                    {!previewPath && (
-                      <div className="w-full h-full flex items-center justify-center text-[10px] text-c-text-4">No Preview</div>
-                    )}
-                    {/* Status overlay */}
-                    {status?.status === 'processing' && (
-                      <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
-                        <Loader size={16} className="text-white animate-spin" />
-                      </div>
-                    )}
-                    {status?.status === 'done' && (
-                      <div className="absolute inset-0 bg-green-500/30 flex items-center justify-center">
-                        <CheckCircle size={16} className="text-green-400" />
-                      </div>
-                    )}
-                    {status?.status === 'error' && (
-                      <div className="absolute inset-0 bg-red-500/40 flex items-center justify-center" title={typeof status.error === 'string' ? status.error : JSON.stringify(status.error)}>
-                        <AlertCircle size={16} className="text-red-400" />
-                      </div>
-                    )}
+                  <div key={asset.id} className="flex items-center gap-3 px-3 py-2">
+                    {/* Thumbnail */}
+                    <div className="relative w-10 h-10 flex-shrink-0 rounded overflow-hidden bg-c-base border border-c-border">
+                      {previewSrc ? (
+                        isVideo ? (
+                          <video src={previewSrc} muted className="w-full h-full object-cover" />
+                        ) : (
+                          <img
+                            src={previewSrc}
+                            alt={asset.name}
+                            className="w-full h-full object-cover"
+                            onError={e => { e.target.style.display = 'none' }}
+                          />
+                        )
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-[8px] text-c-text-4">
+                          No Preview
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Name */}
+                    <span className="flex-1 text-xs text-c-text truncate">{asset.name}</span>
+
+                    {/* Per-asset status */}
+                    <div className="flex-shrink-0">
+                      {status?.status === 'processing' && (
+                        <Loader size={14} className="text-c-accent animate-spin" />
+                      )}
+                      {status?.status === 'done' && (
+                        <CheckCircle size={14} className="text-green-500" />
+                      )}
+                      {status?.status === 'error' && (
+                        <AlertCircle
+                          size={14}
+                          className="text-red-500"
+                          title={typeof status.error === 'string' ? status.error : JSON.stringify(status.error)}
+                        />
+                      )}
+                    </div>
                   </div>
                 )
               })}
-              {selectedAssets.length > 8 && (
-                <div className="aspect-square rounded border border-c-border bg-c-hover flex items-center justify-center text-xs text-c-text-2 font-medium">
-                  +{selectedAssets.length - 8}
-                </div>
-              )}
             </div>
           )}
 

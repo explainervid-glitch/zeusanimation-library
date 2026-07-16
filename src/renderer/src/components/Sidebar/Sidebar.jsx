@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect } from 'react'
 import {
   ChevronDown, ChevronRight, ChevronLeft, Image,
-  Pencil, Check, X, PersonStanding, Users, PanelLeftClose, PanelLeftOpen, Lightbulb,
+  Pencil, Check, X, PersonStanding, Users, PanelLeftClose, PanelLeftOpen, Lightbulb, Sparkles,
 } from 'lucide-react'
 import useAssetStore from '../../store/useAssetStore'
+import useBatchStore from '../../store/useBatchStore'
 import { usePanelStore, usePanelStoreApi } from '../../store/PanelStoreContext'
 import { usePanelSidebarStore } from '../../store/SidebarStoreContext'
 import useSessionStore from '../../store/useSessionStore'
@@ -59,9 +60,17 @@ function CategoryItem({ category, styleId, type, styleTypeId, isUncategorized })
 // ─── TYPE SECTION ─────────────────────────────────────────────
 function TypeSection({ typeData, styleId }) {
   const toggleOpenType = useSessionStore(s => s.toggleOpenType)
+  const startTypeBatch = useBatchStore(s => s.startTypeBatch)
   // Init from the persisted session so expanded sections restore on launch.
   const [open, setOpen] = useState(() => useSessionStore.getState().openTypeIds.includes(typeData.id))
   const [editCatOpen, setEditCatOpen] = useState(false)
+  const [menuPos, setMenuPos]         = useState(null)   // { x, y } | null
+  const [loadingBatch, setLoadingBatch] = useState(false)
+
+  // Total taggable assets across all real categories of this type.
+  const typeAssetCount = typeData.categories
+    .filter(c => c.name !== '⚠ Uncategorized')
+    .reduce((sum, c) => sum + (c.asset_count || 0), 0)
 
   const handleToggle = () => {
     setOpen(o => {
@@ -71,9 +80,29 @@ function TypeSection({ typeData, styleId }) {
     })
   }
 
+  const handleContextMenu = (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setMenuPos({ x: e.clientX, y: e.clientY })
+  }
+
+  const handleBatchTagType = async () => {
+    setMenuPos(null)
+    if (typeAssetCount === 0 || loadingBatch) return
+    setLoadingBatch(true)
+    try {
+      const res = await window.api.getAssetsByStyleType(typeData.id)
+      if (res?.success && res.data?.length) {
+        startTypeBatch(res.data, typeData.type)
+      }
+    } finally {
+      setLoadingBatch(false)
+    }
+  }
+
   return (
     <div className="mb-1">
-      <div className="flex items-center group/type">
+      <div className="flex items-center group/type" onContextMenu={handleContextMenu}>
         {/* Expand toggle + label */}
         <button
           onClick={handleToggle}
@@ -132,6 +161,36 @@ function TypeSection({ typeData, styleId }) {
           styleId={styleId}
           onClose={() => setEditCatOpen(false)}
         />
+      )}
+
+      {/* Right-click context menu — batch tag the whole type */}
+      {menuPos && (
+        <>
+          <div
+            className="fixed inset-0 z-40"
+            onClick={() => setMenuPos(null)}
+            onContextMenu={(e) => { e.preventDefault(); setMenuPos(null) }}
+          />
+          <div
+            className="fixed z-50 min-w-[200px] bg-c-surface border border-c-border rounded-lg shadow-2xl py-1"
+            style={{ top: menuPos.y, left: menuPos.x }}
+          >
+            <button
+              onClick={handleBatchTagType}
+              disabled={typeAssetCount === 0 || loadingBatch}
+              className={`w-full flex items-center gap-2 px-3 py-2 text-xs text-left transition-colors
+                ${typeAssetCount === 0
+                  ? 'text-c-text-4 cursor-not-allowed'
+                  : 'text-c-text-2 hover:bg-c-hover hover:text-c-text'
+                }`}
+            >
+              <Sparkles size={13} className="text-c-accent flex-shrink-0" />
+              {loadingBatch
+                ? 'Loading…'
+                : `Batch Tag all ${TYPE_LABEL[typeData.type] || typeData.type} (${typeAssetCount})`}
+            </button>
+          </div>
+        </>
       )}
     </div>
   )

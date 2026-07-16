@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Model weights (huge — never commit)
+models/
+
+# Runtime data / generated
+qdrant_db/
+input/
+*.log

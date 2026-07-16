@@ -1,15 +1,15 @@
 import { ipcMain, shell, dialog } from 'electron'
-import { readFileSync, writeFileSync, existsSync, copyFileSync, mkdirSync, rmSync, unlinkSync, statSync } from 'fs'
-import { scanAssets, writeStyleName, readStyleNames } from '../scanner/index.js'
+import { readFileSync, writeFileSync, existsSync, copyFileSync, mkdirSync, rmSync, unlinkSync, statSync, readdirSync } from 'fs'
+import { scanAssets, writeStyleName, writeStyleHints, readStyleNames } from '../scanner/index.js'
 import {
   getDb, switchDb, reinitDb,
-  getFullTree, getAssetsByCategory,
+  getFullTree, getAssetsByCategory, getAssetsByStyleType,
   hasData, saveDb, insertCategory, insertAsset,
   insertAssetFts, updateAssetFts, searchAssetsFts,
   getDbMtime, reloadFromDisk
 } from '../db/index.js'
 import { readSettings, writeSettings, getActiveAssetPath, getTemplatePath } from '../settings.js'
-import { join, basename } from 'path'
+import { join, basename, dirname, extname } from 'path'
 
 // Track DB mtime untuk deteksi perubahan remote
 let lastDbMtime = 0
@@ -17,6 +17,34 @@ let lastDbMtime = 0
 function getActivePath(settings) {
   const idx = settings.activePathIndex ?? 0
   return settings.assetPaths?.[idx]?.path ?? ''
+}
+
+// ─── STYLE GUIDE (tagger hint) ───────────────────────────────
+// Reads the per-style `tagger_hint` from the pack's stylenames.json and
+// returns it for the asset being tagged. The pack root is two levels up
+// from the asset (…/<packRoot>/<image|background|movement|inspiration><N>/<file>).
+// Suffix N is the style_id; hint is keyed by that suffix in stylenames.json.
+// Returns '' on any miss, so tagging behaves exactly as before when no hint exists.
+function styleGuideForAsset(assetPath) {
+  try {
+    const folder = basename(dirname(assetPath))
+    const m      = folder.match(/^(background|image|movement|inspiration)(\d*)$/i)
+    if (!m) return ''
+    const suffix = m[2] || '0'
+
+    const packRoot = dirname(dirname(assetPath))
+    const namesPath = join(packRoot, 'stylenames.json')
+    if (!existsSync(namesPath)) return ''
+
+    const data  = JSON.parse(readFileSync(namesPath, 'utf-8'))
+    const entry = data[String(suffix)] ?? data[String(Number(suffix) || 0)]
+    if (entry && typeof entry === 'object' && entry.tagger_hint) {
+      return String(entry.tagger_hint).trim()
+    }
+    return ''
+  } catch {
+    return ''
+  }
 }
 
 // ─── RAG BULK INDEX HELPER ───────────────────────────────────
@@ -129,6 +157,15 @@ export async function registerIpcHandlers() {
   ipcMain.handle('get-assets-by-category', async (_e, categoryId) => {
     try {
       return { success: true, data: getAssetsByCategory(categoryId) }
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  // ─── GET ASSETS BY STYLE TYPE (all categories of a type) ─────
+  ipcMain.handle('get-assets-by-style-type', async (_e, styleTypeId) => {
+    try {
+      return { success: true, data: getAssetsByStyleType(styleTypeId) }
     } catch (err) {
       return { success: false, error: err.message }
     }
@@ -459,16 +496,95 @@ export async function registerIpcHandlers() {
   })
 
   // ─── GET STYLE NAMES ─────────────────────────────────────────
-  ipcMain.handle('get-style-names', async () => {
+  // Optional packIndex targets a specific pack in assetPaths; omitted = active pack.
+  ipcMain.handle('get-style-names', async (_e, { packIndex } = {}) => {
     try {
-      const settings   = readSettings()
-      const activePath = getActivePath(settings)
-      if (!activePath) {
+      const settings = readSettings()
+      const path = (packIndex != null)
+        ? (settings.assetPaths?.[packIndex]?.path ?? '')
+        : getActivePath(settings)
+      if (!path) {
         return { success: false, error: 'Asset path belum diset' }
       }
-      const styleNames = readStyleNames(activePath)
-      return { success: true, data: styleNames }
+      return { success: true, data: readStyleNames(path) }
     } catch (err) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  // ─── SAVE STYLE TAGGER HINTS ─────────────────────────────────
+  // Writes per-style `tagger_hint` into a pack's stylenames.json.
+  // payload: { hints: { [suffix]: "hint text", ... }, packIndex? }
+  // packIndex omitted = active pack.
+  ipcMain.handle('set-style-hints', async (_e, { hints, packIndex } = {}) => {
+    try {
+      const settings = readSettings()
+      const path = (packIndex != null)
+        ? (settings.assetPaths?.[packIndex]?.path ?? '')
+        : getActivePath(settings)
+      if (!path) return { success: false, error: 'Asset path belum diset' }
+      writeStyleHints(hints || {}, path)
+      return { success: true }
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  // ─── GENERATE STYLE GUIDE (AI draft of a style's tagger hint) ─
+  // Samples a few images from the style's folders and asks the tagger to
+  // draft a hint. Returns { success, hint } for the user to review/edit.
+  ipcMain.handle('generate-style-guide', async (_e, { packIndex, suffix, sampleSize = 5 } = {}) => {
+    const settings = readSettings()
+    const { taggerUrl = 'http://192.168.1.27:8000' } = settings
+    const packRoot = (packIndex != null)
+      ? (settings.assetPaths?.[packIndex]?.path ?? '')
+      : getActivePath(settings)
+    if (!packRoot) return { success: false, error: 'Asset path belum diset' }
+
+    try {
+      const IMG_EXTS = ['.jpg', '.jpeg', '.png', '.webp', '.bmp']
+      const folders  = [`image${suffix}`, `background${suffix}`]
+      const samples  = []
+      for (const folder of folders) {
+        const dir = join(packRoot, folder)
+        if (!existsSync(dir)) continue
+        for (const file of readdirSync(dir)) {
+          if (file.toLowerCase().startsWith('categories')) continue
+          if (IMG_EXTS.includes(extname(file).toLowerCase())) {
+            samples.push(join(dir, file))
+            if (samples.length >= sampleSize) break
+          }
+        }
+        if (samples.length >= sampleSize) break
+      }
+
+      if (!samples.length) {
+        return { success: false, error: 'No sample images found for this style' }
+      }
+
+      const mimeMap = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.bmp': 'image/bmp' }
+      const form = new FormData()
+      for (const p of samples) {
+        const buf  = readFileSync(p)
+        const mime = mimeMap[extname(p).toLowerCase()] || 'image/jpeg'
+        form.append('files', new Blob([buf], { type: mime }), basename(p))
+      }
+
+      const res  = await fetch(`${taggerUrl}/generate-style-guide`, {
+        method: 'POST',
+        body:   form,
+        signal: AbortSignal.timeout(120000),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        const errMsg = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail)
+        return { success: false, error: errMsg || `Tagger error ${res.status}` }
+      }
+      return { success: true, hint: data.hint || '', sampled: samples.length }
+    } catch (err) {
+      if (err.cause?.code === 'ECONNREFUSED' || err.message?.includes('ECONNREFUSED') || err.message?.includes('fetch failed')) {
+        return { success: false, error: `Cannot connect to tagger server at ${taggerUrl}. Make sure tagger_server.py is running.` }
+      }
       return { success: false, error: err.message }
     }
   })
@@ -896,7 +1012,12 @@ export async function registerIpcHandlers() {
       )
       const data = await res.json()
       if (!res.ok) return { success: false, error: data.error }
-      return { success: true, data: data.collections }
+      // Sort collections alphabetically (case/number-aware) for every consumer
+      // — Append, Import/Link, and Compile modals all use this handler.
+      const sorted = (data.collections || []).slice().sort((a, b) =>
+        a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
+      )
+      return { success: true, data: sorted }
     } catch (err) {
       return { success: false, error: `Gagal baca collections: ${err.message}` }
     }
@@ -992,6 +1113,11 @@ export async function registerIpcHandlers() {
       form.append('file',       blob, filename)
       form.append('asset_type', assetType)
 
+      // Per-style visual guidance so the AI doesn't misread the style
+      // (e.g. monochrome ground tagged as "snow"). Empty if none set.
+      const styleGuide = styleGuideForAsset(thumbnailPath)
+      if (styleGuide) form.append('style_guide', styleGuide)
+
       // Kirim json_path ke server agar server bisa:
       // 1. Baca existing JSON → isi hanya field kosong
       // 2. Simpan hasil ke asset path (replace, bukan suffix)
@@ -1075,6 +1201,10 @@ export async function registerIpcHandlers() {
       const blob = new Blob([videoBuffer], { type: mimeType })
       const form = new FormData()
       form.append('file', blob, fname)
+
+      // Per-style visual guidance (same hint used for image tagging)
+      const styleGuide = styleGuideForAsset(videoPath)
+      if (styleGuide) form.append('style_guide', styleGuide)
 
       if (jsonPath) {
         form.append('json_path', jsonPath)

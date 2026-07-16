@@ -41,6 +41,7 @@ export function readStyleNames(root) {
         result[key] = { name: val, description: '' }
       } else if (val && typeof val === 'object') {
         result[key] = {
+          ...val,   // preserve extra fields (e.g. tagger_hint) across reads/writes
           name:        (val.name        || '').trim(),
           description: (val.description || '').trim(),
         }
@@ -59,12 +60,30 @@ export function writeStyleName(suffix, name, description = '', root) {
   const current = readStyleNames(root)
 
   current[String(suffix)] = {
+    ...(current[String(suffix)] || {}),   // keep tagger_hint & any other fields
     name:        (name        || '').trim(),
     description: (description || '').trim(),
   }
 
   writeFileSync(path, JSON.stringify(current, null, 2), 'utf-8')
   console.log(`[Scanner] stylenames.json updated: key="${suffix}" name="${name}" desc="${description}"`)
+}
+
+// Save per-style tagger hints (keyed by suffix) into stylenames.json.
+// Preserves name/description and any other fields on each entry.
+export function writeStyleHints(hintMap, root) {
+  if (!root) throw new Error('[writeStyleHints] root tidak boleh kosong')
+  const path    = join(root, 'stylenames.json')
+  const current = readStyleNames(root)
+
+  for (const [suffix, hint] of Object.entries(hintMap || {})) {
+    const key    = String(suffix)
+    current[key] = { ...(current[key] || {}), tagger_hint: (hint || '').trim() }
+  }
+
+  writeFileSync(path, JSON.stringify(current, null, 2), 'utf-8')
+  console.log(`[Scanner] stylenames.json hints updated: ${Object.keys(hintMap || {}).length} styles`)
+  return true
 }
 
 // ─────────────────────────────────────────────────────────────

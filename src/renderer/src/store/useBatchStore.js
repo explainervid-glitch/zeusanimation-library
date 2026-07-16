@@ -5,6 +5,15 @@ const useBatchStore = create((set, get) => ({
   // ── Mode ──────────────────────────────────────────────────────
   isBatchMode: false,
 
+  // Modal visibility — store-driven so the sidebar can open it too.
+  isModalOpen: false,
+
+  // Asset pool for the current batch. Empty = the modal falls back to the
+  // active category's assets (classic per-category flow). Populated by
+  // startTypeBatch to tag a whole asset type across all its categories.
+  batchAssets:    [],
+  batchAssetType: null,
+
   // ── Selection ─────────────────────────────────────────────────
   selectedIds: new Set(),   // Set<assetId>
 
@@ -21,23 +30,47 @@ const useBatchStore = create((set, get) => ({
 
   // ─────────────────────────────────────────────────────────────
   enterBatchMode: () => set({
-    isBatchMode:  true,
-    selectedIds:  new Set(),
-    statusMap:    new Map(),
-    resultsMap:   new Map(),
-    isRunning:    false,
-    doneCount:    0,
-    totalCount:   0,
+    isBatchMode:    true,
+    isModalOpen:    false,
+    batchAssets:    [],
+    batchAssetType: null,
+    selectedIds:    new Set(),
+    statusMap:      new Map(),
+    resultsMap:     new Map(),
+    isRunning:      false,
+    doneCount:      0,
+    totalCount:     0,
   }),
 
   exitBatchMode: () => set({
-    isBatchMode:  false,
-    selectedIds:  new Set(),
-    statusMap:    new Map(),
-    resultsMap:   new Map(),
-    isRunning:    false,
-    doneCount:    0,
-    totalCount:   0,
+    isBatchMode:    false,
+    isModalOpen:    false,
+    batchAssets:    [],
+    batchAssetType: null,
+    selectedIds:    new Set(),
+    statusMap:      new Map(),
+    resultsMap:     new Map(),
+    isRunning:      false,
+    doneCount:      0,
+    totalCount:     0,
+  }),
+
+  openModal:  () => set({ isModalOpen: true }),
+  closeModal: () => set({ isModalOpen: false }),
+
+  // Batch-tag an entire asset type: seed the pool with every asset across the
+  // type's categories, select all, and open the modal.
+  startTypeBatch: (assets, assetType) => set({
+    isBatchMode:    true,
+    isModalOpen:    true,
+    batchAssets:    assets,
+    batchAssetType: assetType,
+    selectedIds:    new Set(assets.map(a => a.id)),
+    statusMap:      new Map(),
+    resultsMap:     new Map(),
+    isRunning:      false,
+    doneCount:      0,
+    totalCount:     0,
   }),
 
   toggleSelect: (assetId) => set(state => {

@@ -5,6 +5,7 @@ const api = {
   // Assets
   getAssetTree:        ()            => ipcRenderer.invoke('get-asset-tree'),
   getAssetsByCategory: (id)          => ipcRenderer.invoke('get-assets-by-category', id),
+  getAssetsByStyleType: (styleTypeId) => ipcRenderer.invoke('get-assets-by-style-type', styleTypeId),
   rescanAssets:        ()            => ipcRenderer.invoke('rescan-assets'),
   openAssetFile:       (path)        => ipcRenderer.invoke('open-asset-file', path),
   renameStyle:         (payload)     => ipcRenderer.invoke('rename-style', payload),
@@ -16,7 +17,9 @@ const api = {
   getTypeCategories:   (styleTypeId) => ipcRenderer.invoke('get-type-categories', styleTypeId),
 
   // Add
-  getStyleNames:       ()            => ipcRenderer.invoke('get-style-names'),
+  getStyleNames:       (params)      => ipcRenderer.invoke('get-style-names', params),
+  saveStyleHints:      (payload)     => ipcRenderer.invoke('set-style-hints', payload),
+  generateStyleGuide:  (payload)     => ipcRenderer.invoke('generate-style-guide', payload),
   addCategory:         (payload)     => ipcRenderer.invoke('add-category', payload),
   deleteCategory:      (payload)     => ipcRenderer.invoke('delete-category', payload),
   createAsset:         (payload)     => ipcRenderer.invoke('create-asset', payload),

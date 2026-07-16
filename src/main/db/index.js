@@ -282,6 +282,17 @@ export function getAssetsByCategory(categoryId) {
   return queryAll('SELECT * FROM assets WHERE category_id = ? ORDER BY name', [categoryId])
 }
 
+// All assets across every category of one style_type (e.g. all of a style's
+// Movement assets), excluding the junk '⚠ Uncategorized' bucket.
+export function getAssetsByStyleType(styleTypeId) {
+  return queryAll(`
+    SELECT a.* FROM assets a
+    JOIN categories c ON c.id = a.category_id
+    WHERE c.style_type_id = ? AND c.name != '⚠ Uncategorized'
+    ORDER BY a.name
+  `, [styleTypeId])
+}
+
 export function hasData() {
   try {
     return (queryOne('SELECT COUNT(*) as count FROM styles')?.count ?? 0) > 0

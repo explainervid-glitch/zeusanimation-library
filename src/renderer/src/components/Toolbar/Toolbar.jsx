@@ -356,14 +356,13 @@ function MenuDropdown({ splitOpen, onToggleSplit, onSync, syncing, synced, syncD
 export default function Toolbar() {
   const { scanning, selectedCategory, assets, checkDbUpdated, activePackIndex } = useAssetStore()
   const { openSettings, blenderImportEnabled } = useSettingsStore()
-  const { isBatchMode, selectedIds, enterBatchMode, exitBatchMode } = useBatchStore()
+  const { isBatchMode, selectedIds, enterBatchMode, exitBatchMode, openModal } = useBatchStore()
   const { splitOpen, toggleSplit } = useLayoutStore()
   const { isCompileMode, toggleCompileMode } = useCompileStore()
 
   // "Compile" is exclusive to the 3D pack, and only when Import to Blender is on.
   const canCompile = activePackIndex === 1 && blenderImportEnabled
   const [showAddModal, setShowAddModal]   = useState(false)
-  const [showBatchModal, setShowBatchModal] = useState(false)
   const [refreshing, setRefreshing]       = useState(false)
   const [refreshed, setRefreshed]         = useState(false)
 
@@ -412,7 +411,7 @@ export default function Toolbar() {
               </button>
 
               <button
-                onClick={() => setShowBatchModal(true)}
+                onClick={() => openModal()}
                 disabled={selectedIds.size === 0}
                 title={selectedIds.size === 0 ? 'Select assets first via checkboxes' : 'Review and start tagging'}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold
@@ -478,7 +477,7 @@ export default function Toolbar() {
 
       <AddModal isOpen={showAddModal} onClose={() => setShowAddModal(false)} />
       <SettingsModal />
-      <BatchTaggerModal isOpen={showBatchModal} onClose={() => setShowBatchModal(false)} />
+      <BatchTaggerModal />
     </>
   )
 }
