@@ -25,6 +25,13 @@ const useSettingsStore = create(
       themeIntroSeen: false,
       dismissThemeIntro: () => set({ themeIntroSeen: true }),
 
+      // When ON: the Import button shows on character cards AND character cards
+      // become import-only (clicking the card no longer opens the asset). When
+      // OFF: the Import button is hidden and cards open on click as usual.
+      importCharactersEnabled: false,
+      setImportCharactersEnabled:    (v) => set({ importCharactersEnabled: v }),
+      toggleImportCharactersEnabled: ()  => set(s => ({ importCharactersEnabled: !s.importCharactersEnabled })),
+
       // Character "Import" button behavior.
       // blenderImportEnabled (default off): when ON, Import copies the asset
       // into the project AND imports its collection into a running Blender.

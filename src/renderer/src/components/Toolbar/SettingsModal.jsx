@@ -14,6 +14,7 @@ export default function SettingsModal() {
     ragUrl, updateRagUrl,
     loading, saved, saveSettings,
     theme, setTheme,
+    importCharactersEnabled, toggleImportCharactersEnabled,
     blenderImportEnabled, toggleBlenderImportEnabled,
     blenderImportMode, setBlenderImportMode,
   } = useSettingsStore()
@@ -141,6 +142,7 @@ export default function SettingsModal() {
   const handleOk = async () => {
     await saveSettings()
     await saveHints()
+    closeSettings()
   }
 
   const handleReEmbed = () => {
@@ -211,8 +213,8 @@ export default function SettingsModal() {
                 onClick={() => setActiveTab(id)}
                 className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-all
                   ${activeTab === id
-                    ? 'bg-c-accent/10 text-c-accent border border-c-accent/30'
-                    : 'text-c-text-3 hover:bg-c-hover hover:text-c-text border border-transparent'
+                    ? 'bg-c-accent text-c-on-accent shadow-sm'
+                    : 'text-c-text-3 hover:bg-c-hover hover:text-c-text'
                   }`}
               >
                 <Icon size={13} />
@@ -325,47 +327,70 @@ export default function SettingsModal() {
 
                 {/* ── Character Import ── */}
                 <div className="pb-4 border-b border-c-border">
-                  <label className="text-xs font-semibold text-c-text uppercase tracking-wider block mb-2">
-                    Character Import
-                  </label>
-
-                  <button
-                    onClick={toggleBlenderImportEnabled}
-                    className="flex items-center gap-2 text-[11px] text-c-text-3 hover:text-c-text transition-colors"
-                    title={blenderImportEnabled ? 'Disable import to Blender' : 'Enable import to Blender'}
-                  >
-                    <span className="relative inline-block w-8 h-4 rounded-full bg-c-raised border border-c-border-2 transition-colors">
-                      <span
-                        className={`absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-c-accent transition-all duration-200
-                          ${blenderImportEnabled ? 'left-4' : 'left-0.5'}`}
-                      />
-                    </span>
-                    <Link2 size={12} />
-                    <span>{blenderImportEnabled ? 'Import to Blender' : 'Send to Project only'}</span>
-                  </button>
-
-                  {blenderImportEnabled && (
+                  {/* Heading + master toggle on one row */}
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-xs font-semibold text-c-text uppercase tracking-wider">
+                      Character Import
+                    </label>
                     <button
-                      onClick={() => setBlenderImportMode(blenderImportMode === 'append' ? 'link' : 'append')}
-                      className="flex items-center gap-2 text-[11px] text-c-text-3 hover:text-c-text transition-colors mt-2 pl-0.5"
-                      title="Switch import method"
+                      onClick={toggleImportCharactersEnabled}
+                      title={importCharactersEnabled ? 'Disable Import Characters' : 'Enable Import Characters'}
+                      className="flex-shrink-0"
                     >
                       <span className="relative inline-block w-8 h-4 rounded-full bg-c-raised border border-c-border-2 transition-colors">
                         <span
                           className={`absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-c-accent transition-all duration-200
-                            ${blenderImportMode === 'link' ? 'left-4' : 'left-0.5'}`}
+                            ${importCharactersEnabled ? 'left-4' : 'left-0.5'}`}
                         />
                       </span>
-                      <span>Method: <span className="text-c-text font-medium capitalize">{blenderImportMode}</span></span>
                     </button>
+                  </div>
+
+                  {importCharactersEnabled && (
+                    <div className="mt-2 pl-1 border-l border-c-border-2 space-y-2">
+                      {/* Import to Blender on/off */}
+                      <button
+                        onClick={toggleBlenderImportEnabled}
+                        className="flex items-center gap-2 text-[11px] text-c-text-3 hover:text-c-text transition-colors pl-1"
+                        title={blenderImportEnabled ? 'Disable import to Blender' : 'Enable import to Blender'}
+                      >
+                        <span className="relative inline-block w-8 h-4 rounded-full bg-c-raised border border-c-border-2 transition-colors">
+                          <span
+                            className={`absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-c-accent transition-all duration-200
+                              ${blenderImportEnabled ? 'left-4' : 'left-0.5'}`}
+                          />
+                        </span>
+                        <Link2 size={12} />
+                        <span>{blenderImportEnabled ? 'Import to Blender' : 'Send to Project only'}</span>
+                      </button>
+
+                      {/* Append vs link method */}
+                      {blenderImportEnabled && (
+                        <button
+                          onClick={() => setBlenderImportMode(blenderImportMode === 'append' ? 'link' : 'append')}
+                          className="flex items-center gap-2 text-[11px] text-c-text-3 hover:text-c-text transition-colors pl-1"
+                          title="Switch import method"
+                        >
+                          <span className="relative inline-block w-8 h-4 rounded-full bg-c-raised border border-c-border-2 transition-colors">
+                            <span
+                              className={`absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-c-accent transition-all duration-200
+                                ${blenderImportMode === 'link' ? 'left-4' : 'left-0.5'}`}
+                            />
+                          </span>
+                          <span>Method: <span className="text-c-text font-medium capitalize">{blenderImportMode}</span></span>
+                        </button>
+                      )}
+                    </div>
                   )}
 
                   <p className="text-[10px] text-c-text-4 mt-1.5 leading-relaxed">
-                    {!blenderImportEnabled
-                      ? 'Import only copies a character into the project and opens the file.'
-                      : blenderImportMode === 'append'
-                        ? 'Import copies a character into the project, then appends its collection into Blender.'
-                        : 'Import copies a character into the project, then links its collection into Blender.'}
+                    {!importCharactersEnabled
+                      ? 'Off: no Import button; clicking a character card opens the asset.'
+                      : !blenderImportEnabled
+                        ? 'Character cards show an Import button and open only via it — Import copies into the project.'
+                        : blenderImportMode === 'append'
+                          ? 'Import copies a character into the project, then appends its collection into Blender.'
+                          : 'Import copies a character into the project, then links its collection into Blender.'}
                   </p>
                 </div>
 

@@ -14,6 +14,10 @@ const useBatchStore = create((set, get) => ({
   batchAssets:    [],
   batchAssetType: null,
 
+  // Asset objects captured when a run starts, so the panel + Save All keep
+  // working even if the user navigates to another category while tagging runs.
+  batchTargets:   [],
+
   // ── Selection ─────────────────────────────────────────────────
   selectedIds: new Set(),   // Set<assetId>
 
@@ -34,6 +38,7 @@ const useBatchStore = create((set, get) => ({
     isModalOpen:    false,
     batchAssets:    [],
     batchAssetType: null,
+    batchTargets:   [],
     selectedIds:    new Set(),
     statusMap:      new Map(),
     resultsMap:     new Map(),
@@ -47,6 +52,7 @@ const useBatchStore = create((set, get) => ({
     isModalOpen:    false,
     batchAssets:    [],
     batchAssetType: null,
+    batchTargets:   [],
     selectedIds:    new Set(),
     statusMap:      new Map(),
     resultsMap:     new Map(),
@@ -65,6 +71,7 @@ const useBatchStore = create((set, get) => ({
     isModalOpen:    true,
     batchAssets:    assets,
     batchAssetType: assetType,
+    batchTargets:   [],
     selectedIds:    new Set(assets.map(a => a.id)),
     statusMap:      new Map(),
     resultsMap:     new Map(),
@@ -99,7 +106,7 @@ const useBatchStore = create((set, get) => ({
     // Init statusMap semua ke queued
     const initMap = new Map(targets.map(a => [a.id, { status: 'queued' }]))
     const initResults = new Map()
-    set({ isRunning: true, statusMap: initMap, resultsMap: initResults, totalCount: targets.length, doneCount: 0 })
+    set({ isRunning: true, statusMap: initMap, resultsMap: initResults, totalCount: targets.length, doneCount: 0, batchTargets: targets })
 
     for (const asset of targets) {
       // Tandai processing
@@ -169,14 +176,16 @@ const useBatchStore = create((set, get) => ({
   },
 
   // ─── Save all results to JSON ─────────────────────────────────
-  saveAllResults: async (assets) => {
-    const { resultsMap } = get()
+  saveAllResults: async () => {
+    // Use the captured batch targets so saving works even if the user has
+    // navigated to another category while tagging ran.
+    const { resultsMap, batchTargets } = get()
     const results = { successCount: 0, failureCount: 0, errors: [] }
 
     for (const [assetId, result] of resultsMap.entries()) {
       if (!result.success) continue
 
-      const asset = assets.find(a => a.id === assetId)
+      const asset = batchTargets.find(a => a.id === assetId)
       if (!asset) continue
 
       try {

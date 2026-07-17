@@ -77,6 +77,7 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
   const openAsset             = usePanelStore((s) => s.openAsset)
   const reloadCurrentCategory = usePanelStore((s) => s.reloadCurrentCategory)
   const activeProject         = useProjectStore((s) => s.activeProject)
+  const importCharactersEnabled = useSettingsStore((s) => s.importCharactersEnabled)
   const blenderImportEnabled  = useSettingsStore((s) => s.blenderImportEnabled)
   const blenderImportMode     = useSettingsStore((s) => s.blenderImportMode)
   const isCompileMode         = useCompileStore((s) => s.isCompileMode)
@@ -153,8 +154,10 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
   // Single "Import" button for Character cards. The two flows underneath stay
   // completely separate — this just decides which one runs, based on the
   // Settings toggles AND whether the file can be imported into Blender (.blend).
-  const showImport   = type === 'character'
+  const showImport   = type === 'character' && importCharactersEnabled
   const canImport    = blenderImportEnabled && isBlendFile(asset.raw_path)
+  // When Import Characters is on, character cards are import-only (no open-on-click).
+  const importOnly   = type === 'character' && importCharactersEnabled
 
   // Compile mode: character + animation cards are pickable into the tray slots.
   const isCompilePickable = isCompileMode && (type === 'character' || type === 'animation')
@@ -231,7 +234,8 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
       <div
         onClick={() => {
           if (isCompileMode) { if (isCompilePickable) pickForCompile(asset, type); return }
-          if (!isBatchMode) openAsset(asset.raw_path)
+          if (isBatchMode || importOnly) return   // import-only: open only via the Import button
+          openAsset(asset.raw_path)
         }}
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
@@ -450,8 +454,8 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
             animate-[compileSlideIn_140ms_ease-out]"
           onClick={(e) => e.stopPropagation()}
         >
-          <p className="text-[9px] uppercase tracking-wider text-c-text-4 px-0.5 pb-1.5">
-            Rename → send to project
+          <p className="text-[10px] uppercase tracking-wider text-c-text-2 px-0.5 pb-1.5">
+            Rename
           </p>
           <div className="flex items-center gap-1.5">
             <input
