@@ -326,8 +326,8 @@ const useAssetStore = create((set, get) => ({
   startDbPolling: () => {
     const INTERVAL_MS = 15000  // 15 detik
     const id = setInterval(async () => {
-      const { scanning, checkDbUpdated } = get()
-      if (scanning) return  // skip saat rescan
+      const { scanning, _pollPaused, checkDbUpdated } = get()
+      if (scanning || _pollPaused > 0) return  // skip saat rescan / edit in progress
       checkDbUpdated()
     }, INTERVAL_MS)
     set({ _pollId: id })
@@ -340,6 +340,14 @@ const useAssetStore = create((set, get) => ({
   },
 
   _pollId: null,
+
+  // Pause/resume the auto-poll while a form holds unsaved edits — a silent
+  // tree/assets refresh mid-edit would reset fields (e.g. the category
+  // dropdown) back to their stored values. Counter, so nested/multiple
+  // pausers can't resume each other prematurely.
+  _pollPaused: 0,
+  pauseDbPolling:  () => set(s => ({ _pollPaused: s._pollPaused + 1 })),
+  resumeDbPolling: () => set(s => ({ _pollPaused: Math.max(0, s._pollPaused - 1) })),
 
   // Reload assets array tanpa reset selectedCategory
   reloadCurrentCategory: async () => {

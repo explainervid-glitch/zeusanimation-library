@@ -4,6 +4,7 @@
 # Install: pip install qdrant-client fastembed
 
 import os
+import uuid
 from typing import List, Optional
 
 import uvicorn
@@ -15,6 +16,7 @@ from qdrant_client.models import (
     Distance,
     FieldCondition,
     Filter,
+    FilterSelector,
     MatchValue,
     PointIdsList,
     PointStruct,
@@ -75,6 +77,8 @@ class RagAssetPayload(BaseModel):
     asset_type:    str   # background | character | animation | inspiration
     category:      str
     json_data:     dict
+    json_path:     str = ""   # stable key — used to derive the point id + join back
+    pack_id:       str = ""   # pack root path — scopes search + delete-by-pack
 
 class RagBulkPayload(BaseModel):
     assets: List[RagAssetPayload]
@@ -82,7 +86,11 @@ class RagBulkPayload(BaseModel):
 class RagSearchPayload(BaseModel):
     query:    str
     style_id: int
+    pack_id:  Optional[str] = None   # scope results to one pack (avoids cross-pack mixing)
     limit:    Optional[int] = 10
+
+class RagDeletePackPayload(BaseModel):
+    pack_id: str
 
 # ══════════════════════════════════════════════════════════════
 # HELPERS
@@ -92,6 +100,22 @@ def _arr(val) -> str:
     if isinstance(val, list):
         return " ".join(str(v) for v in val if v)
     return str(val) if val else ""
+
+
+# ── Stable, pack-unique point IDs ─────────────────────────────
+# Point ids are derived from the asset's json_path (a stable, pack-unique file
+# path) instead of the SQLite autoincrement id. Rescans reassign autoincrement
+# ids, which used to orphan every vector; deriving the id from json_path means
+# the same asset keeps the same point id across rescans (upsert overwrites),
+# so the index never fills with stale duplicates.
+def _stable_key(asset: RagAssetPayload) -> str:
+    return asset.json_path or (
+        f"{asset.pack_id}|{asset.style_id}|{asset.asset_type}|{asset.category}|{asset.asset_id}"
+    )
+
+
+def _point_id(stable_key: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, stable_key))
 
 
 def _build_text(asset: RagAssetPayload) -> str:
@@ -184,10 +208,12 @@ async def rag_index_upsert(asset: RagAssetPayload):
         qdrant.upsert(
             collection_name=COLLECTION,
             points=[PointStruct(
-                id      = asset.asset_id,
+                id      = _point_id(_stable_key(asset)),
                 vector  = vector,
                 payload = {
                     "asset_id":      asset.asset_id,
+                    "json_path":     asset.json_path,
+                    "pack_id":       asset.pack_id,
                     "style_id":      asset.style_id,
                     "style_type_id": asset.style_type_id,
                     "asset_type":    asset.asset_type,
@@ -216,10 +242,12 @@ async def rag_index_bulk(payload: RagBulkPayload):
 
     points  = [
         PointStruct(
-            id      = asset.asset_id,
+            id      = _point_id(_stable_key(asset)),
             vector  = vectors[i],
             payload = {
                 "asset_id":      asset.asset_id,
+                "json_path":     asset.json_path,
+                "pack_id":       asset.pack_id,
                 "style_id":      asset.style_id,
                 "style_type_id": asset.style_type_id,
                 "asset_type":    asset.asset_type,
@@ -245,15 +273,54 @@ async def rag_index_bulk(payload: RagBulkPayload):
 
 @app.delete("/rag-index/{asset_id}")
 async def rag_index_delete(asset_id: int):
-    """Remove one asset from the index."""
+    """Best-effort single delete by stored asset_id. (Point ids are UUIDs now,
+    so we filter on the payload rather than the id.) Re-embed is authoritative."""
     try:
         qdrant.delete(
             collection_name=COLLECTION,
-            points_selector=PointIdsList(points=[asset_id]),
+            points_selector=FilterSelector(filter=Filter(must=[
+                FieldCondition(key="asset_id", match=MatchValue(value=asset_id))
+            ])),
         )
-        print(f"[RAG] Deleted asset_id={asset_id}")
+        print(f"[RAG] Deleted points with asset_id={asset_id}")
         return {"success": True, "asset_id": asset_id}
     except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+@app.post("/rag-index/delete-pack")
+async def rag_delete_pack(payload: RagDeletePackPayload):
+    """Delete every vector belonging to one pack (by pack_id). Called before a
+    full re-embed so a pack's vectors are replaced cleanly with no orphans."""
+    try:
+        qdrant.delete(
+            collection_name=COLLECTION,
+            points_selector=FilterSelector(filter=Filter(must=[
+                FieldCondition(key="pack_id", match=MatchValue(value=payload.pack_id))
+            ])),
+        )
+        count = qdrant.count(COLLECTION).count
+        print(f"[RAG] Deleted pack '{payload.pack_id}' — {count} points remain")
+        return {"success": True, "total": count}
+    except Exception as e:
+        print(f"[RAG] delete-pack error: {e}")
+        raise HTTPException(500, str(e))
+
+
+@app.post("/rag-reset")
+async def rag_reset():
+    """Nuke the whole collection and recreate it empty. One-time cleanup to
+    clear the legacy backlog of stale (int-id) points."""
+    try:
+        qdrant.delete_collection(COLLECTION)
+        qdrant.create_collection(
+            collection_name=COLLECTION,
+            vectors_config=VectorParams(size=EMBED_DIM, distance=Distance.COSINE),
+        )
+        print("[RAG] Collection reset (empty)")
+        return {"success": True, "indexed": 0}
+    except Exception as e:
+        print(f"[RAG] reset error: {e}")
         raise HTTPException(500, str(e))
 
 
@@ -271,13 +338,12 @@ async def rag_search(payload: RagSearchPayload):
         # Embed query — uses BGE's query-instruction prefix (see _embed_query)
         query_vec = _embed_query(payload.query.strip())
 
-        # Search with style_id filter — compatible with qdrant-client v1.7+
-        search_filter = Filter(
-            must=[FieldCondition(
-                key   = "style_id",
-                match = MatchValue(value=payload.style_id),
-            )]
-        )
+        # Scope by style_id, plus pack_id when provided so results never mix
+        # across packs (both packs reuse the same style_id numbers).
+        must = [FieldCondition(key="style_id", match=MatchValue(value=payload.style_id))]
+        if payload.pack_id:
+            must.append(FieldCondition(key="pack_id", match=MatchValue(value=payload.pack_id)))
+        search_filter = Filter(must=must)
 
         try:
             # qdrant-client >= 1.7
@@ -299,11 +365,14 @@ async def rag_search(payload: RagSearchPayload):
                 with_payload    = True,
             )
 
+        # Point ids are UUIDs now — return the payload fields (json_path is the
+        # stable key the app joins back to its current SQLite on).
         return {
             "success": True,
             "results": [
                 {
-                    "asset_id":      hit.id,
+                    "asset_id":      hit.payload.get("asset_id"),
+                    "json_path":     hit.payload.get("json_path"),
                     "style_type_id": hit.payload.get("style_type_id"),
                     "asset_type":    hit.payload.get("asset_type"),
                     "category":      hit.payload.get("category"),

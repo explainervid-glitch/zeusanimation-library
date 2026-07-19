@@ -173,7 +173,9 @@ def is_empty(value) -> bool:
     return False
 
 
-PROTECTED_FIELDS = {"Category", "asset_type", "style"}
+# FileName and Category are organised by the system (folder layout + categories
+# JSON) — the AI must never rewrite them. They are skipped during the merge.
+PROTECTED_FIELDS = {"FileName", "Category", "asset_type", "style"}
 
 # ── Flat schema templates ──────────────────────────────────────
 # Used instead of model_json_schema() which produces nested $defs/$ref
@@ -642,6 +644,10 @@ async def auto_tag(
             merged["metadata"] = {}
         merged["metadata"]["asset_type"] = asset_type
 
+        # FileName is system-managed: keep the existing organised value, or the
+        # provided filename for a brand-new asset — never the AI's guess.
+        merged["FileName"] = (existing_json or {}).get("FileName") or asset_filename
+
         _save_json(json_path, merged)
         return merged
 
@@ -685,6 +691,10 @@ async def auto_tag_video(
         if "metadata" not in merged:
             merged["metadata"] = {}
         merged["metadata"]["asset_type"] = "animation"
+
+        # FileName is system-managed: keep the existing organised value, or the
+        # provided filename for a brand-new asset — never the AI's guess.
+        merged["FileName"] = (existing_json or {}).get("FileName") or asset_filename
 
         _save_json(json_path, merged)
         return merged

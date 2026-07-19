@@ -69,6 +69,7 @@ import { join } from 'path'
 import { electronApp, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { registerIpcHandlers } from './ipc/assets.js'
+import { installCommandRecorder, startBridge, stopBridge } from './bridge/index.js'
 
 app.disableHardwareAcceleration()
 app.commandLine.appendSwitch('no-sandbox')
@@ -161,19 +162,28 @@ app.whenReady().then(async () => {
 
   registerWindowControls()
 
+  // Must precede registerIpcHandlers() — it wraps ipcMain.handle to capture
+  // each channel so the MCP bridge can dispatch to the same functions.
+  installCommandRecorder()
+
   // 1. Tampilkan splash dulu
   const splash = createSplash()
 
   // 2. Register IPC (bisa lama karena sql.js WASM)
   await registerIpcHandlers()
 
-  // 3. Buat main window — splash otomatis tutup saat ready-to-show
+  // 3. Buka bridge setelah semua command terdaftar
+  startBridge()
+
+  // 4. Buat main window — splash otomatis tutup saat ready-to-show
   createWindow(splash)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow(null)
   })
 })
+
+app.on('will-quit', stopBridge)
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()

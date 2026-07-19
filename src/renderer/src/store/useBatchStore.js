@@ -1,5 +1,20 @@
 import { create } from 'zustand'
 
+// Fresh (empty) batch state. A function so each reset gets its own Set/Map.
+const freshBatchState = () => ({
+  isBatchMode:    false,
+  isModalOpen:    false,
+  batchAssets:    [],
+  batchAssetType: null,
+  batchTargets:   [],
+  selectedIds:    new Set(),
+  statusMap:      new Map(),
+  resultsMap:     new Map(),
+  isRunning:      false,
+  doneCount:      0,
+  totalCount:     0,
+})
+
 // Status per asset: idle | queued | processing | done | error
 const useBatchStore = create((set, get) => ({
   // ── Mode ──────────────────────────────────────────────────────
@@ -33,32 +48,29 @@ const useBatchStore = create((set, get) => ({
   totalCount:  0,
 
   // ─────────────────────────────────────────────────────────────
-  enterBatchMode: () => set({
-    isBatchMode:    true,
-    isModalOpen:    false,
-    batchAssets:    [],
-    batchAssetType: null,
-    batchTargets:   [],
-    selectedIds:    new Set(),
-    statusMap:      new Map(),
-    resultsMap:     new Map(),
-    isRunning:      false,
-    doneCount:      0,
-    totalCount:     0,
-  }),
+  // Invalidated on reset/new run so an in-flight loop stops writing to the store.
+  _runToken: 0,
 
-  exitBatchMode: () => set({
-    isBatchMode:    false,
-    isModalOpen:    false,
-    batchAssets:    [],
-    batchAssetType: null,
-    batchTargets:   [],
-    selectedIds:    new Set(),
-    statusMap:      new Map(),
-    resultsMap:     new Map(),
-    isRunning:      false,
-    doneCount:      0,
-    totalCount:     0,
+  enterBatchMode: () => set(s => ({
+    ...freshBatchState(),
+    isBatchMode: true,
+    _runToken:   s._runToken + 1,
+  })),
+
+  // Full teardown — clears everything, closes the tray, and stops any run.
+  resetBatch: () => set(s => ({
+    ...freshBatchState(),
+    _runToken: s._runToken + 1,
+  })),
+
+  // Leave SELECTION mode only. If a run is in flight (or finished with unsaved
+  // results), keep the tray + progress alive so the user can carry on working —
+  // edit assets, browse — while it finishes, and still Save All afterwards.
+  exitBatchMode: () => set(s => {
+    if (s.isRunning || s.resultsMap.size > 0) {
+      return { isBatchMode: false, selectedIds: new Set() }
+    }
+    return { ...freshBatchState(), _runToken: s._runToken + 1 }
   }),
 
   openModal:  () => set({ isModalOpen: true }),
@@ -106,9 +118,13 @@ const useBatchStore = create((set, get) => ({
     // Init statusMap semua ke queued
     const initMap = new Map(targets.map(a => [a.id, { status: 'queued' }]))
     const initResults = new Map()
-    set({ isRunning: true, statusMap: initMap, resultsMap: initResults, totalCount: targets.length, doneCount: 0, batchTargets: targets })
+    const token = get()._runToken + 1
+    set({ _runToken: token, isRunning: true, statusMap: initMap, resultsMap: initResults, totalCount: targets.length, doneCount: 0, batchTargets: targets })
 
     for (const asset of targets) {
+      // Bail if this run was cancelled (resetBatch) or superseded by a new one.
+      if (get()._runToken !== token) return
+
       // Tandai processing
       set(s => {
         const m = new Map(s.statusMap)
@@ -172,7 +188,8 @@ const useBatchStore = create((set, get) => ({
       }
     }
 
-    set({ isRunning: false })
+    // Only clear the flag if this run is still the current one.
+    if (get()._runToken === token) set({ isRunning: false })
   },
 
   // ─── Save all results to JSON ─────────────────────────────────

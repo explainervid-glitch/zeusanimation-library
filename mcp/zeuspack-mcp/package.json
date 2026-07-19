@@ -1,0 +1,13 @@
+{
+  "name": "zeuspack-mcp",
+  "version": "1.0.0",
+  "description": "MCP server exposing a running ZeusPack instance to Claude",
+  "type": "module",
+  "main": "index.js",
+  "bin": { "zeuspack-mcp": "index.js" },
+  "license": "ISC",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
+  }
+}

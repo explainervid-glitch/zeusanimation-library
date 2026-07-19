@@ -88,6 +88,8 @@ async function triggerRagBulkIndex(activePath, sender = null) {
       asset_type:    row.asset_type,
       category:      row.category_name,
       json_data:     jsonData,
+      json_path:     row.json_path,   // stable key (point id + join back)
+      pack_id:       activePath,      // scopes search + delete-by-pack
     })
   }
   stmt.free()
@@ -95,6 +97,19 @@ async function triggerRagBulkIndex(activePath, sender = null) {
   if (!assets.length) {
     console.log('[RAG] No assets with json_path to index')
     return
+  }
+
+  // Clear this pack's existing vectors first, so the re-embed REPLACES them
+  // instead of piling new points next to stale ones (which orphaned search).
+  try {
+    await fetch(`${ragUrl}/rag-index/delete-pack`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ pack_id: activePath }),
+    })
+    console.log(`[RAG] Cleared existing vectors for pack: ${activePath}`)
+  } catch (e) {
+    console.warn('[RAG] delete-pack failed (non-fatal, will upsert over):', e.message)
   }
 
   // Send in batches of 500 to avoid oversized payloads
@@ -1348,10 +1363,13 @@ export async function registerIpcHandlers() {
   ipcMain.handle('rag-search', async (_e, { query, styleId, limit = 10 }) => {
     const { ragUrl = 'http://192.168.1.27:8001' } = readSettings()
     try {
+      const settings   = readSettings()
+      const activePath = getActivePath(settings)
+
       const res  = await fetch(`${ragUrl}/rag-search`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ query, style_id: styleId, limit }),
+        body:    JSON.stringify({ query, style_id: styleId, pack_id: activePath, limit }),
         signal:  AbortSignal.timeout(10000),
       })
       const data = await res.json()
@@ -1359,35 +1377,36 @@ export async function registerIpcHandlers() {
 
       if (!data.results?.length) return { success: true, data: [] }
 
-      const settings   = readSettings()
-      const activePath = getActivePath(settings)
-      const db         = await getDb(activePath)
+      const db = await getDb(activePath)
 
-      const ids          = data.results.map(r => r.asset_id)
-      const placeholders = ids.map(() => '?').join(',')
-      // Exclude '⚠ Uncategorized' as a safety net — Qdrant may still hold
-      // stale entries from before a rescan that removed them from the index
+      // Join on json_path (the stable key) — asset ids change on every rescan,
+      // so joining on id would drop everything after a rescan.
+      const paths = data.results.map(r => r.json_path).filter(Boolean)
+      if (!paths.length) return { success: true, data: [] }
+
+      const placeholders = paths.map(() => '?').join(',')
       const stmt = db.prepare(`
         SELECT a.* FROM assets a
         JOIN categories c ON c.id = a.category_id
-        WHERE a.id IN (${placeholders}) AND c.name != '⚠ Uncategorized'
+        WHERE a.json_path IN (${placeholders}) AND c.name != '⚠ Uncategorized'
       `)
-      stmt.bind(ids)
+      stmt.bind(paths)
       const rows = []
       while (stmt.step()) rows.push(stmt.getAsObject())
       stmt.free()
 
       // Re-order by RAG score — SQLite IN does not preserve order
-      const scoreMap    = Object.fromEntries(data.results.map(r => [r.asset_id, r]))
-      const orderedRows = ids
-        .map(id => rows.find(r => r.id === id))
+      const scoreMap  = Object.fromEntries(data.results.map(r => [r.json_path, r]))
+      const rowByPath = Object.fromEntries(rows.map(r => [r.json_path, r]))
+      const orderedRows = paths
+        .map(p => rowByPath[p])
         .filter(Boolean)
         .map(row => ({
           ...row,
-          rag_score:         scoreMap[row.id]?.score,
-          rag_asset_type:    scoreMap[row.id]?.asset_type,
-          rag_category:      scoreMap[row.id]?.category,
-          rag_style_type_id: scoreMap[row.id]?.style_type_id,
+          rag_score:         scoreMap[row.json_path]?.score,
+          rag_asset_type:    scoreMap[row.json_path]?.asset_type,
+          rag_category:      scoreMap[row.json_path]?.category,
+          rag_style_type_id: scoreMap[row.json_path]?.style_type_id,
         }))
 
       return { success: true, data: orderedRows }

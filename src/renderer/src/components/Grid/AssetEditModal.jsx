@@ -140,8 +140,11 @@ function TagInput({ values = [], onChange, placeholder }) {
 }
 
 function CategoryDropdown({ value, options, onChange }) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef(null)
+  const [open, setOpen]           = useState(false)
+  const [query, setQuery]         = useState('')
+  const [highlight, setHighlight] = useState(0)
+  const ref       = useRef(null)
+  const searchRef = useRef(null)
 
   useEffect(() => {
     const handler = (e) => { if (!ref.current?.contains(e.target)) setOpen(false) }
@@ -149,8 +152,49 @@ function CategoryDropdown({ value, options, onChange }) {
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
+  // Reset + focus the search box each time the menu opens.
+  useEffect(() => {
+    if (open) {
+      setQuery('')
+      setHighlight(0)
+      // focus after the menu paints
+      requestAnimationFrame(() => searchRef.current?.focus())
+    }
+  }, [open])
+
+  // Filter by substring, but rank prefix matches first ("H" → "Happy" on top).
+  const q = query.trim().toLowerCase()
+  const filtered = !q
+    ? options
+    : options
+        .filter(o => o.toLowerCase().includes(q))
+        .sort((a, b) => {
+          const aStarts = a.toLowerCase().startsWith(q) ? 0 : 1
+          const bStarts = b.toLowerCase().startsWith(q) ? 0 : 1
+          return aStarts - bStarts || a.localeCompare(b)
+        })
+
+  const commit = (opt) => { onChange(opt); setOpen(false) }
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault(); setHighlight(h => Math.min(h + 1, filtered.length - 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault(); setHighlight(h => Math.max(h - 1, 0))
+    } else if (e.key === 'Enter') {
+      // Select the highlighted option — never let this bubble up to the
+      // modal's Enter-to-save shortcut.
+      e.preventDefault(); e.stopPropagation()
+      if (filtered[highlight]) commit(filtered[highlight])
+    } else if (e.key === 'Escape') {
+      e.preventDefault(); e.stopPropagation()
+      setOpen(false)
+    }
+  }
+
   return (
-    <div ref={ref} className="relative">
+    // data-no-enter-save: the modal's Enter shortcut ignores anything in here
+    <div ref={ref} className="relative" data-no-enter-save>
       <button
         onClick={() => setOpen(o => !o)}
         className="w-full flex items-center justify-between px-3 py-2 bg-c-base
@@ -162,24 +206,44 @@ function CategoryDropdown({ value, options, onChange }) {
       </button>
       {open && (
         <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-c-surface border border-c-border
-          rounded-xl shadow-xl max-h-48 overflow-y-auto py-1"
+          rounded-xl shadow-xl overflow-hidden"
         >
-          {options.map(opt => (
-            <button
-              key={opt}
-              onClick={() => { onChange(opt); setOpen(false) }}
-              className={`w-full text-left px-3 py-1.5 text-xs transition-colors
-                ${opt === value
-                  ? 'bg-c-accent/15 text-c-accent font-medium'
-                  : 'text-c-text-2 hover:bg-c-raised hover:text-c-text'
-                }`}
-            >
-              {opt}
-            </button>
-          ))}
-          {options.length === 0 && (
-            <p className="px-3 py-2 text-xs text-c-text-4">No categories available</p>
-          )}
+          {/* Type-to-search */}
+          <div className="p-1.5 border-b border-c-border">
+            <input
+              ref={searchRef}
+              value={query}
+              onChange={e => { setQuery(e.target.value); setHighlight(0) }}
+              onKeyDown={handleKeyDown}
+              placeholder="Search category…"
+              className="w-full px-2 py-1 rounded-md text-xs bg-c-base border border-c-border-2
+                text-c-text placeholder-c-text-4 outline-none focus:border-c-accent transition-colors"
+            />
+          </div>
+
+          <div className="max-h-48 overflow-y-auto py-1">
+            {filtered.map((opt, i) => (
+              <button
+                key={opt}
+                onClick={() => commit(opt)}
+                onMouseEnter={() => setHighlight(i)}
+                className={`w-full text-left px-3 py-1.5 text-xs transition-colors
+                  ${opt === value
+                    ? 'bg-c-accent/15 text-c-accent font-medium'
+                    : i === highlight
+                      ? 'bg-c-raised text-c-text'
+                      : 'text-c-text-2 hover:bg-c-raised hover:text-c-text'
+                  }`}
+              >
+                {opt}
+              </button>
+            ))}
+            {filtered.length === 0 && (
+              <p className="px-3 py-2 text-xs text-c-text-4">
+                {options.length === 0 ? 'No categories available' : `No match for “${query}”`}
+              </p>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -738,11 +802,22 @@ export default function AssetEditModal({ asset, type, styleTypeId, onClose, onSa
   const styleObj  = tree.find(s => s.id === styleId)
   const styleName = styleObj?.name ?? (styleId !== null ? `Style ${styleId}` : '')
 
+  // Pause the background DB sync while this modal is open — a silent refresh
+  // mid-edit reloads tree/assets and reverts unsaved changes (e.g. the
+  // category dropdown snapping back to its stored value).
+  useEffect(() => {
+    useAssetStore.getState().pauseDbPolling()
+    return () => useAssetStore.getState().resumeDbPolling()
+  }, [])
+
   const [form, setForm]         = useState(null)
   const [categories, setCategories] = useState([])
   const [saving, setSaving]       = useState(false)
   const [saved, setSaved]         = useState(false)
   const [error, setError]         = useState(null)
+  // Always points at the latest handleSave, so the mount-once Enter shortcut
+  // never fires a stale closure (which would save an outdated form).
+  const saveRef = useRef(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting]   = useState(false)
 
@@ -877,7 +952,20 @@ export default function AssetEditModal({ asset, type, styleTypeId, onClose, onSa
   }, [asset, type, styleTypeId])
 
   useEffect(() => {
-    const handler = (e) => { if (e.key === 'Escape') onClose() }
+    const handler = (e) => {
+      if (e.key === 'Escape') { onClose(); return }
+
+      // Enter = Save. Skipped for multi-line fields (newline), while an IME is
+      // composing, and inside the category dropdown (Enter picks an option there
+      // — that subtree is marked data-no-enter-save).
+      if (e.key !== 'Enter' || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return
+      if (e.isComposing) return
+      const t = e.target
+      if (t?.tagName === 'TEXTAREA') return
+      if (t?.closest?.('[data-no-enter-save]')) return
+      e.preventDefault()
+      saveRef.current?.()
+    }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [])
@@ -899,6 +987,7 @@ export default function AssetEditModal({ asset, type, styleTypeId, onClose, onSa
   }
 
   const handleSave = async () => {
+    if (!form || saving) return   // guards the Enter shortcut during load / double-fire
     setSaving(true)
     setError(null)
     try {
@@ -937,6 +1026,10 @@ export default function AssetEditModal({ asset, type, styleTypeId, onClose, onSa
       setSaving(false)
     }
   }
+
+  // Refresh every render so the mount-once Enter shortcut always calls the
+  // current save closure. Must come AFTER handleSave is declared.
+  saveRef.current = handleSave
 
   const handleDelete = async () => {
     setDeleting(true)

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "zeuspack": {
+      "command": "node",
+      "args": ["./mcp/zeuspack-mcp/index.js"]
+    }
+  }
+}

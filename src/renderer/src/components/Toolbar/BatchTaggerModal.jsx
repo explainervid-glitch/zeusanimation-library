@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { X, Astroid, AlertCircle, CheckCircle, Loader } from 'lucide-react'
+import { X, Astroid, AlertCircle, CheckCircle, Loader, ChevronDown, ChevronUp } from 'lucide-react'
 import useAssetStore from '../../store/useAssetStore'
 import useBatchStore from '../../store/useBatchStore'
 
@@ -8,28 +8,29 @@ import useBatchStore from '../../store/useBatchStore'
 export default function BatchTaggerModal() {
   const { assets, selectedCategory } = useAssetStore()
   const {
-    isModalOpen, closeModal, batchAssets, batchAssetType, batchTargets,
+    isModalOpen, batchAssets, batchAssetType, batchTargets,
     selectedIds, statusMap, isRunning, doneCount, totalCount,
-    runBatch, saveAllResults, exitBatchMode,
+    runBatch, saveAllResults, resetBatch,
   } = useBatchStore()
 
   const [taggingComplete, setTaggingComplete] = useState(false)
   const [saveInProgress, setSaveInProgress] = useState(false)
   const [saveResult, setSaveResult] = useState(null)
+  const [collapsed, setCollapsed] = useState(false)
 
   useEffect(() => {
     if (isModalOpen) { setTaggingComplete(false); setSaveResult(null) }
   }, [isModalOpen])
 
+  // Dismiss = discard: stops any in-flight run and closes the tray. Use the
+  // collapse chevron instead to minimise without losing progress.
   const handleClose = useCallback(() => {
-    closeModal()   // just hide the panel; batch mode / progress stay in the store
-  }, [closeModal])
-
-  const handleCancel = useCallback(() => {
     setTaggingComplete(false)
     setSaveResult(null)
-    exitBatchMode()   // also closes the panel
-  }, [exitBatchMode])
+    resetBatch()
+  }, [resetBatch])
+
+  const handleCancel = handleClose
 
   // Detect tagging completion
   useEffect(() => {
@@ -60,13 +61,13 @@ export default function BatchTaggerModal() {
     try {
       const result = await saveAllResults()
       setSaveResult(result)
-      setTimeout(() => exitBatchMode(), 2000)
+      setTimeout(() => resetBatch(), 2000)
     } catch (err) {
       setSaveResult({ successCount: 0, failureCount: selectedIds.size, errors: [{ error: err.message }] })
     } finally {
       setSaveInProgress(false)
     }
-  }, [saveAllResults, selectedIds.size, exitBatchMode])
+  }, [saveAllResults, selectedIds.size, resetBatch])
 
   if (!isModalOpen) return null
 
@@ -78,23 +79,36 @@ export default function BatchTaggerModal() {
       animate-[compileSlideIn_220ms_ease-out]">
 
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2.5 border-b border-c-border flex-shrink-0">
+      <div className={`flex items-center justify-between px-4 py-2.5 flex-shrink-0
+        ${!collapsed || isRunning || taggingComplete ? 'border-b border-c-border' : ''}`}>
         <div className="flex items-center gap-2">
           <Astroid size={15} className="text-c-accent" />
           <span className="text-xs font-bold text-c-text">Batch Tagger</span>
+          {collapsed && isRunning && (
+            <span className="text-[10px] text-c-accent tabular-nums">{doneCount}/{totalCount}</span>
+          )}
         </div>
-        <button
-          onClick={handleClose}
-          className="text-c-text-3 hover:text-c-text transition-colors"
-          title="Hide (tagging keeps running)"
-        >
-          <X size={15} />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setCollapsed(c => !c)}
+            className="text-c-text-3 hover:text-c-text transition-colors"
+            title={collapsed ? 'Expand' : 'Collapse'}
+          >
+            {collapsed ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+          </button>
+          <button
+            onClick={handleClose}
+            className="text-c-text-3 hover:text-c-text transition-colors"
+            title={isRunning ? 'Stop tagging and discard' : 'Close and discard'}
+          >
+            <X size={15} />
+          </button>
+        </div>
       </div>
 
-      {/* Progress bar — visible while running or after completion */}
+      {/* Progress bar — visible while running or after completion (even collapsed) */}
       {(isRunning || taggingComplete) && (
-        <div className="px-4 pt-2.5 flex-shrink-0">
+        <div className="px-4 pt-2.5 pb-0.5 flex-shrink-0">
           <div className="flex items-center justify-between text-[10px] mb-1">
             <span className={isRunning ? 'text-c-accent font-medium' : 'text-green-500 font-medium'}>
               {isRunning ? 'Tagging…' : 'Tagging complete'}
@@ -107,7 +121,8 @@ export default function BatchTaggerModal() {
         </div>
       )}
 
-      {/* Body */}
+      {/* Body — hidden when collapsed */}
+      {!collapsed && (
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3 scrollbar-thin">
 
         {taggingComplete && !saveResult && (
@@ -181,14 +196,17 @@ export default function BatchTaggerModal() {
           </div>
         )}
       </div>
+      )}
 
-      {/* Footer */}
+      {/* Footer — hidden when collapsed */}
+      {!collapsed && (
       <div className="flex items-center gap-2 px-4 py-3 border-t border-c-border flex-shrink-0 bg-c-raised/40">
         <button
           onClick={handleCancel}
+          title={isRunning ? 'Stop tagging and discard' : 'Discard this batch'}
           className="px-3 py-1.5 rounded-lg text-xs font-medium bg-c-base text-c-text border border-c-border hover:bg-c-hover transition-colors"
         >
-          Cancel
+          {isRunning ? 'Stop' : 'Cancel'}
         </button>
 
         {!taggingComplete ? (
@@ -215,6 +233,7 @@ export default function BatchTaggerModal() {
           </button>
         )}
       </div>
+      )}
     </div>
   )
 }
