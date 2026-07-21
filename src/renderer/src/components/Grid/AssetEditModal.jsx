@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { X, Save, Check, ChevronDown, Sparkles, Loader, AlertCircle, Trash2, Upload } from 'lucide-react'
 import useAssetStore from '../../store/useAssetStore'
-import lottie from 'lottie-web'
-import lottieData from '../../assets/lottie.json'
+import LottieOverlay from '../LottieOverlay'
 
 const TAGGER_TYPES = ['background', 'character', 'animation', 'inspiration']
 
@@ -470,67 +469,6 @@ function PreviewPanel({ asset, type, onPreviewUpdated }) {
         )}
         <p className="text-[9px] text-c-text-4 italic">Drop mp4/jpg/png to update preview</p>
       </div>
-    </div>
-  )
-}
-
-// ─── LOTTIE LOADING OVERLAY ───────────────────────────────────
-function LottieOverlay({ visible }) {
-  const containerRef = useRef(null)
-  const animRef      = useRef(null)
-
-  useEffect(() => {
-    if (!visible) {
-      if (animRef.current) {
-        animRef.current.destroy()
-        animRef.current = null
-      }
-      return
-    }
-
-    // Delay sedikit untuk memastikan DOM sudah siap
-    const timer = setTimeout(() => {
-      if (!containerRef.current) {
-        console.warn('[LottieOverlay] Container ref not found')
-        return
-      }
-
-      try {
-        if (!lottieData || !lottieData.v) {
-          console.warn('[LottieOverlay] Invalid animation data:', lottieData)
-          return
-        }
-
-        console.log('[LottieOverlay] Loading animation...')
-        animRef.current = lottie.loadAnimation({
-          container:     containerRef.current,
-          renderer:      'svg',
-          loop:          true,
-          autoplay:      true,
-          animationData: lottieData,
-        })
-        console.log('[LottieOverlay] Animation loaded successfully')
-      } catch (err) {
-        console.error('[LottieOverlay] Error loading animation:', err)
-      }
-    }, 50)
-
-    return () => {
-      clearTimeout(timer)
-      if (animRef.current) {
-        animRef.current.destroy()
-        animRef.current = null
-      }
-    }
-  }, [visible])
-
-  if (!visible) return null
-
-  return (
-    <div className="absolute inset-0 z-50 flex flex-col items-center justify-center
-      backdrop-brightness-50 rounded-2xl">
-      <div ref={containerRef} className="w-40 h-40" />
-      <p className="text-c-text text-xs mt-4 font-medium">Generating Tags...</p>
     </div>
   )
 }

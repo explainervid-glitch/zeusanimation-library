@@ -62,6 +62,7 @@ const mockApi = {
 
   // AI Chat
   aiChat:              (payload)     => Promise.resolve({ success: false, error: 'Browser mode' }),
+  aiGenerate:          (payload)     => Promise.resolve({ success: false, error: 'Browser mode' }),
 
   // Search & Tagger
   searchAssets:        (params)      => Promise.resolve([]),

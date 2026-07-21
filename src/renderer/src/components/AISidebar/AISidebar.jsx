@@ -145,6 +145,7 @@ function AIPanelContent() {
   const {
     ragResults, ragError, ragQuery,
     hasSearched, isLoading, ragSearch, clearChat, toggleSidebar,
+    genText, genLoading, genError,
   } = useAISidebarStore()
 
   // Style-only scoping — category selection is NOT required for AI search
@@ -229,6 +230,24 @@ function AIPanelContent() {
           </div>
         )}
 
+        {/* LLM recommendation — fills in after results while it generates */}
+        {!isLoading && !ragError && (genLoading || genText || genError) && (
+          <div className="rounded-lg border border-c-accent/30 bg-c-accent/5 px-2.5 py-2 space-y-1.5">
+            <div className="flex items-center gap-1.5 text-[10px] font-semibold text-c-accent uppercase tracking-wider">
+              <Sparkles size={11} /> Recommendation
+            </div>
+            {genLoading && (
+              <p className="flex items-center gap-1.5 text-[10px] text-c-text-3">
+                <Loader2 size={11} className="animate-spin" /> Generating…
+              </p>
+            )}
+            {genError && <p className="text-[10px] text-red-400">{genError}</p>}
+            {genText && (
+              <p className="text-[11px] text-c-text-2 leading-relaxed whitespace-pre-wrap">{genText}</p>
+            )}
+          </div>
+        )}
+
         {!isLoading && !ragError && hasResults && (
           <>
             <p className="text-[9px] text-c-text-4 px-1">
@@ -280,68 +299,43 @@ function AIPanelContent() {
   )
 }
 
-// ─── MAIN EXPORT — resizable panel like Sidebar ──────────────
+// ─── MAIN EXPORT — floating overlay panel (toggled from the toolbar) ──
 export default function AISidebar() {
-  const { isOpen, width, toggleSidebar, setWidth } = useAISidebarStore()
-
-  const panelRef   = useRef(null)
+  const { isOpen, width, setWidth } = useAISidebarStore()
   const isResizing = useRef(false)
 
+  // Resize by dragging the panel's left edge — width grows toward the left.
   useEffect(() => {
-    const handleMouseDown = (e) => {
-      if (e.button !== 0) return
-      isResizing.current = true
-      e.preventDefault()
-    }
-    const handleMouseMove = (e) => {
-      if (!isResizing.current || !panelRef.current) return
-      const rect     = panelRef.current.parentElement.getBoundingClientRect()
-      const newWidth = rect.right - e.clientX
+    const onMove = (e) => {
+      if (!isResizing.current) return
+      const newWidth = window.innerWidth - e.clientX - 12   // 12px = right margin
       if (newWidth >= MIN_WIDTH && newWidth <= MAX_WIDTH) setWidth(newWidth)
     }
-    const handleMouseUp = () => { isResizing.current = false }
-
-    const handle = panelRef.current?.querySelector('.ai-resize-handle')
-    handle?.addEventListener('mousedown', handleMouseDown)
-    document.addEventListener('mousemove', handleMouseMove)
-    document.addEventListener('mouseup', handleMouseUp)
+    const onUp = () => { isResizing.current = false }
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
     return () => {
-      handle?.removeEventListener('mousedown', handleMouseDown)
-      document.removeEventListener('mousemove', handleMouseMove)
-      document.removeEventListener('mouseup', handleMouseUp)
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
     }
   }, [setWidth])
 
-  // Collapsed — thin strip matching left Sidebar collapsed style
-  if (!isOpen) {
-    return (
-      <div className="w-14 h-full bg-c-surface border-l border-c-border flex flex-col items-center justify-start pt-3 flex-shrink-0">
-        <button
-          onClick={toggleSidebar}
-          className="p-2 rounded-lg bg-c-raised hover:bg-c-hover text-c-text-3 hover:text-c-text transition-all"
-          title="Open AI Search"
-        >
-          <PanelRightOpen size={18} />
-        </button>
-      </div>
-    )
-  }
+  if (!isOpen) return null
 
   return (
     <div
-      ref={panelRef}
-      className="h-full flex flex-col flex-shrink-0 relative"
+      className="fixed top-14 right-3 bottom-14 z-40 flex flex-col
+        rounded-2xl border border-c-border shadow-2xl overflow-hidden
+        animate-[compileSlideIn_200ms_ease-out]"
       style={{ width: `${width}px` }}
     >
       {/* Resize handle — left edge */}
       <div
-        className="ai-resize-handle absolute left-0 top-0 bottom-0 w-1 cursor-col-resize
-          hover:bg-c-accent/40 transition-colors z-10 group"
+        onMouseDown={(e) => { if (e.button === 0) { isResizing.current = true; e.preventDefault() } }}
+        className="absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize
+          hover:bg-c-accent/40 transition-colors z-20"
         title="Drag to resize"
-      >
-        <div className="absolute left-0 top-0 bottom-0 w-4 -translate-x-1.5" />
-      </div>
-
+      />
       <AIPanelContent />
     </div>
   )

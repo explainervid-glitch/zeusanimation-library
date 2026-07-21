@@ -5,6 +5,7 @@ import useSettingsStore from '../../store/useSettingsStore'
 import useBatchStore    from '../../store/useBatchStore'
 import useLayoutStore   from '../../store/useLayoutStore'
 import useCompileStore  from '../../store/useCompileStore'
+import useAISidebarStore from '../../store/useAISidebarStore'
 import SettingsModal    from './SettingsModal'
 import AddModal         from './AddModal'
 import BatchTaggerModal from './BatchTaggerModal'
@@ -81,6 +82,27 @@ function PackDropdown() {
         </div>
       )}
     </div>
+  )
+}
+
+// ─── AI SEARCH TOGGLE (right of the search bar) ───────────────
+function AiSearchToggle() {
+  const isOpen        = useAISidebarStore(s => s.isOpen)
+  const toggleSidebar = useAISidebarStore(s => s.toggleSidebar)
+  return (
+    <button
+      onClick={toggleSidebar}
+      title="AI Search"
+      style={{ WebkitAppRegion: 'no-drag' }}
+      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all flex-shrink-0
+        ${isOpen
+          ? 'bg-c-accent/15 border-c-accent text-c-accent'
+          : 'bg-c-raised text-c-text-2 border-c-border-2 hover:bg-c-hover hover:text-c-text'
+        }`}
+    >
+      <Sparkles size={13} />
+      AI
+    </button>
   )
 }
 
@@ -391,8 +413,9 @@ export default function Toolbar() {
         </div>
 
         {/* Search — center, flex-1 */}
-        <div className="flex-1 flex justify-center">
+        <div className="flex-1 flex justify-center items-center gap-2">
           <SearchBar />
+          <AiSearchToggle />
         </div>
 
         {/* Actions */}

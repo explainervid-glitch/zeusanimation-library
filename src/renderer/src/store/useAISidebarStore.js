@@ -15,8 +15,13 @@ const useAISidebarStore = create(
   ragQuery:     '',
   hasSearched:  false,
 
+  // ─── LLM RECOMMENDATION (generated from the results) ─────────
+  genText:      '',
+  genLoading:   false,
+  genError:     null,
+
   addMessage:     (msg)      => set(state => ({ messages: [...state.messages, msg] })),
-  clearChat:      ()         => set({ messages: [], ragResults: [], ragError: null, ragQuery: '', hasSearched: false }),
+  clearChat:      ()         => set({ messages: [], ragResults: [], ragError: null, ragQuery: '', hasSearched: false, genText: '', genLoading: false, genError: null }),
   clearMessages:  ()         => set({ messages: [] }),
   setIsOpen:      (isOpen)   => set({ isOpen }),
   toggleSidebar:  ()         => set(state => ({ isOpen: !state.isOpen })),
@@ -33,7 +38,8 @@ const useAISidebarStore = create(
     const trimmed = query.trim()
     if (!trimmed || styleId == null) return
 
-    set({ isLoading: true, ragError: null, ragQuery: trimmed, hasSearched: false })
+    set({ isLoading: true, ragError: null, ragQuery: trimmed, hasSearched: false,
+          genText: '', genError: null, genLoading: false })
 
     try {
       const result = await window.api.ragSearch({ query: trimmed, styleId, limit: 20 })
@@ -43,15 +49,29 @@ const useAISidebarStore = create(
         return
       }
 
+      const flat = result.data || []
+
       // Group results by asset_type
       const grouped = {}
-      for (const asset of (result.data || [])) {
+      for (const asset of flat) {
         const type = asset.rag_asset_type || 'other'
         if (!grouped[type]) grouped[type] = []
         grouped[type].push(asset)
       }
 
       set({ ragResults: grouped, isLoading: false, hasSearched: true })
+
+      // Kick off the LLM recommendation — non-blocking, so the result list
+      // shows immediately and the recommendation fills in when it's ready.
+      if (flat.length) {
+        set({ genLoading: true, genText: '', genError: null })
+        window.api.aiGenerate({ query: trimmed, results: flat })
+          .then(gen => {
+            if (gen?.success) set({ genText: gen.text || '', genLoading: false })
+            else set({ genError: gen?.error || 'Generation failed', genLoading: false })
+          })
+          .catch(err => set({ genError: err.message, genLoading: false }))
+      }
     } catch (err) {
       set({ ragResults: [], ragError: err.message, isLoading: false, hasSearched: true })
     }

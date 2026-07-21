@@ -18,6 +18,7 @@ const DEFAULT_SETTINGS = {
   templatePaths: DEFAULT_TEMPLATES.map(t => ({ id: t.id, path: t.path })),
   taggerUrl:      'http://192.168.1.27:8000',
   ragUrl:         'http://192.168.1.27:8001',
+  llmUrl:         'http://192.168.1.27:8002',
   theme:          'light',
 }
 

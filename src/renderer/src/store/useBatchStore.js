@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { playChime } from '../lib/sound'
 
 // Fresh (empty) batch state. A function so each reset gets its own Set/Map.
 const freshBatchState = () => ({
@@ -188,8 +189,13 @@ const useBatchStore = create((set, get) => ({
       }
     }
 
-    // Only clear the flag if this run is still the current one.
-    if (get()._runToken === token) set({ isRunning: false })
+    // Only clear the flag if this run is still the current one. The token guard
+    // also means a cancelled or superseded run (resetBatch / a new run) stays
+    // silent — the chime marks a batch that actually ran to the end.
+    if (get()._runToken === token) {
+      set({ isRunning: false })
+      playChime()
+    }
   },
 
   // ─── Save all results to JSON ─────────────────────────────────

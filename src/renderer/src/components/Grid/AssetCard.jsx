@@ -5,6 +5,7 @@ import useProjectStore from '../../store/useProjectStore'
 import useAssetStore from '../../store/useAssetStore'
 import useSettingsStore from '../../store/useSettingsStore'
 import useCompileStore from '../../store/useCompileStore'
+import LottieOverlay from '../LottieOverlay'
 import AssetEditModal from './AssetEditModal'
 import BlenderAppendModal from './BlenderAppendModal'
 import BlenderImportModal from './BlenderImportModal'
@@ -308,12 +309,14 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
             </button>
           )}
 
-          {/* Processing spinner overlay */}
-          {processingStatus?.status === 'processing' && (
-            <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-              <Loader size={24} className="text-c-accent animate-spin" strokeWidth={2} />
-            </div>
-          )}
+          {/* Processing overlay — same Lottie the splash and edit modal use */}
+          <LottieOverlay
+            visible={processingStatus?.status === 'processing'}
+            size="w-20 h-20"
+            label={null}
+            className="z-30 bg-black/40 backdrop-blur-sm"
+          />
+
 
           {/* Action buttons - Left side */}
           {!isBatchMode && !isCompileMode && !renaming && (

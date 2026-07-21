@@ -42,6 +42,7 @@ const api = {
 
   // AI Chat
   aiChat:              (payload)     => ipcRenderer.invoke('ai-chat', payload),
+  aiGenerate:          (payload)     => ipcRenderer.invoke('ai-generate', payload),
 
   // Window controls (frameless title bar)
   windowMinimize:       ()  => ipcRenderer.send('window:minimize'),

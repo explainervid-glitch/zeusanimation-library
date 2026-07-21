@@ -1418,6 +1418,47 @@ export async function registerIpcHandlers() {
     }
   })
 
+  // ─── AI: GENERATE TEXT FROM RAG RESULTS ──────────────────────
+  // The "adapter" step: turn the query + retrieved candidates into a prompt
+  // and send it to the local LLM (Gemma on :8002). Swap llmUrl to point at a
+  // different provider later — nothing else changes.
+  ipcMain.handle('ai-generate', async (_e, { query, results = [] }) => {
+    const { llmUrl = 'http://192.168.1.27:8002' } = readSettings()
+    if (!query || !results.length) return { success: false, error: 'Nothing to generate from.' }
+
+    // Compact the top candidates into a numbered list for the model.
+    const context = results.slice(0, 12).map((a, i) => {
+      const type   = a.rag_asset_type || ''
+      const cat    = a.rag_category || a.category || ''
+      const detail = a.detail ? ` — ${a.detail}` : ''
+      return `${i + 1}. ${a.name} [${type}${cat ? '/' + cat : ''}]${detail}`
+    }).join('\n')
+
+    const system =
+      'You help a video producer choose animation assets from a library. ' +
+      'Given their scene and a numbered list of retrieved candidate assets, ' +
+      'recommend the best few and briefly say why each fits. Keep it short — a ' +
+      'few sentences or bullet points. Only reference assets from the list, by name.'
+    const prompt = `Scene: ${query}\n\nCandidate assets:\n${context}\n\nRecommend the best matches and explain why.`
+
+    try {
+      const res = await fetch(`${llmUrl}/generate`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ system, prompt, max_tokens: 512 }),
+        signal:  AbortSignal.timeout(60000),   // local gen can be slow, esp. first call
+      })
+      const data = await res.json()
+      if (!res.ok) return { success: false, error: data.detail || `LLM error ${res.status}` }
+      return { success: true, text: data.text || '' }
+    } catch (err) {
+      if (err.message?.includes('ECONNREFUSED') || err.message?.includes('fetch failed')) {
+        return { success: false, error: `Cannot connect to LLM server at ${llmUrl}. Make sure llm_server.py is running.` }
+      }
+      return { success: false, error: err.message }
+    }
+  })
+
   // ─── RAG: INDEX UPSERT (single asset after edit/tag) ─────────
   ipcMain.handle('rag-index-upsert', async (_e, payload) => {
     const { ragUrl = 'http://192.168.1.27:8001' } = readSettings()

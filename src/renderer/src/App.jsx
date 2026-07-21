@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import Toolbar from './components/Toolbar/Toolbar'
 import Sidebar from './components/Sidebar/Sidebar'
 import AssetGrid from './components/Grid/AssetGrid'
-import AISidebar from './components/AISidebar/AiSidebar'
+import AISidebar from './components/AISidebar/AISidebar'
 import ThemeIntroModal from './components/ThemeIntroModal'
 import Panel from './components/Panel'
 import BottomBar from './components/BottomBar'
@@ -133,7 +133,6 @@ export default function App() {
           <main className="flex-1 overflow-hidden bg-c-base">
             <AssetGrid />
           </main>
-          {/* <AISidebar /> */}
         </div>
 
         {/* Secondary (right) panel — independent browse view */}
@@ -145,6 +144,9 @@ export default function App() {
 
       {/* Compile tray (3D pack) */}
       <CompileTray />
+
+      {/* Floating AI Search panel — overlay, toggled from the toolbar */}
+      <AISidebar />
 
     </div>
   )
