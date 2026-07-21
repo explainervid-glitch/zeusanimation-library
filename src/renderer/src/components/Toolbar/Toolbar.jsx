@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Plus, Settings, ChevronDown, Check, Package, Search, X, Astroid, RefreshCw, Sparkles, Columns2, FilePlus, MoreVertical, Combine } from 'lucide-react'
+import { Plus, Settings, ChevronDown, Check, Package, Search, X, Astroid, RefreshCw, Sparkles, BotMessageSquare, Columns2, FilePlus, MoreVertical, Combine } from 'lucide-react'
 import useAssetStore    from '../../store/useAssetStore'
 import useSettingsStore from '../../store/useSettingsStore'
 import useBatchStore    from '../../store/useBatchStore'
@@ -100,8 +100,8 @@ function AiSearchToggle() {
           : 'bg-c-raised text-c-text-2 border-c-border-2 hover:bg-c-hover hover:text-c-text'
         }`}
     >
-      <Sparkles size={13} />
-      AI
+      <BotMessageSquare size={13} />
+      Chat
     </button>
   )
 }

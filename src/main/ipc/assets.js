@@ -19,6 +19,18 @@ function getActivePath(settings) {
   return settings.assetPaths?.[idx]?.path ?? ''
 }
 
+// Scrub LLM output for display: drop leftover chat-template tokens (Gemma's
+// <end_of_turn> etc.). Markdown (**bold**, lists) and emoji are kept — the AI
+// sidebar renders them.
+function cleanLlmText(t) {
+  if (!t) return ''
+  let s = String(t)
+  const cut = s.search(/<(end_of_turn|start_of_turn|turn|eos|bos)/i)
+  if (cut !== -1) s = s.slice(0, cut)          // cut at the first turn marker
+  s = s.replace(/<[^>\n]{0,40}>/g, '')          // stray <...> control tokens
+  return s.trim()
+}
+
 // ─── STYLE GUIDE (tagger hint) ───────────────────────────────
 // Reads the per-style `tagger_hint` from the pack's stylenames.json and
 // returns it for the asset being tagged. The pack root is two levels up
@@ -1437,8 +1449,10 @@ export async function registerIpcHandlers() {
     const system =
       'You help a video producer choose animation assets from a library. ' +
       'Given their scene and a numbered list of retrieved candidate assets, ' +
-      'recommend the best few and briefly say why each fits. Keep it short — a ' +
-      'few sentences or bullet points. Only reference assets from the list, by name.'
+      'recommend the best few and briefly say why each fits. Keep it short. ' +
+      'Only reference assets from the list, by name. You may use light Markdown ' +
+      '(**bold** for asset names, simple "- " bullet lists) and the occasional ' +
+      'tasteful emoji. Do not use headings.'
     const prompt = `Scene: ${query}\n\nCandidate assets:\n${context}\n\nRecommend the best matches and explain why.`
 
     try {
@@ -1450,7 +1464,7 @@ export async function registerIpcHandlers() {
       })
       const data = await res.json()
       if (!res.ok) return { success: false, error: data.detail || `LLM error ${res.status}` }
-      return { success: true, text: data.text || '' }
+      return { success: true, text: cleanLlmText(data.text) }
     } catch (err) {
       if (err.message?.includes('ECONNREFUSED') || err.message?.includes('fetch failed')) {
         return { success: false, error: `Cannot connect to LLM server at ${llmUrl}. Make sure llm_server.py is running.` }

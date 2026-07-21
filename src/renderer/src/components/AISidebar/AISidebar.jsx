@@ -30,6 +30,43 @@ const TYPE_CONFIG = {
   other:       { label: 'Others',       Icon: ImageIcon },
 }
 
+// ─── TINY MARKDOWN RENDERER (bold / italic / bullets) ─────────
+// Enough for the LLM recommendation; emoji pass through as plain text.
+function renderInline(text, keyBase) {
+  const nodes = []
+  const re = /(\*\*[^*]+\*\*|\*[^*\n]+\*)/g
+  let last = 0, m, k = 0
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) nodes.push(text.slice(last, m.index))
+    const tok = m[0]
+    if (tok.startsWith('**')) {
+      nodes.push(<strong key={`${keyBase}-${k++}`} className="font-semibold text-c-text">{tok.slice(2, -2)}</strong>)
+    } else {
+      nodes.push(<em key={`${keyBase}-${k++}`}>{tok.slice(1, -1)}</em>)
+    }
+    last = m.index + tok.length
+  }
+  if (last < text.length) nodes.push(text.slice(last))
+  return nodes
+}
+
+function Markdownish({ text }) {
+  const lines = text.split('\n')
+  return (
+    <div className="text-[11px] text-c-text-2 leading-relaxed space-y-1">
+      {lines.map((line, i) => {
+        const t = line.trim()
+        if (!t) return null
+        const bullet = /^[-*•]\s+/.test(t)
+        const body = renderInline(bullet ? t.replace(/^[-*•]\s+/, '') : t, i)
+        return bullet
+          ? <div key={i} className="flex gap-1.5"><span className="text-c-accent flex-shrink-0">•</span><span>{body}</span></div>
+          : <p key={i}>{body}</p>
+      })}
+    </div>
+  )
+}
+
 // ─── ASSET THUMBNAIL ─────────────────────────────────────────
 function AssetThumb({ asset }) {
   const [err, setErr] = useState(false)
@@ -242,9 +279,7 @@ function AIPanelContent() {
               </p>
             )}
             {genError && <p className="text-[10px] text-red-400">{genError}</p>}
-            {genText && (
-              <p className="text-[11px] text-c-text-2 leading-relaxed whitespace-pre-wrap">{genText}</p>
-            )}
+            {genText && <Markdownish text={genText} />}
           </div>
         )}
 
