@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import useAssetStore from '../../store/useAssetStore'
 import { usePanelStore } from '../../store/PanelStoreContext'
 import useBatchStore from '../../store/useBatchStore'
@@ -26,6 +26,7 @@ export default function AssetGrid({ enableBatch = true }) {
   const {
     assets, selectedCategory, selectedStyleId, assetsLoading,
     searchQuery, searchResults, searchLoading, isSearchMode, searchMode,
+    highlightedAssetId, clearHighlight,
   } = usePanelStore()
 
   const {
@@ -40,6 +41,13 @@ export default function AssetGrid({ enableBatch = true }) {
   const displayAssets = isSearchMode ? searchResults : assets
   const isLoading     = assetsLoading || (isSearchMode && searchLoading)
   const isAiSearch    = isSearchMode && searchMode === 'semantic'
+
+  // Auto-clear the AI-search highlight once it's had a moment to be seen.
+  useEffect(() => {
+    if (highlightedAssetId == null) return
+    const t = setTimeout(() => clearHighlight?.(), 2500)
+    return () => clearTimeout(t)
+  }, [highlightedAssetId, clearHighlight])
 
   // ── Pack belum di-scan ────────────────────────────────────────
   if (packNeedsRescan) {
@@ -224,6 +232,7 @@ export default function AssetGrid({ enableBatch = true }) {
                   onToggleSelect={toggleSelect}
                   processingStatus={statusMap.get(asset.id)}
                   ragScore={isAiSearch ? asset.rag_score : null}
+                  isHighlighted={asset.id === highlightedAssetId}
                 />
               )
             })}

@@ -65,6 +65,7 @@ if (process.contextIsolated) {
       taggerPing:          ()        => ipcRenderer.invoke('tagger-ping'),
       taggerPingVideo:     ()        => ipcRenderer.invoke('tagger-ping-video'),
       ragPing:             ()        => ipcRenderer.invoke('rag-ping'),
+      llmPing:             ()        => ipcRenderer.invoke('llm-ping'),
       taggerGenerateVideo: (payload) => ipcRenderer.invoke('tagger-generate-video', payload),
       taggerGenerate:  (payload) => ipcRenderer.invoke('tagger-generate', payload),
       onScanLog:       (cb)      => ipcRenderer.on('scan-log', (_e, msg) => cb(msg)),

@@ -178,7 +178,7 @@ function EmptyState() {
 }
 
 // ─── PANEL CONTENT ───────────────────────────────────────────
-function AIPanelContent() {
+function AIPanelContent({ onDragStart }) {
   const {
     ragResults, ragError, ragQuery,
     hasSearched, isLoading, ragSearch, clearChat, toggleSidebar,
@@ -216,12 +216,15 @@ function AIPanelContent() {
   return (
     <div className="h-full flex flex-col bg-c-surface border-l border-c-border">
 
-      {/* Header — matches Sidebar header exactly */}
-      <div className="px-3 py-2.5 border-b border-c-border flex items-center justify-between flex-shrink-0">
+      {/* Header — also the drag handle for moving the panel */}
+      <div
+        onMouseDown={onDragStart}
+        className="px-3 py-2.5 border-b border-c-border flex items-center justify-between flex-shrink-0 cursor-move select-none"
+      >
         <p className="text-[10px] text-c-text-4 uppercase tracking-widest font-medium">
           AI Search
         </p>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1" onMouseDown={(e) => e.stopPropagation()}>
           <button
             onClick={clearChat}
             className="p-1 rounded hover:bg-c-hover text-c-text-3 hover:text-c-text transition-all"
@@ -269,7 +272,7 @@ function AIPanelContent() {
 
         {/* LLM recommendation — fills in after results while it generates */}
         {!isLoading && !ragError && (genLoading || genText || genError) && (
-          <div className="rounded-lg border border-c-accent/30 bg-c-accent/5 px-2.5 py-2 space-y-1.5">
+          <div className="rounded-lg bg-c-accent/5 px-2.5 py-2 space-y-1.5 select-text [&_*]:select-text cursor-text">
             <div className="flex items-center gap-1.5 text-[10px] font-semibold text-c-accent uppercase tracking-wider">
               <Sparkles size={11} /> Recommendation
             </div>
@@ -334,44 +337,68 @@ function AIPanelContent() {
   )
 }
 
-// ─── MAIN EXPORT — floating overlay panel (toggled from the toolbar) ──
-export default function AISidebar() {
-  const { isOpen, width, setWidth } = useAISidebarStore()
-  const isResizing = useRef(false)
+// ─── MAIN EXPORT — floating, draggable panel (toggled from the toolbar) ──
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
 
-  // Resize by dragging the panel's left edge — width grows toward the left.
+export default function AISidebar() {
+  const { isOpen, width, setWidth, posX, posY, setPos } = useAISidebarStore()
+  const drag = useRef(null)   // { mode:'move'|'resize', offX, offY, w, h, left }
+
   useEffect(() => {
     const onMove = (e) => {
-      if (!isResizing.current) return
-      const newWidth = window.innerWidth - e.clientX - 12   // 12px = right margin
-      if (newWidth >= MIN_WIDTH && newWidth <= MAX_WIDTH) setWidth(newWidth)
+      const d = drag.current
+      if (!d) return
+      if (d.mode === 'move') {
+        const nx = clamp(e.clientX - d.offX, 4, window.innerWidth  - d.w - 4)
+        const ny = clamp(e.clientY - d.offY, 4, window.innerHeight - d.h - 4)
+        setPos(nx, ny)
+      } else {
+        const nw = e.clientX - d.left
+        if (nw >= MIN_WIDTH && nw <= MAX_WIDTH) setWidth(nw)
+      }
     }
-    const onUp = () => { isResizing.current = false }
+    const onUp = () => { drag.current = null }
     document.addEventListener('mousemove', onMove)
     document.addEventListener('mouseup', onUp)
     return () => {
       document.removeEventListener('mousemove', onMove)
       document.removeEventListener('mouseup', onUp)
     }
-  }, [setWidth])
+  }, [setPos, setWidth])
 
   if (!isOpen) return null
 
+  const panelH      = Math.min(window.innerHeight * 0.72, 640)
+  const defaultLeft = Math.max(12, window.innerWidth - width - 16)
+  // Clamp on render too, so a stored off-screen position always comes back in view.
+  const left = clamp(posX ?? defaultLeft, 4, window.innerWidth  - width  - 4)
+  const top  = clamp(posY ?? 56,          4, window.innerHeight - panelH - 4)
+
+  const startMove = (e) => {
+    if (e.button !== 0) return
+    drag.current = { mode: 'move', offX: e.clientX - left, offY: e.clientY - top, w: width, h: panelH }
+    e.preventDefault()
+  }
+  const startResize = (e) => {
+    if (e.button !== 0) return
+    drag.current = { mode: 'resize', left }
+    e.preventDefault()
+  }
+
   return (
     <div
-      className="fixed top-14 right-3 bottom-14 z-40 flex flex-col
-        rounded-2xl border border-c-border shadow-2xl overflow-hidden
-        animate-[compileSlideIn_200ms_ease-out]"
-      style={{ width: `${width}px` }}
+      className="fixed z-40 flex flex-col rounded-2xl border border-c-border
+        shadow-2xl overflow-hidden animate-[compileSlideIn_200ms_ease-out]"
+      style={{ left, top, width, height: panelH }}
     >
-      {/* Resize handle — left edge */}
+      {/* Resize handle — right edge */}
       <div
-        onMouseDown={(e) => { if (e.button === 0) { isResizing.current = true; e.preventDefault() } }}
-        className="absolute left-0 top-0 bottom-0 w-1.5 cursor-col-resize
+        onMouseDown={startResize}
+        className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize
           hover:bg-c-accent/40 transition-colors z-20"
         title="Drag to resize"
       />
-      <AIPanelContent />
+      <AIPanelContent onDragStart={startMove} />
     </div>
   )
 }

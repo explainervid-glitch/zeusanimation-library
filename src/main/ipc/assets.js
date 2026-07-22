@@ -1217,6 +1217,17 @@ export async function registerIpcHandlers() {
     }
   })
 
+  ipcMain.handle('llm-ping', async () => {
+    const { llmUrl = 'http://192.168.1.27:8002' } = readSettings()
+    try {
+      const res = await fetch(`${llmUrl}/llm-status`, { signal: AbortSignal.timeout(10000) })
+      return { success: res.ok || res.status === 200, url: llmUrl }
+    } catch (error) {
+      console.error('LLM ping error:', error.message)
+      return { success: false, url: llmUrl }
+    }
+  })
+
   ipcMain.handle('tagger-generate-video', async (_e, { videoPath, jsonPath, filename }) => {
     if (!videoPath) return { success: false, error: 'No video path provided' }
 

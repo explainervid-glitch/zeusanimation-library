@@ -69,6 +69,7 @@ const mockApi = {
   taggerPing:          ()            => Promise.resolve({ success: false }),
   taggerPingVideo:     ()            => Promise.resolve({ success: false }),
   ragPing:             ()            => Promise.resolve({ success: false }),
+  llmPing:             ()            => Promise.resolve({ success: false }),
   taggerGenerateVideo: (payload)     => Promise.resolve({ success: false, error: 'Browser mode' }),
   taggerGenerate:      (payload)     => Promise.resolve({ success: false, error: 'Browser mode' }),
 

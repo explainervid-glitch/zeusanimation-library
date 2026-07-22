@@ -12,6 +12,7 @@ export default function SettingsModal() {
     templatePaths, updateTemplatePath, browseTemplatePath,
     taggerUrl, updateTaggerUrl,
     ragUrl, updateRagUrl,
+    llmUrl, updateLlmUrl,
     loading, saved, saveSettings,
     theme, setTheme,
     importCharactersEnabled, toggleImportCharactersEnabled,
@@ -25,6 +26,7 @@ export default function SettingsModal() {
 
   const [pingStatus, setPingStatus] = useState('idle')
   const [ragPingStatus, setRagPingStatus] = useState('idle')
+  const [llmPingStatus, setLlmPingStatus] = useState('idle')
   const [embedStatus, setEmbedStatus] = useState('idle') // idle | running | done | error
   const [embedProgress, setEmbedProgress] = useState(null)  // { batch, totalBatches }
   const [embedCount, setEmbedCount] = useState(null)
@@ -49,6 +51,12 @@ export default function SettingsModal() {
     setRagPingStatus('checking')
     const result = await window.api.ragPing().catch(() => ({ success: false }))
     setRagPingStatus(result.success ? 'online' : 'offline')
+  }, [])
+
+  const checkLlm = useCallback(async () => {
+    setLlmPingStatus('checking')
+    const result = await window.api.llmPing().catch(() => ({ success: false }))
+    setLlmPingStatus(result.success ? 'online' : 'offline')
   }, [])
 
   const loadHints = useCallback(async (packIndex) => {
@@ -81,9 +89,10 @@ export default function SettingsModal() {
     if (isOpen) {
       checkTagger()
       checkRag()
+      checkLlm()
       setHintPackIndex(activePackIndex ?? 0)
     }
-  }, [isOpen, checkTagger, checkRag, activePackIndex])
+  }, [isOpen, checkTagger, checkRag, checkLlm, activePackIndex])
 
   // (Re)load hints when the modal opens or the selected pack changes
   useEffect(() => {
@@ -495,6 +504,63 @@ export default function SettingsModal() {
                         <span className="text-[10px] text-red-400 font-medium">Server Offline</span>
                         <span className="text-[10px] text-c-text-4 ml-1">— Pastikan rag_server.py jalan di </span>
                         <span className="text-[10px] text-c-text-4 font-mono">{ragUrl}</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {/* ── LLM Server ── */}
+                <div className="space-y-2 pt-2 border-t border-c-border">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-semibold text-c-text uppercase tracking-wider">
+                      LLM Server
+                    </label>
+                    <span className="text-[10px] text-c-text-4 bg-c-raised px-1.5 py-0.5 rounded border border-c-border font-mono">
+                      Gemma4:8002
+                    </span>
+                  </div>
+
+                  <div className="flex gap-1.5 items-center">
+                    <input
+                      type="text"
+                      value={llmUrl}
+                      onChange={(e) => updateLlmUrl(e.target.value)}
+                      placeholder="http://192.168.1.27:8002"
+                      className="flex-1 bg-c-base border border-c-border rounded px-2 py-1.5 text-[11px] text-c-text placeholder-c-text-4 outline-none focus:border-c-accent transition-colors font-mono"
+                    />
+                    <button
+                      onClick={checkLlm}
+                      disabled={llmPingStatus === 'checking'}
+                      className="flex-shrink-0 p-1.5 rounded-lg border border-c-border-2 bg-c-raised text-c-text-3 hover:bg-c-hover hover:text-c-text transition-all disabled:opacity-40"
+                      title="Check connection"
+                    >
+                      <RefreshCw size={11} className={llmPingStatus === 'checking' ? 'animate-spin' : ''} />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    {llmPingStatus === 'idle' && (
+                      <span className="text-[10px] text-c-text-4">— Not checked yet</span>
+                    )}
+                    {llmPingStatus === 'checking' && (
+                      <>
+                        <Loader size={10} className="text-yellow-400 animate-spin" />
+                        <span className="text-[10px] text-yellow-400">Checking...</span>
+                      </>
+                    )}
+                    {llmPingStatus === 'online' && (
+                      <>
+                        <span className="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0" />
+                        <span className="text-[10px] text-green-400 font-medium">Server Online</span>
+                        <span className="text-[10px] text-c-text-4 font-mono ml-1">{llmUrl}</span>
+                      </>
+                    )}
+                    {llmPingStatus === 'offline' && (
+                      <>
+                        <span className="w-1.5 h-1.5 rounded-full bg-red-400 flex-shrink-0" />
+                        <span className="text-[10px] text-red-400 font-medium">Server Offline</span>
+                        <span className="text-[10px] text-c-text-4 ml-1">— Make sure llm_server.py is running at </span>
+                        <span className="text-[10px] text-c-text-4 font-mono">{llmUrl}</span>
                       </>
                     )}
                   </div>

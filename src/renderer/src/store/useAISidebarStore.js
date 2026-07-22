@@ -8,6 +8,8 @@ const useAISidebarStore = create(
   isLoading: false,
   isOpen:    false,
   width:     320,  // px, persisted
+  posX:      null, // px, persisted (null = default top-right position)
+  posY:      null,
 
   // ─── SEARCH RESULTS ──────────────────────────────────────────
   ragResults:   [],     // grouped by asset_type
@@ -26,6 +28,7 @@ const useAISidebarStore = create(
   setIsOpen:      (isOpen)   => set({ isOpen }),
   toggleSidebar:  ()         => set(state => ({ isOpen: !state.isOpen })),
   setWidth:       (width)    => set({ width }),
+  setPos:         (posX, posY) => set({ posX, posY }),
   setLoading:     (loading)  => set({ isLoading: loading }),
 
   // ─── RAG SEMANTIC SEARCH ─────────────────────────────────────
@@ -77,7 +80,21 @@ const useAISidebarStore = create(
     }
   },
 }),
-    { name: 'ai-sidebar-state' }
+    {
+      name: 'ai-sidebar-state',
+      // Persist ONLY the UI prefs. Transient search/generation state
+      // (isLoading, genLoading, results, ragQuery…) must never persist — else
+      // closing the app mid-search leaves a "Searching…" spinner stuck on the
+      // next launch. `merge` also ignores those fields from any stale blob.
+      partialize: (state) => ({ isOpen: state.isOpen, width: state.width, posX: state.posX, posY: state.posY }),
+      merge: (persisted, current) => ({
+        ...current,
+        isOpen: persisted?.isOpen ?? current.isOpen,
+        width:  persisted?.width  ?? current.width,
+        posX:   persisted?.posX   ?? current.posX,
+        posY:   persisted?.posY   ?? current.posY,
+      }),
+    }
   )
 )
 

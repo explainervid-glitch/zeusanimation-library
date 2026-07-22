@@ -74,7 +74,7 @@ function isBlendFile(path) {
   return path?.toLowerCase().endsWith('.blend') ?? false
 }
 
-export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBatchMode, isSelected, onToggleSelect, processingStatus, ragScore = null }) {
+export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBatchMode, isSelected, onToggleSelect, processingStatus, ragScore = null, isHighlighted = false }) {
   const openAsset             = usePanelStore((s) => s.openAsset)
   const reloadCurrentCategory = usePanelStore((s) => s.reloadCurrentCategory)
   const activeProject         = useProjectStore((s) => s.activeProject)
@@ -99,8 +99,16 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
   const videoRef   = useRef(null)
   const renameRef  = useRef(null)
   const popoverRef = useRef(null)
+  const cardRef    = useRef(null)
 
   useEffect(() => { setAsset(initialAsset); setPreviewError(false); setRenaming(false) }, [initialAsset])
+
+  // When navigated to from AI search, scroll this card into view.
+  useEffect(() => {
+    if (isHighlighted && cardRef.current) {
+      cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  }, [isHighlighted])
 
   // Focus the rename input and pre-select the name stem (keeps the extension).
   useEffect(() => {
@@ -233,6 +241,7 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
   return (
     <>
       <div
+        ref={cardRef}
         onClick={() => {
           if (isCompileMode) { if (isCompilePickable) pickForCompile(asset, type); return }
           if (isBatchMode || importOnly) return   // import-only: open only via the Import button
@@ -243,6 +252,7 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
         className={`
           group relative flex flex-col rounded-md overflow-hidden cursor-pointer
           bg-c-raised border transition-all duration-200
+          ${isHighlighted ? 'ring-2 ring-c-accent ring-offset-2 ring-offset-c-base shadow-lg shadow-c-accent/30 z-10' : ''}
           ${(isSelected && isBatchMode) || isCompileSelected
             ? 'border-c-accent bg-c-accent/5 shadow-lg shadow-c-accent/10'
             : isHovered && !isBatchMode

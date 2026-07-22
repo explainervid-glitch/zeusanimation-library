@@ -51,6 +51,7 @@ const useSettingsStore = create(
       templatePaths: TEMPLATE_DEFS.map(t => ({ id: t.id, path: '' })),
       taggerUrl:      'http://192.168.1.27:8000',
       ragUrl:         'http://192.168.1.27:8001',
+      llmUrl:         'http://192.168.1.27:8002',
 
       // ─── THEME ────────────────────────────────────────────────────
       setTheme: (theme) => {
@@ -81,6 +82,7 @@ const useSettingsStore = create(
               templatePaths:   mergedTemplates,
               taggerUrl:       d.taggerUrl       ?? 'http://192.168.1.27:8000',
               ragUrl:          d.ragUrl          ?? 'http://192.168.1.27:8001',
+              llmUrl:          d.llmUrl          ?? 'http://192.168.1.27:8002',
               loading: false,
             })
           }
@@ -126,6 +128,7 @@ const useSettingsStore = create(
   // ─── TAGGER ───────────────────────────────────────────────────
   updateTaggerUrl:      (url) => set({ taggerUrl: url }),
   updateRagUrl:         (url) => set({ ragUrl: url }),
+  updateLlmUrl:         (url) => set({ llmUrl: url }),
 
   // ─── TEMPLATE PATHS ───────────────────────────────────────────
   updateTemplatePath: (id, path) => {
@@ -143,10 +146,10 @@ const useSettingsStore = create(
 
   // ─── SAVE ─────────────────────────────────────────────────────
   saveSettings: async () => {
-    const { assetPaths, activePathIndex, templatePaths, taggerUrl, ragUrl } = get()
+    const { assetPaths, activePathIndex, templatePaths, taggerUrl, ragUrl, llmUrl } = get()
     set({ loading: true })
     try {
-      const result = await window.api.saveSettings({ assetPaths, activePathIndex, templatePaths, taggerUrl, ragUrl })
+      const result = await window.api.saveSettings({ assetPaths, activePathIndex, templatePaths, taggerUrl, ragUrl, llmUrl })
       if (result.success) {
         set({ loading: false, saved: true })
         setTimeout(() => set({ saved: false }), 2000)
