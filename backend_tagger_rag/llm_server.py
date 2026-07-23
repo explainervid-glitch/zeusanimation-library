@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from transformers import pipeline
+from gpu_queue import GpuQueue
 
 # ── TF32 speedups for RTX 30xx/40xx ───────────────────────────
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -37,6 +38,11 @@ pipe = pipeline(
     dtype="auto",
 )
 print("Gemma 4 ready.")
+
+# ── QUEUE ─────────────────────────────────────────────────────
+# One Gemma generation at a time on the shared GPU; up to 12 may wait in line
+# before we start turning people away with a friendly "busy" 503.
+llm_queue = GpuQueue("LLM", concurrency=1, max_waiting=12)
 
 
 class GenPayload(BaseModel):
@@ -70,22 +76,38 @@ async def llm_status():
     return {"success": True, "model": os.path.basename(MODEL_PATH)}
 
 
+@app.get("/queue-status")
+async def queue_status():
+    """Live queue gauge — the app polls this to show 'in line' feedback."""
+    return {"success": True, **llm_queue.stats()}
+
+
+def _run_generate(messages, max_tokens: int) -> str:
+    """The actual (blocking) model call — runs inside the queue's worker thread."""
+    out = pipe(
+        messages,
+        return_full_text=False,
+        generate_kwargs={"max_new_tokens": max_tokens, "do_sample": False},
+    )
+    return _extract_text(out)
+
+
 @app.post("/generate")
 async def generate(p: GenPayload):
     if not p.prompt.strip():
         raise HTTPException(400, "Empty prompt")
-    try:
-        messages = []
-        if p.system.strip():
-            messages.append({"role": "system", "content": [{"type": "text", "text": p.system}]})
-        messages.append({"role": "user", "content": [{"type": "text", "text": p.prompt}]})
 
-        out = pipe(
-            messages,
-            return_full_text=False,
-            generate_kwargs={"max_new_tokens": p.max_tokens, "do_sample": False},
-        )
-        return {"success": True, "text": _extract_text(out)}
+    messages = []
+    if p.system.strip():
+        messages.append({"role": "system", "content": [{"type": "text", "text": p.system}]})
+    messages.append({"role": "user", "content": [{"type": "text", "text": p.prompt}]})
+
+    try:
+        # Wait for a GPU slot, then generate. Raises 503 if the line is full.
+        text = await llm_queue.run(_run_generate, messages, p.max_tokens)
+        return {"success": True, "text": text, "queue": llm_queue.stats()}
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"[LLM] generate error: {e}")
         raise HTTPException(500, str(e))

@@ -23,6 +23,7 @@ from qdrant_client.models import (
     VectorParams,
 )
 from fastembed import TextEmbedding
+from gpu_queue import GpuQueue
 
 # ══════════════════════════════════════════════════════════════
 # CONFIG
@@ -50,6 +51,13 @@ app.add_middleware(
 print("Loading FastEmbed model (ONNX, CPU)...")
 embedder = TextEmbedding(EMBED_MODEL)
 print(f"Embedder ready: {EMBED_MODEL}")
+
+# ── QUEUE ─────────────────────────────────────────────────────
+# Search is fast (~tens of ms: CPU embedding + Qdrant), so serial is plenty for
+# a <20-person team. concurrency=1 also sidesteps the embedded (local-file)
+# Qdrant client, which isn't built for concurrent access. The line is capped so
+# a team-wide burst can't pile up unbounded.
+rag_queue = GpuQueue("RAG", concurrency=1, max_waiting=48)
 
 print("Initializing Qdrant (local file)...")
 qdrant = QdrantClient(path=QDRANT_PATH)
@@ -324,9 +332,62 @@ async def rag_reset():
         raise HTTPException(500, str(e))
 
 
+@app.get("/queue-status")
+async def queue_status():
+    """Live queue gauge — the app polls this to show 'in line' feedback."""
+    return {"success": True, **rag_queue.stats()}
+
+
+def _do_search(query: str, style_id: int, pack_id, limit: int) -> list:
+    """The actual (blocking) embed + Qdrant query — runs in the queue's worker."""
+    # Embed query — uses BGE's query-instruction prefix (see _embed_query)
+    query_vec = _embed_query(query)
+
+    # Scope by style_id, plus pack_id when provided so results never mix across
+    # packs (both packs reuse the same style_id numbers).
+    must = [FieldCondition(key="style_id", match=MatchValue(value=style_id))]
+    if pack_id:
+        must.append(FieldCondition(key="pack_id", match=MatchValue(value=pack_id)))
+    search_filter = Filter(must=must)
+
+    try:
+        # qdrant-client >= 1.7
+        response = qdrant.query_points(
+            collection_name = COLLECTION,
+            query           = query_vec,
+            query_filter    = search_filter,
+            limit           = limit,
+            with_payload    = True,
+        )
+        hits = response.points
+    except AttributeError:
+        # qdrant-client < 1.7 fallback
+        hits = qdrant.search(
+            collection_name = COLLECTION,
+            query_vector    = query_vec,
+            query_filter    = search_filter,
+            limit           = limit,
+            with_payload    = True,
+        )
+
+    # Point ids are UUIDs now — return the payload fields (json_path is the
+    # stable key the app joins back to its current SQLite on).
+    return [
+        {
+            "asset_id":      hit.payload.get("asset_id"),
+            "json_path":     hit.payload.get("json_path"),
+            "style_type_id": hit.payload.get("style_type_id"),
+            "asset_type":    hit.payload.get("asset_type"),
+            "category":      hit.payload.get("category"),
+            "score":         round(hit.score, 4),
+        }
+        for hit in hits
+    ]
+
+
 @app.post("/rag-search")
 async def rag_search(payload: RagSearchPayload):
-    """Semantic search scoped to style_id."""
+    """Semantic search scoped to style_id (queued so team bursts stay orderly)."""
     if not payload.query.strip():
         return {"success": True, "results": []}
 
@@ -335,52 +396,12 @@ async def rag_search(payload: RagSearchPayload):
         return {"success": True, "results": [], "message": "Index empty — run rescan first"}
 
     try:
-        # Embed query — uses BGE's query-instruction prefix (see _embed_query)
-        query_vec = _embed_query(payload.query.strip())
-
-        # Scope by style_id, plus pack_id when provided so results never mix
-        # across packs (both packs reuse the same style_id numbers).
-        must = [FieldCondition(key="style_id", match=MatchValue(value=payload.style_id))]
-        if payload.pack_id:
-            must.append(FieldCondition(key="pack_id", match=MatchValue(value=payload.pack_id)))
-        search_filter = Filter(must=must)
-
-        try:
-            # qdrant-client >= 1.7
-            response = qdrant.query_points(
-                collection_name = COLLECTION,
-                query           = query_vec,
-                query_filter    = search_filter,
-                limit           = payload.limit,
-                with_payload    = True,
-            )
-            hits = response.points
-        except AttributeError:
-            # qdrant-client < 1.7 fallback
-            hits = qdrant.search(
-                collection_name = COLLECTION,
-                query_vector    = query_vec,
-                query_filter    = search_filter,
-                limit           = payload.limit,
-                with_payload    = True,
-            )
-
-        # Point ids are UUIDs now — return the payload fields (json_path is the
-        # stable key the app joins back to its current SQLite on).
-        return {
-            "success": True,
-            "results": [
-                {
-                    "asset_id":      hit.payload.get("asset_id"),
-                    "json_path":     hit.payload.get("json_path"),
-                    "style_type_id": hit.payload.get("style_type_id"),
-                    "asset_type":    hit.payload.get("asset_type"),
-                    "category":      hit.payload.get("category"),
-                    "score":         round(hit.score, 4),
-                }
-                for hit in hits
-            ]
-        }
+        results = await rag_queue.run(
+            _do_search, payload.query.strip(), payload.style_id, payload.pack_id, payload.limit
+        )
+        return {"success": True, "results": results, "queue": rag_queue.stats()}
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"[RAG] Search error: {e}")
         raise HTTPException(500, str(e))

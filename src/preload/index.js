@@ -43,6 +43,7 @@ const api = {
   // AI Chat
   aiChat:              (payload)     => ipcRenderer.invoke('ai-chat', payload),
   aiGenerate:          (payload)     => ipcRenderer.invoke('ai-generate', payload),
+  aiScenes:            (payload)     => ipcRenderer.invoke('ai-scenes', payload),
 
   // Window controls (frameless title bar)
   windowMinimize:       ()  => ipcRenderer.send('window:minimize'),
@@ -66,6 +67,7 @@ if (process.contextIsolated) {
       taggerPingVideo:     ()        => ipcRenderer.invoke('tagger-ping-video'),
       ragPing:             ()        => ipcRenderer.invoke('rag-ping'),
       llmPing:             ()        => ipcRenderer.invoke('llm-ping'),
+      queueStatus:         ()        => ipcRenderer.invoke('queue-status'),
       taggerGenerateVideo: (payload) => ipcRenderer.invoke('tagger-generate-video', payload),
       taggerGenerate:  (payload) => ipcRenderer.invoke('tagger-generate', payload),
       onScanLog:       (cb)      => ipcRenderer.on('scan-log', (_e, msg) => cb(msg)),

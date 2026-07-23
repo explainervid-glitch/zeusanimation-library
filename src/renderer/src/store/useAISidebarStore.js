@@ -11,6 +11,10 @@ const useAISidebarStore = create(
   posX:      null, // px, persisted (null = default top-right position)
   posY:      null,
 
+  // ─── FLOATING ACTION BUTTON (draggable, iOS-style) ───────────
+  fabX:      null, // px, persisted (null = default bottom-right)
+  fabY:      null,
+
   // ─── SEARCH RESULTS ──────────────────────────────────────────
   ragResults:   [],     // grouped by asset_type
   ragError:     null,
@@ -22,14 +26,28 @@ const useAISidebarStore = create(
   genLoading:   false,
   genError:     null,
 
+  // ─── SCRIPT → STORYBOARD ─────────────────────────────────────
+  mode:         'script',   // 'search' | 'script'  (Script is the default)
+  script:       '',
+  scenes:       [],         // [{ id, query, description, assets, loading, error }]
+  storyLoading: false,      // true while decomposing the script into scenes
+  storyError:   null,
+
+  // LLM OUTPUT language ('id' | 'en'). RAG search always uses English.
+  lang:         'id',
+
   addMessage:     (msg)      => set(state => ({ messages: [...state.messages, msg] })),
-  clearChat:      ()         => set({ messages: [], ragResults: [], ragError: null, ragQuery: '', hasSearched: false, genText: '', genLoading: false, genError: null }),
+  clearChat:      ()         => set({ messages: [], ragResults: [], ragError: null, ragQuery: '', hasSearched: false, genText: '', genLoading: false, genError: null, scenes: [], storyError: null, storyLoading: false }),
   clearMessages:  ()         => set({ messages: [] }),
   setIsOpen:      (isOpen)   => set({ isOpen }),
   toggleSidebar:  ()         => set(state => ({ isOpen: !state.isOpen })),
   setWidth:       (width)    => set({ width }),
   setPos:         (posX, posY) => set({ posX, posY }),
+  setFabPos:      (fabX, fabY) => set({ fabX, fabY }),
   setLoading:     (loading)  => set({ isLoading: loading }),
+  setMode:        (mode)     => set({ mode }),
+  setScript:      (script)   => set({ script }),
+  setLang:        (lang)     => set({ lang }),
 
   // ─── RAG SEMANTIC SEARCH ─────────────────────────────────────
   // Scoped by styleId only — no category/asset-type required.
@@ -68,7 +86,7 @@ const useAISidebarStore = create(
       // shows immediately and the recommendation fills in when it's ready.
       if (flat.length) {
         set({ genLoading: true, genText: '', genError: null })
-        window.api.aiGenerate({ query: trimmed, results: flat })
+        window.api.aiGenerate({ query: trimmed, results: flat, lang: get().lang })
           .then(gen => {
             if (gen?.success) set({ genText: gen.text || '', genLoading: false })
             else set({ genError: gen?.error || 'Generation failed', genLoading: false })
@@ -79,6 +97,47 @@ const useAISidebarStore = create(
       set({ ragResults: [], ragError: err.message, isLoading: false, hasSearched: true })
     }
   },
+
+  // ─── SCRIPT → STORYBOARD ─────────────────────────────────────
+  // 1) LLM decomposes the script into scenes. 2) Each scene runs a RAG search
+  // to pull matching assets, filling in one scene at a time.
+  runStoryboard: async (script, styleId) => {
+    const trimmed = (script || '').trim()
+    if (!trimmed || styleId == null) return
+
+    set({ storyLoading: true, storyError: null, scenes: [] })
+    try {
+      const res = await window.api.aiScenes({ script: trimmed, lang: get().lang })
+      if (!res?.success) {
+        set({ storyError: res?.error || 'Could not break the script into scenes.', storyLoading: false })
+        return
+      }
+
+      // Each scene has an English `query` (for RAG) and a `description` (display).
+      const scenes = (res.scenes || []).map((s, i) => ({
+        id: i, query: s.query, description: s.description, assets: [], loading: true, error: null,
+      }))
+      set({ scenes, storyLoading: false })
+
+      // Retrieve assets scene-by-scene (sequential — keeps the RAG server calm).
+      for (let i = 0; i < scenes.length; i++) {
+        try {
+          const r = await window.api.ragSearch({ query: scenes[i].query, styleId, limit: 8 })
+          set(state => ({
+            scenes: state.scenes.map((s, idx) => idx === i
+              ? { ...s, assets: r?.success ? (r.data || []) : [], loading: false, error: r?.success ? null : r?.error }
+              : s),
+          }))
+        } catch (e) {
+          set(state => ({
+            scenes: state.scenes.map((s, idx) => idx === i ? { ...s, loading: false, error: e.message } : s),
+          }))
+        }
+      }
+    } catch (err) {
+      set({ storyError: err.message, storyLoading: false })
+    }
+  },
 }),
     {
       name: 'ai-sidebar-state',
@@ -86,13 +145,16 @@ const useAISidebarStore = create(
       // (isLoading, genLoading, results, ragQuery…) must never persist — else
       // closing the app mid-search leaves a "Searching…" spinner stuck on the
       // next launch. `merge` also ignores those fields from any stale blob.
-      partialize: (state) => ({ isOpen: state.isOpen, width: state.width, posX: state.posX, posY: state.posY }),
+      partialize: (state) => ({ isOpen: state.isOpen, width: state.width, posX: state.posX, posY: state.posY, fabX: state.fabX, fabY: state.fabY, lang: state.lang }),
       merge: (persisted, current) => ({
         ...current,
         isOpen: persisted?.isOpen ?? current.isOpen,
         width:  persisted?.width  ?? current.width,
         posX:   persisted?.posX   ?? current.posX,
         posY:   persisted?.posY   ?? current.posY,
+        fabX:   persisted?.fabX   ?? current.fabX,
+        fabY:   persisted?.fabY   ?? current.fabY,
+        lang:   persisted?.lang   ?? current.lang,
       }),
     }
   )

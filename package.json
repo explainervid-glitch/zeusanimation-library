@@ -1,6 +1,6 @@
 {
   "name": "zeusanimation-library",
-  "version": "1.0.6",
+  "version": "1.0.8",
   "description": "ZeusPack is a powerful animation library for creating stunning animations in your projects. With a wide range of features and an easy-to-use API, ZeusPack allows you to bring your ideas to life with smooth and captivating animations.",
   "main": "./out/main/index.js",
   "author": "ZeusDev - Tegar",

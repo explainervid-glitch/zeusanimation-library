@@ -145,7 +145,8 @@ export default function App() {
       {/* Compile tray (3D pack) */}
       <CompileTray />
 
-      {/* Floating AI Search panel — overlay, toggled from the toolbar */}
+      {/* Co-Worker — one element that morphs between a floating action button
+          (collapsed) and the expanded chat panel. */}
       <AISidebar />
 
     </div>

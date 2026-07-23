@@ -63,6 +63,7 @@ const mockApi = {
   // AI Chat
   aiChat:              (payload)     => Promise.resolve({ success: false, error: 'Browser mode' }),
   aiGenerate:          (payload)     => Promise.resolve({ success: false, error: 'Browser mode' }),
+  aiScenes:            (payload)     => Promise.resolve({ success: false, error: 'Browser mode' }),
 
   // Search & Tagger
   searchAssets:        (params)      => Promise.resolve([]),
@@ -70,6 +71,7 @@ const mockApi = {
   taggerPingVideo:     ()            => Promise.resolve({ success: false }),
   ragPing:             ()            => Promise.resolve({ success: false }),
   llmPing:             ()            => Promise.resolve({ success: false }),
+  queueStatus:         ()            => Promise.resolve({ success: true, llm: null, rag: null }),
   taggerGenerateVideo: (payload)     => Promise.resolve({ success: false, error: 'Browser mode' }),
   taggerGenerate:      (payload)     => Promise.resolve({ success: false, error: 'Browser mode' }),
 

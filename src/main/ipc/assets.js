@@ -1228,6 +1228,25 @@ export async function registerIpcHandlers() {
     }
   })
 
+  // ─── QUEUE STATUS — live "in line" gauge for the Co-Worker panel ──
+  // Polls both servers' /queue-status. Fast timeout + fully non-fatal: if a
+  // server is down or old (no endpoint), that lane just comes back null.
+  ipcMain.handle('queue-status', async () => {
+    const { llmUrl = 'http://192.168.1.27:8002', ragUrl = 'http://192.168.1.27:8001' } = readSettings()
+    const probe = async (url) => {
+      try {
+        const res = await fetch(`${url}/queue-status`, { signal: AbortSignal.timeout(4000) })
+        if (!res.ok) return null
+        const data = await res.json()
+        return data?.success ? data : null
+      } catch {
+        return null
+      }
+    }
+    const [llm, rag] = await Promise.all([probe(llmUrl), probe(ragUrl)])
+    return { success: true, llm, rag }
+  })
+
   ipcMain.handle('tagger-generate-video', async (_e, { videoPath, jsonPath, filename }) => {
     if (!videoPath) return { success: false, error: 'No video path provided' }
 
@@ -1393,7 +1412,9 @@ export async function registerIpcHandlers() {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ query, style_id: styleId, pack_id: activePath, limit }),
-        signal:  AbortSignal.timeout(10000),
+        // Longer than the raw search time: the request may wait in the server's
+        // queue behind other teammates before it runs.
+        signal:  AbortSignal.timeout(45000),
       })
       const data = await res.json()
       if (!res.ok) return { success: false, error: data.detail || `RAG error ${res.status}` }
@@ -1445,9 +1466,10 @@ export async function registerIpcHandlers() {
   // The "adapter" step: turn the query + retrieved candidates into a prompt
   // and send it to the local LLM (Gemma on :8002). Swap llmUrl to point at a
   // different provider later — nothing else changes.
-  ipcMain.handle('ai-generate', async (_e, { query, results = [] }) => {
+  ipcMain.handle('ai-generate', async (_e, { query, results = [], lang = 'en' }) => {
     const { llmUrl = 'http://192.168.1.27:8002' } = readSettings()
     if (!query || !results.length) return { success: false, error: 'Nothing to generate from.' }
+    const langName = lang === 'id' ? 'Bahasa Indonesia' : 'English'
 
     // Compact the top candidates into a numbered list for the model.
     const context = results.slice(0, 12).map((a, i) => {
@@ -1463,7 +1485,8 @@ export async function registerIpcHandlers() {
       'recommend the best few and briefly say why each fits. Keep it short. ' +
       'Only reference assets from the list, by name. You may use light Markdown ' +
       '(**bold** for asset names, simple "- " bullet lists) and the occasional ' +
-      'tasteful emoji. Do not use headings.'
+      'tasteful emoji. Do not use headings. ' +
+      `Write your recommendation in ${langName} (keep the asset names exactly as given).`
     const prompt = `Scene: ${query}\n\nCandidate assets:\n${context}\n\nRecommend the best matches and explain why.`
 
     try {
@@ -1471,13 +1494,76 @@ export async function registerIpcHandlers() {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({ system, prompt, max_tokens: 512 }),
-        signal:  AbortSignal.timeout(60000),   // local gen can be slow, esp. first call
+        // Generous: local gen is slow AND the request may sit in the LLM queue
+        // behind other teammates before it runs.
+        signal:  AbortSignal.timeout(150000),
       })
       const data = await res.json()
       if (!res.ok) return { success: false, error: data.detail || `LLM error ${res.status}` }
       return { success: true, text: cleanLlmText(data.text) }
     } catch (err) {
       if (err.message?.includes('ECONNREFUSED') || err.message?.includes('fetch failed')) {
+        return { success: false, error: `Cannot connect to LLM server at ${llmUrl}. Make sure llm_server.py is running.` }
+      }
+      return { success: false, error: err.message }
+    }
+  })
+
+  // ─── AI: SCRIPT → SCENES (storyboard decomposition) ─────────
+  ipcMain.handle('ai-scenes', async (_e, { script, lang = 'en' }) => {
+    const { llmUrl = 'http://192.168.1.27:8002' } = readSettings()
+    if (!script || !script.trim()) return { success: false, error: 'Empty script.' }
+    const langName = lang === 'id' ? 'Bahasa Indonesia' : 'English'
+
+    const system =
+      "You are a video production assistant. Break the user's script into a short " +
+      'sequence of visual SCENES for an explainer/animation video (aim for 3-8).\n' +
+      'For EACH scene, output ONE line in EXACTLY this format:\n' +
+      `<english search phrase> :: <scene description in ${langName}>\n` +
+      'The part BEFORE "::" is a short ENGLISH visual search phrase (3-8 keywords) for ' +
+      'finding a matching asset — ALWAYS English, even if the script is in another language. ' +
+      `The part AFTER "::" is the on-screen description shown to the user, in ${langName}. ` +
+      'Output only these lines: no numbering, no markdown, no blank lines, no extra text.'
+    const prompt = `Script:\n${script.trim()}\n\nBreak it into visual scenes.`
+
+    try {
+      const res = await fetch(`${llmUrl}/generate`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ system, prompt, max_tokens: 512 }),
+        // Generous: may wait in the LLM queue behind other teammates.
+        signal:  AbortSignal.timeout(150000),
+      })
+      const data = await res.json()
+      if (!res.ok) return { success: false, error: data.detail || `LLM error ${res.status}` }
+
+      const raw = cleanLlmText(data.text || '')
+      const scenes = raw.split(/\r?\n/)
+        .map(l => l.trim())
+        .filter(Boolean)
+        .map(l => l
+          .replace(/^scene\s*\d*\s*[:.)\-]\s*/i, '')   // "SCENE:", "Scene 1:", …
+          .replace(/^[-*•\d]+[.)\]]?\s*/, '')          // leftover bullets / numbers
+          .trim())
+        .filter(l => l.length > 3)
+        .map(l => {
+          const idx = l.indexOf('::')
+          if (idx !== -1) {
+            const q = l.slice(0, idx).trim()
+            const d = l.slice(idx + 2).trim()
+            return { query: q || d, description: d || q }
+          }
+          return { query: l, description: l }   // no separator — use the line for both
+        })
+        .filter(s => s.description.length > 2)
+        .slice(0, 8)
+
+      if (!scenes.length) {
+        return { success: false, error: 'The model returned no usable scenes — try rephrasing the script.' }
+      }
+      return { success: true, scenes }
+    } catch (err) {
+      if (err.cause?.code === 'ECONNREFUSED' || err.message?.includes('ECONNREFUSED') || err.message?.includes('fetch failed')) {
         return { success: false, error: `Cannot connect to LLM server at ${llmUrl}. Make sure llm_server.py is running.` }
       }
       return { success: false, error: err.message }

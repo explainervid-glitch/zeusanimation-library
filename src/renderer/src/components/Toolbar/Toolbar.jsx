@@ -85,23 +85,35 @@ function PackDropdown() {
   )
 }
 
-// ─── AI SEARCH TOGGLE (right of the search bar) ───────────────
-function AiSearchToggle() {
+// ─── CO-WORKER TOGGLE (circular, right of the search bar) ─────
+function CoworkerToggle() {
   const isOpen        = useAISidebarStore(s => s.isOpen)
   const toggleSidebar = useAISidebarStore(s => s.toggleSidebar)
+  const isLoading     = useAISidebarStore(s => s.isLoading)
+  const genLoading    = useAISidebarStore(s => s.genLoading)
+  const storyLoading  = useAISidebarStore(s => s.storyLoading)
+  const busy = isLoading || genLoading || storyLoading
+
   return (
     <button
       onClick={toggleSidebar}
-      title="AI Search"
+      title="Co-Worker"
       style={{ WebkitAppRegion: 'no-drag' }}
-      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all flex-shrink-0
+      className={`relative flex items-center justify-center w-8 h-8 rounded-full border transition-all flex-shrink-0
         ${isOpen
-          ? 'bg-c-accent/15 border-c-accent text-c-accent'
-          : 'bg-c-raised text-c-text-2 border-c-border-2 hover:bg-c-hover hover:text-c-text'
+          ? 'bg-c-accent text-c-on-accent border-c-accent shadow-sm shadow-c-accent/20'
+          : 'bg-c-accent/15 text-c-accent border-c-accent hover:bg-c-accent/25'
         }`}
     >
-      <BotMessageSquare size={13} />
-      Chat
+      <BotMessageSquare size={14} />
+
+      {/* Red notification bubble with a pulsing ring — while generating/queueing */}
+      {busy && (
+        <span className="absolute -top-0.5 -right-0.5 flex h-3 w-3">
+          <span className="absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75 animate-ping" />
+          <span className="relative inline-flex h-3 w-3 rounded-full bg-red-500 border border-c-surface" />
+        </span>
+      )}
     </button>
   )
 }
@@ -412,10 +424,13 @@ export default function Toolbar() {
           <PackDropdown />
         </div>
 
-        {/* Search — center, flex-1 */}
-        <div className="flex-1 flex justify-center items-center gap-2">
+        {/* Search — center, flex-1. Circular Co-Worker toggle sits beside it.
+            min-w-0 lets this group shrink so the toggle never spills past the
+            toolbar on narrow windows; the toggle stays fixed-size, the search
+            input absorbs the shrink. */}
+        <div className="flex-1 flex justify-center items-center gap-2 min-w-0">
           <SearchBar />
-          <AiSearchToggle />
+          <CoworkerToggle />
         </div>
 
         {/* Actions */}

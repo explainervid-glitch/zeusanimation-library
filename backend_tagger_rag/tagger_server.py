@@ -309,6 +309,23 @@ def _style_block(style_guide: str) -> str:
     )
 
 
+def _context_block(existing_json: dict | None, filename: str = "") -> str:
+    """Surface the asset's known FileName and Detail so the model uses them as
+    context when filling the other fields (description, keywords, metadata).
+    These are organised by the system and must NOT be changed."""
+    j = existing_json or {}
+    name   = (j.get("FileName") or filename or "").strip()
+    detail = (j.get("Detail") or "").strip()
+    if not name and not detail:
+        return ""
+    lines = ["\nASSET CONTEXT (use these to keep the generated fields accurate and consistent; do NOT change them):"]
+    if name:
+        lines.append(f"- FileName: {name}")
+    if detail:
+        lines.append(f"- Detail: {detail}")
+    return "\n".join(lines) + "\n"
+
+
 def _parse_json_from_output(raw: str) -> dict:
     """Extract and repair JSON from raw model output."""
     start = raw.find("{")
@@ -430,7 +447,7 @@ def _qwen_video_inference(video_frames: np.ndarray, prompt_text: str, max_new_to
         text=[text_prompt],
         videos=[video_frames],
         return_tensors="pt",
-        max_pixels=512 * 512,    # lower per-frame res to fit 16 frames in VRAM
+        max_pixels=640 * 640,    # per-frame detail vs VRAM (16 frames). 512² → 640²
         min_pixels=128 * 128,
     ).to(model.device)
 
@@ -455,7 +472,7 @@ def _qwen_video_inference(video_frames: np.ndarray, prompt_text: str, max_new_to
 # VIDEO FRAME EXTRACTION
 # ══════════════════════════════════════════════════════════════
 
-NUM_FRAMES = 16
+NUM_FRAMES = 20
 
 
 def read_video_frames(video_path: str, num_frames: int = NUM_FRAMES) -> np.ndarray:
@@ -509,6 +526,7 @@ def generate_image_json(asset_type: str, filename: str, image: Image.Image,
         f"Filename: {filename}\n"
         f"Asset Type: {asset_type}\n"
         f"{_style_block(style_guide)}"
+        f"{_context_block(existing_json, filename)}"
         f"{SYSTEM_PROMPT_IMAGE}"
         f"{context_note}"
     )
@@ -536,6 +554,7 @@ def generate_inspiration_json(filename: str, image: Image.Image,
         f"Filename: {filename}\n"
         f"Asset Type: inspiration\n"
         f"{_style_block(style_guide)}"
+        f"{_context_block(existing_json, filename)}"
         f"{SYSTEM_PROMPT_INSPIRATION}"
         f"{context_note}"
     )
@@ -555,6 +574,7 @@ def generate_video_json(filename: str, video_frames: np.ndarray,
         f"Filename: {filename}\n"
         f"Asset Type: animation\n"
         f"{_style_block(style_guide)}"
+        f"{_context_block(existing_json, filename)}"
         f"{SYSTEM_PROMPT_VIDEO}"
         f"{context_note}"
     )
