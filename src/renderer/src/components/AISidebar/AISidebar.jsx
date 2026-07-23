@@ -15,12 +15,15 @@ import {
   ChevronDown,
   ChevronRight,
   FileText,
+  Trash,
+  Minus,
 } from 'lucide-react'
 import useAISidebarStore from '../../store/useAISidebarStore'
 import useAssetStore from '../../store/useAssetStore'
 
-const MIN_WIDTH = 260
-const MAX_WIDTH = 560
+const MIN_WIDTH  = 260
+const MAX_WIDTH  = 560
+const MIN_HEIGHT = 240
 
 // ─── TYPE CONFIG ─────────────────────────────────────────────
 const TYPE_CONFIG = {
@@ -329,6 +332,8 @@ function AIPanelContent({ onDragStart }) {
   // Style-only scoping — category selection is NOT required for AI search
   const selectedStyleId = useAssetStore(state => state.selectedStyleId)
   const navigateToAsset = useAssetStore(state => state.navigateToAsset)
+  const tree            = useAssetStore(state => state.tree)
+  const styleName       = tree?.find(s => s.id === selectedStyleId)?.name || null
 
   const [input, setInput] = useState('')
   const inputRef = useRef(null)
@@ -371,8 +376,8 @@ function AIPanelContent({ onDragStart }) {
         <LlmStatus />
 
         {/* Center — title (absolutely centered, ignores pointer so drag works) */}
-        <p className="absolute left-1/2 -translate-x-1/2 text-[10px] text-c-text-4 uppercase tracking-widest font-medium pointer-events-none">
-          Co-Worker
+        <p className="absolute left-1/2 -translate-x-1/2 max-w-[55%] truncate text-center text-[12px] text-c-text-3 uppercase tracking-widest font-medium pointer-events-none">
+          Co-Worker{styleName ? ` (${styleName})` : ''}
         </p>
 
         <div className="flex items-center gap-1" onMouseDown={(e) => e.stopPropagation()}>
@@ -381,14 +386,14 @@ function AIPanelContent({ onDragStart }) {
             className="p-1 rounded hover:bg-c-hover text-c-text-3 hover:text-c-text transition-all"
             title="Clear results"
           >
-            <X size={14} />
+            <Trash size={14} />
           </button>
           <button
             onClick={toggleSidebar}
             className="p-1 rounded hover:bg-c-hover text-c-text-3 hover:text-c-text transition-all"
             title="Hide Co-Worker"
           >
-            <PanelRightClose size={16} />
+            <Minus size={16} />
           </button>
         </div>
       </div>
@@ -552,8 +557,10 @@ function AIPanelContent({ onDragStart }) {
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
 
 export default function AISidebar() {
-  const { isOpen, width, setWidth, posX, posY, setPos } = useAISidebarStore()
-  const drag = useRef(null)   // { mode:'move'|'resize', offX, offY, w, h, left }
+  const { isOpen, width, height, setSize, posX, posY, setPos } = useAISidebarStore()
+  // move:   { mode:'move', offX, offY, w, h }
+  // resize: { mode:'resize', dir, startX, startY, left, top, width, height }
+  const drag = useRef(null)
 
   // Keep the panel mounted through a short exit animation.
   const [mounted, setMounted] = useState(false)
@@ -574,14 +581,37 @@ export default function AISidebar() {
     const onMove = (e) => {
       const d = drag.current
       if (!d) return
+
       if (d.mode === 'move') {
         const nx = clamp(e.clientX - d.offX, 4, window.innerWidth  - d.w - 4)
         const ny = clamp(e.clientY - d.offY, 4, window.innerHeight - d.h - 4)
         setPos(nx, ny)
-      } else {
-        const nw = e.clientX - d.left
-        if (nw >= MIN_WIDTH && nw <= MAX_WIDTH) setWidth(nw)
+        return
       }
+
+      // resize — dir is any combination of n/s/e/w (edges + corners)
+      const maxH = window.innerHeight - 8
+      const dx = e.clientX - d.startX
+      const dy = e.clientY - d.startY
+      let nw = d.width, nh = d.height, nl = d.left, nt = d.top
+
+      if (d.dir.includes('e')) nw = clamp(d.width + dx, MIN_WIDTH, MAX_WIDTH)
+      if (d.dir.includes('w')) {
+        const right = d.left + d.width               // keep the right edge fixed
+        nw = clamp(d.width - dx, MIN_WIDTH, MAX_WIDTH)
+        nl = right - nw
+      }
+      if (d.dir.includes('s')) nh = clamp(d.height + dy, MIN_HEIGHT, maxH)
+      if (d.dir.includes('n')) {
+        const bottom = d.top + d.height              // keep the bottom edge fixed
+        nh = clamp(d.height - dy, MIN_HEIGHT, maxH)
+        nt = bottom - nh
+      }
+
+      nl = clamp(nl, 4, window.innerWidth  - nw - 4)
+      nt = clamp(nt, 4, window.innerHeight - nh - 4)
+      setSize(nw, nh)
+      setPos(nl, nt)
     }
     const onUp = () => { drag.current = null }
     document.addEventListener('mousemove', onMove)
@@ -590,11 +620,12 @@ export default function AISidebar() {
       document.removeEventListener('mousemove', onMove)
       document.removeEventListener('mouseup', onUp)
     }
-  }, [setPos, setWidth])
+  }, [setPos, setSize])
 
   if (!mounted) return null
 
-  const panelH      = Math.min(window.innerHeight * 0.72, 640)
+  const defaultH    = Math.min(window.innerHeight * 0.72, 640)
+  const panelH      = clamp(height ?? defaultH, MIN_HEIGHT, window.innerHeight - 8)
   const defaultLeft = Math.max(12, window.innerWidth - width - 16)
   // Clamp on render too, so a stored off-screen position always comes back in view.
   const left = clamp(posX ?? defaultLeft, 4, window.innerWidth  - width  - 4)
@@ -605,11 +636,15 @@ export default function AISidebar() {
     drag.current = { mode: 'move', offX: e.clientX - left, offY: e.clientY - top, w: width, h: panelH }
     e.preventDefault()
   }
-  const startResize = (e) => {
+  const startResize = (dir) => (e) => {
     if (e.button !== 0) return
-    drag.current = { mode: 'resize', left }
+    drag.current = { mode: 'resize', dir, startX: e.clientX, startY: e.clientY, left, top, width, height: panelH }
     e.preventDefault()
+    e.stopPropagation()   // don't let the top edge trigger the header's move
   }
+
+  const edge   = 'absolute hover:bg-c-accent/40 transition-colors z-20'
+  const corner = 'absolute h-3 w-3 z-30'
 
   return (
     <div
@@ -623,13 +658,17 @@ export default function AISidebar() {
         transition: 'transform 160ms ease-out, opacity 140ms ease-out',
       }}
     >
-      {/* Resize handle — right edge */}
-      <div
-        onMouseDown={startResize}
-        className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize
-          hover:bg-c-accent/40 transition-colors z-20"
-        title="Drag to resize"
-      />
+      {/* Resize handles — edges */}
+      <div onMouseDown={startResize('n')} className={`${edge} top-0 left-2 right-2 h-1.5 cursor-ns-resize`} />
+      <div onMouseDown={startResize('s')} className={`${edge} bottom-0 left-2 right-2 h-1.5 cursor-ns-resize`} />
+      <div onMouseDown={startResize('w')} className={`${edge} left-0 top-2 bottom-2 w-1.5 cursor-ew-resize`} />
+      <div onMouseDown={startResize('e')} className={`${edge} right-0 top-2 bottom-2 w-1.5 cursor-ew-resize`} />
+      {/* Resize handles — corners */}
+      <div onMouseDown={startResize('nw')} className={`${corner} top-0 left-0 cursor-nwse-resize`} />
+      <div onMouseDown={startResize('ne')} className={`${corner} top-0 right-0 cursor-nesw-resize`} />
+      <div onMouseDown={startResize('sw')} className={`${corner} bottom-0 left-0 cursor-nesw-resize`} />
+      <div onMouseDown={startResize('se')} className={`${corner} bottom-0 right-0 cursor-nwse-resize`} />
+
       <AIPanelContent onDragStart={startMove} />
     </div>
   )

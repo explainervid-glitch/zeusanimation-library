@@ -8,6 +8,7 @@ const useAISidebarStore = create(
   isLoading: false,
   isOpen:    false,
   width:     320,  // px, persisted
+  height:    null, // px, persisted (null = default computed height)
   posX:      null, // px, persisted (null = default top-right position)
   posY:      null,
 
@@ -47,6 +48,7 @@ const useAISidebarStore = create(
   setIsOpen:      (isOpen)   => set({ isOpen }),
   toggleSidebar:  ()         => set(state => ({ isOpen: !state.isOpen })),
   setWidth:       (width)    => set({ width }),
+  setSize:        (width, height) => set({ width, height }),
   setPos:         (posX, posY) => set({ posX, posY }),
   setFabPos:      (fabX, fabY) => set({ fabX, fabY }),
   setLoading:     (loading)  => set({ isLoading: loading }),
@@ -151,11 +153,12 @@ const useAISidebarStore = create(
       // (isLoading, genLoading, results, ragQuery…) must never persist — else
       // closing the app mid-search leaves a "Searching…" spinner stuck on the
       // next launch. `merge` also ignores those fields from any stale blob.
-      partialize: (state) => ({ isOpen: state.isOpen, width: state.width, posX: state.posX, posY: state.posY, fabX: state.fabX, fabY: state.fabY, lang: state.lang }),
+      partialize: (state) => ({ isOpen: state.isOpen, width: state.width, height: state.height, posX: state.posX, posY: state.posY, fabX: state.fabX, fabY: state.fabY, lang: state.lang }),
       merge: (persisted, current) => ({
         ...current,
         isOpen: persisted?.isOpen ?? current.isOpen,
         width:  persisted?.width  ?? current.width,
+        height: persisted?.height ?? current.height,
         posX:   persisted?.posX   ?? current.posX,
         posY:   persisted?.posY   ?? current.posY,
         fabX:   persisted?.fabX   ?? current.fabX,
