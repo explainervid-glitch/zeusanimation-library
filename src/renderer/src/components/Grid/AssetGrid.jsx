@@ -45,7 +45,7 @@ export default function AssetGrid({ enableBatch = true }) {
   // Auto-clear the AI-search highlight once it's had a moment to be seen.
   useEffect(() => {
     if (highlightedAssetId == null) return
-    const t = setTimeout(() => clearHighlight?.(), 2500)
+    const t = setTimeout(() => clearHighlight?.(), 10000)
     return () => clearTimeout(t)
   }, [highlightedAssetId, clearHighlight])
 

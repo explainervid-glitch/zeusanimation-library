@@ -126,3 +126,13 @@ html, body, #root {
   60%  { transform: scale(1.08); }
   100% { transform: scale(1); opacity: 1; }
 }
+
+/* Heartbeat — a double-thump pulse for the Co-Worker status bubble */
+@keyframes heartbeat {
+  0%   { transform: scale(1); }
+  14%  { transform: scale(1.35); }
+  28%  { transform: scale(1); }
+  42%  { transform: scale(1.35); }
+  56%  { transform: scale(1); }
+  100% { transform: scale(1); }
+}

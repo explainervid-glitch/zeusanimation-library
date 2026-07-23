@@ -261,33 +261,14 @@ function StoryboardView({ scenes, storyLoading, storyError, onNavigate }) {
 }
 
 // ─── QUEUE NOTICE — live "in line" indicator ─────────────────
-// While a request is in flight, polls both servers' /queue-status and shows how
-// many jobs are ahead. Hidden when it's just you (no contention).
+// Reads the shared queue depth (polled by the toolbar's Co-Worker button while
+// busy) and shows how many jobs are ahead. Hidden when it's just you.
 function QueueNotice() {
   const isLoading    = useAISidebarStore(s => s.isLoading)
   const genLoading   = useAISidebarStore(s => s.genLoading)
   const storyLoading = useAISidebarStore(s => s.storyLoading)
+  const ahead        = useAISidebarStore(s => s.queueAhead)
   const busy = isLoading || genLoading || storyLoading
-
-  const [ahead, setAhead] = useState(0)
-
-  useEffect(() => {
-    if (!busy) { setAhead(0); return }
-    let alive = true
-    const poll = async () => {
-      try {
-        const q = await window.api.queueStatus()
-        if (!alive || !q?.success) return
-        // queue_depth = jobs on that server (active + waiting). "Ahead of you"
-        // is everything except your own — approximate but honest.
-        const depth = Math.max(q.llm?.queue_depth || 0, q.rag?.queue_depth || 0)
-        setAhead(Math.max(0, depth - 1))
-      } catch { /* non-fatal — just skip this tick */ }
-    }
-    poll()
-    const id = setInterval(poll, 1500)
-    return () => { alive = false; clearInterval(id) }
-  }, [busy])
 
   if (!busy || ahead < 1) return null
   return (
@@ -299,6 +280,39 @@ function QueueNotice() {
         ahead of you in the queue…
       </p>
     </div>
+  )
+}
+
+// ─── LLM SERVER STATUS — simple dot for the Co-Worker header ──
+// Pings the local LLM server (:8002) on mount and every 15s.
+function LlmStatus() {
+  const [status, setStatus] = useState('checking')  // checking | online | offline
+
+  useEffect(() => {
+    let alive = true
+    const check = async () => {
+      const r = await window.api.llmPing().catch(() => ({ success: false }))
+      if (alive) setStatus(r?.success ? 'online' : 'offline')
+    }
+    check()
+    const id = setInterval(check, 15000)
+    return () => { alive = false; clearInterval(id) }
+  }, [])
+
+  const cfg = {
+    checking: { dot: 'bg-c-text-4 animate-pulse', label: 'LLM…' },
+    online:   { dot: 'bg-green-500',               label: 'LLM' },
+    offline:  { dot: 'bg-red-500',                 label: 'LLM off' },
+  }[status]
+
+  return (
+    <span
+      className="flex items-center gap-1 text-[9px] text-c-text-4 normal-case tracking-normal"
+      title={`LLM server :8002 — ${status}`}
+    >
+      <span className={`h-1.5 w-1.5 rounded-full flex-shrink-0 ${cfg.dot}`} />
+      {cfg.label}
+    </span>
   )
 }
 
@@ -351,11 +365,16 @@ function AIPanelContent({ onDragStart }) {
       {/* Header — also the drag handle for moving the panel */}
       <div
         onMouseDown={onDragStart}
-        className="px-3 py-2.5 border-b border-c-border flex items-center justify-between flex-shrink-0 cursor-move select-none"
+        className="relative px-3 py-2.5 border-b border-c-border flex items-center justify-between flex-shrink-0 cursor-move select-none"
       >
-        <p className="text-[10px] text-c-text-4 uppercase tracking-widest font-medium">
+        {/* Left corner — LLM server status */}
+        <LlmStatus />
+
+        {/* Center — title (absolutely centered, ignores pointer so drag works) */}
+        <p className="absolute left-1/2 -translate-x-1/2 text-[10px] text-c-text-4 uppercase tracking-widest font-medium pointer-events-none">
           Co-Worker
         </p>
+
         <div className="flex items-center gap-1" onMouseDown={(e) => e.stopPropagation()}>
           <button
             onClick={clearChat}

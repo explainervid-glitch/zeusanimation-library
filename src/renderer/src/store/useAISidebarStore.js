@@ -26,6 +26,11 @@ const useAISidebarStore = create(
   genLoading:   false,
   genError:     null,
 
+  // ─── QUEUE ───────────────────────────────────────────────────
+  // How many jobs are ahead of ours on the busiest server (polled while busy).
+  // 0 = ours is the one running (generating); >=1 = we're waiting in line.
+  queueAhead:   0,
+
   // ─── SCRIPT → STORYBOARD ─────────────────────────────────────
   mode:         'script',   // 'search' | 'script'  (Script is the default)
   script:       '',
@@ -48,6 +53,7 @@ const useAISidebarStore = create(
   setMode:        (mode)     => set({ mode }),
   setScript:      (script)   => set({ script }),
   setLang:        (lang)     => set({ lang }),
+  setQueueAhead:  (n)        => set({ queueAhead: n }),
 
   // ─── RAG SEMANTIC SEARCH ─────────────────────────────────────
   // Scoped by styleId only — no category/asset-type required.

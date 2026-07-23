@@ -92,7 +92,42 @@ function CoworkerToggle() {
   const isLoading     = useAISidebarStore(s => s.isLoading)
   const genLoading    = useAISidebarStore(s => s.genLoading)
   const storyLoading  = useAISidebarStore(s => s.storyLoading)
+  const queueAhead    = useAISidebarStore(s => s.queueAhead)
+  const setQueueAhead = useAISidebarStore(s => s.setQueueAhead)
   const busy = isLoading || genLoading || storyLoading
+
+  // While busy, poll the servers' queue depth so we know whether we're waiting
+  // in line (queueing) or actually running (generating). Shared via the store.
+  useEffect(() => {
+    if (!busy) { setQueueAhead(0); return }
+    let alive = true
+    const poll = async () => {
+      try {
+        const q = await window.api.queueStatus()
+        if (!alive || !q?.success) return
+        const depth = Math.max(q.llm?.queue_depth || 0, q.rag?.queue_depth || 0)
+        setQueueAhead(Math.max(0, depth - 1))
+      } catch { /* non-fatal — skip this tick */ }
+    }
+    poll()
+    const id = setInterval(poll, 1500)
+    return () => { alive = false; clearInterval(id) }
+  }, [busy, setQueueAhead])
+
+  const queueing = busy && queueAhead >= 1   // someone ahead → red
+
+  // Flash a green "done" bubble for 10s after work finishes (busy: true → false).
+  const wasBusy = useRef(false)
+  const [done, setDone] = useState(false)
+  useEffect(() => {
+    if (busy) { setDone(false); wasBusy.current = true; return }
+    if (wasBusy.current) {
+      wasBusy.current = false
+      setDone(true)
+      const t = setTimeout(() => setDone(false), 10000)
+      return () => clearTimeout(t)
+    }
+  }, [busy])
 
   return (
     <button
@@ -107,12 +142,15 @@ function CoworkerToggle() {
     >
       <BotMessageSquare size={14} />
 
-      {/* Red notification bubble with a pulsing ring — while generating/queueing */}
-      {busy && (
-        <span className="absolute -top-0.5 -right-0.5 flex h-3 w-3">
-          <span className="absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75 animate-ping" />
-          <span className="relative inline-flex h-3 w-3 rounded-full bg-red-500 border border-c-surface" />
-        </span>
+      {/* Status bubble: heartbeat while working (red=queueing, yellow=generating),
+          then a steady green for 10s once it's done. */}
+      {(busy || done) && (
+        <span
+          title={busy ? (queueing ? 'Waiting in queue…' : 'Generating…') : 'Done'}
+          className={`absolute -top-1 -right-1 h-3 w-3 rounded-full border border-c-surface
+            ${busy ? 'animate-[heartbeat_1.3s_ease-in-out_infinite]' : ''}
+            ${busy ? (queueing ? 'bg-red-500' : 'bg-yellow-400') : 'bg-green-500'}`}
+        />
       )}
     </button>
   )
