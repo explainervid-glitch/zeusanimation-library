@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import {
-  ChevronDown, ChevronRight, ChevronUp, Image,
+  ChevronDown, ChevronRight, Image,
   Pencil, Check, X, PersonStanding, Users, PanelLeftClose, PanelLeftOpen, Lightbulb, Sparkles,
 } from 'lucide-react'
 import useAssetStore from '../../store/useAssetStore'
@@ -337,66 +337,72 @@ function StylePill({ style, isSelected, onClick, onRename }) {
   )
 }
 
-// ─── STYLE PICKER (vertical carousel — one pill at a time) ────
+// ─── STYLE PICKER (dropdown menu) ─────────────────────────────
 function StyleScrollBar({ tree, selectedStyleId, onSelectStyle }) {
   const { renameStyle } = useAssetStore()
+  const [open, setOpen] = useState(false)
+  const ref             = useRef(null)
 
-  const idx     = tree.findIndex(s => s.id === selectedStyleId)
-  const current = tree[idx] ?? tree[0]
+  // Close on outside click / Escape
+  useEffect(() => {
+    const onDown = (e) => { if (!ref.current?.contains(e.target)) setOpen(false) }
+    const onKey  = (e) => { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [])
 
-  // Up/down step through the styles, one at a time (no wrap).
-  const step = (dir) => {
-    const next = tree[idx + dir]
-    if (next) onSelectStyle(next.id)
-  }
-
+  const current = tree.find(s => s.id === selectedStyleId) ?? tree[0]
   if (!current) return <div className="border-b border-c-border flex-shrink-0" />
-
-  const canUp   = idx > 0
-  const canDown = idx > -1 && idx < tree.length - 1
-  const arrow   = (enabled) => `flex-shrink-0 p-0.5 rounded transition-all
-    ${enabled ? 'text-c-text-3 hover:text-c-text hover:bg-c-raised' : 'text-c-text-4 opacity-30 cursor-default'}`
 
   return (
     <div className="border-b border-c-border flex-shrink-0 px-2 py-2">
-      <div className="flex items-center gap-1.5">
-        {/* The single, currently-selected style pill */}
-        <div className="flex-1 min-w-0">
-          <StylePill
-            style={current}
-            isSelected
-            onClick={() => {}}
-            onRename={renameStyle}
+      <div ref={ref} className="relative">
+
+        {/* Trigger — shows the current style */}
+        <button
+          onClick={() => setOpen(o => !o)}
+          title="Change style"
+          className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-lg border text-left transition-all
+            ${open
+              ? 'bg-c-hover border-c-accent'
+              : 'bg-c-raised border-c-border hover:border-c-border-2 hover:bg-c-hover'
+            }`}
+        >
+          <div className="flex-1 min-w-0">
+            <p className="text-[12px] font-bold text-c-text leading-tight truncate">
+              {current.name}
+            </p>
+            <p className="text-[10px] text-c-text-3 leading-tight truncate">
+              {current.description || '—'}
+            </p>
+          </div>
+          <ChevronDown
+            size={14}
+            className={`flex-shrink-0 text-c-text-3 transition-transform duration-150 ${open ? 'rotate-180' : ''}`}
           />
-        </div>
+        </button>
 
-        {/* Up / down navigation */}
-        <div className="flex flex-col gap-0.5">
-          <button onClick={() => step(-1)} disabled={!canUp} className={arrow(canUp)} title="Previous style">
-            <ChevronUp size={14} />
-          </button>
-          <button onClick={() => step(1)} disabled={!canDown} className={arrow(canDown)} title="Next style">
-            <ChevronDown size={14} />
-          </button>
-        </div>
+        {/* Menu — every style, with inline rename (hover the pencil) */}
+        {open && (
+          <div className="absolute left-0 right-0 top-full mt-1.5 z-50
+            bg-c-surface border border-c-border rounded-xl shadow-xl
+            max-h-72 overflow-y-auto p-1.5 space-y-1">
+            {tree.map(style => (
+              <StylePill
+                key={style.id}
+                style={style}
+                isSelected={style.id === selectedStyleId}
+                onClick={() => { onSelectStyle(style.id); setOpen(false) }}
+                onRename={renameStyle}
+              />
+            ))}
+          </div>
+        )}
       </div>
-
-      {/* Position dots — jump straight to any style */}
-      {tree.length > 1 && (
-        <div className="flex justify-center gap-1 pt-1.5">
-          {tree.map(style => (
-            <button
-              key={style.id}
-              onClick={() => onSelectStyle(style.id)}
-              className={`rounded-full transition-all duration-200
-                ${style.id === selectedStyleId
-                  ? 'bg-c-accent w-3 h-1.5'
-                  : 'bg-c-border-2 w-1.5 h-1.5 hover:bg-c-text-4'
-                }`}
-            />
-          ))}
-        </div>
-      )}
     </div>
   )
 }
