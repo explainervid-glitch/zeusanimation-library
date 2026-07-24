@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import {
-  ChevronDown, ChevronRight, ChevronLeft, Image,
+  ChevronDown, ChevronRight, ChevronUp, Image,
   Pencil, Check, X, PersonStanding, Users, PanelLeftClose, PanelLeftOpen, Lightbulb, Sparkles,
 } from 'lucide-react'
 import useAssetStore from '../../store/useAssetStore'
@@ -197,7 +197,6 @@ function TypeSection({ typeData, styleId }) {
 }
 
 // ─── STYLE PILL ───────────────────────────────────────────────
-const PILL_WIDTH = 150
 
 function StylePill({ style, isSelected, onClick, onRename }) {
   const [editing, setEditing]  = useState(false)
@@ -253,8 +252,7 @@ function StylePill({ style, isSelected, onClick, onRename }) {
   if (editing) {
     return (
       <div
-        className="flex flex-col items-center gap-1.5 p-2 rounded-lg border border-c-accent bg-c-raised snap-start flex-shrink-0"
-        style={{ width: PILL_WIDTH }}
+        className="flex flex-col items-center gap-1.5 p-2 rounded-lg border border-c-accent bg-c-raised w-full"
         onClick={e => e.stopPropagation()}
       >
         {/* Name input */}
@@ -300,11 +298,10 @@ function StylePill({ style, isSelected, onClick, onRename }) {
   return (
     <div
       onClick={onClick}
-      style={{ width: PILL_WIDTH }}
       className={`
-        group/pill relative snap-start flex-shrink-0 cursor-pointer
-        flex flex-col items-center justify-center gap-0.5
-        px-2 py-2.5 rounded-lg border
+        group/pill relative w-full cursor-pointer
+        flex flex-col items-start gap-0.5
+        px-2.5 py-2 rounded-lg border
         transition-all duration-150
         ${isSelected
           ? 'bg-c-accent text-c-on-accent border-c-accent'
@@ -313,12 +310,12 @@ function StylePill({ style, isSelected, onClick, onRename }) {
       `}
     >
       {/* Nama style */}
-      <span className="text-[12px] font-bold leading-tight text-center w-full truncate">
+      <span className="text-[12px] font-bold leading-tight w-full truncate">
         {style.name}
       </span>
 
       {/* Deskripsi */}
-      <span className={`text-[10px] leading-tight text-center w-full truncate
+      <span className={`text-[10px] leading-tight w-full truncate
         ${isSelected ? 'text-c-on-accent/70' : 'text-c-text-2'}`}
       >
         {style.description || '—'}
@@ -340,104 +337,53 @@ function StylePill({ style, isSelected, onClick, onRename }) {
   )
 }
 
-// ─── STYLE SCROLL BAR ─────────────────────────────────────────
+// ─── STYLE PICKER (vertical carousel — one pill at a time) ────
 function StyleScrollBar({ tree, selectedStyleId, onSelectStyle }) {
   const { renameStyle } = useAssetStore()
-  const scrollRef       = useRef(null)
-  const [canLeft, setCanLeft]   = useState(false)
-  const [canRight, setCanRight] = useState(false)
 
-  const updateArrows = () => {
-    const el = scrollRef.current
-    if (!el) return
-    setCanLeft(el.scrollLeft > 4)
-    setCanRight(el.scrollLeft < el.scrollWidth - el.clientWidth - 4)
+  const idx     = tree.findIndex(s => s.id === selectedStyleId)
+  const current = tree[idx] ?? tree[0]
+
+  // Up/down step through the styles, one at a time (no wrap).
+  const step = (dir) => {
+    const next = tree[idx + dir]
+    if (next) onSelectStyle(next.id)
   }
 
-  useEffect(() => {
-    const el = scrollRef.current
-    if (!el) return
-    updateArrows()
-    el.addEventListener('scroll', updateArrows)
-    window.addEventListener('resize', updateArrows)
-    return () => {
-      el.removeEventListener('scroll', updateArrows)
-      window.removeEventListener('resize', updateArrows)
-    }
-  }, [tree])
+  if (!current) return <div className="border-b border-c-border flex-shrink-0" />
 
-  useEffect(() => {
-    const el = scrollRef.current
-    if (!el) return
-    const onWheel = (e) => {
-      if (e.deltaY === 0) return
-      e.preventDefault()
-      el.scrollBy({ left: e.deltaY * 1.5, behavior: 'smooth' })
-    }
-    el.addEventListener('wheel', onWheel, { passive: false })
-    return () => el.removeEventListener('wheel', onWheel)
-  }, [])
-
-  useEffect(() => {
-    if (!scrollRef.current || selectedStyleId === null) return
-    const idx = tree.findIndex(s => s.id === selectedStyleId)
-    if (idx < 0) return
-    const pills = scrollRef.current.querySelectorAll('[data-pill]')
-    pills[idx]?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })
-  }, [selectedStyleId])
-
-  const scroll = (dir) => {
-    scrollRef.current?.scrollBy({ left: dir * (PILL_WIDTH + 6), behavior: 'smooth' })
-  }
+  const canUp   = idx > 0
+  const canDown = idx > -1 && idx < tree.length - 1
+  const arrow   = (enabled) => `flex-shrink-0 p-0.5 rounded transition-all
+    ${enabled ? 'text-c-text-3 hover:text-c-text hover:bg-c-raised' : 'text-c-text-4 opacity-30 cursor-default'}`
 
   return (
-    <div className="border-b border-c-border flex-shrink-0">
-      <div className="flex items-center gap-1 px-2 pt-2">
-        <button
-          onClick={() => scroll(-1)}
-          disabled={!canLeft}
-          className={`flex-shrink-0 p-0.5 rounded transition-all
-            ${canLeft
-              ? 'text-c-text-3 hover:text-c-text hover:bg-c-raised'
-              : 'text-c-text-4 opacity-30 cursor-default'
-            }`}
-        >
-          <ChevronLeft size={13} />
-        </button>
-
-        <div
-          ref={scrollRef}
-          className="flex gap-1.5 overflow-x-auto flex-1
-            scroll-smooth snap-x snap-mandatory
-            [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-        >
-          {tree.map(style => (
-            <div key={style.id} data-pill>
-              <StylePill
-                style={style}
-                isSelected={style.id === selectedStyleId}
-                onClick={() => onSelectStyle(style.id)}
-                onRename={renameStyle}
-              />
-            </div>
-          ))}
+    <div className="border-b border-c-border flex-shrink-0 px-2 py-2">
+      <div className="flex items-center gap-1.5">
+        {/* The single, currently-selected style pill */}
+        <div className="flex-1 min-w-0">
+          <StylePill
+            style={current}
+            isSelected
+            onClick={() => {}}
+            onRename={renameStyle}
+          />
         </div>
 
-        <button
-          onClick={() => scroll(1)}
-          disabled={!canRight}
-          className={`flex-shrink-0 p-0.5 rounded transition-all
-            ${canRight
-              ? 'text-c-text-3 hover:text-c-text hover:bg-c-raised'
-              : 'text-c-text-4 opacity-30 cursor-default'
-            }`}
-        >
-          <ChevronRight size={13} />
-        </button>
+        {/* Up / down navigation */}
+        <div className="flex flex-col gap-0.5">
+          <button onClick={() => step(-1)} disabled={!canUp} className={arrow(canUp)} title="Previous style">
+            <ChevronUp size={14} />
+          </button>
+          <button onClick={() => step(1)} disabled={!canDown} className={arrow(canDown)} title="Next style">
+            <ChevronDown size={14} />
+          </button>
+        </div>
       </div>
 
+      {/* Position dots — jump straight to any style */}
       {tree.length > 1 && (
-        <div className="flex justify-center gap-1 py-1.5">
+        <div className="flex justify-center gap-1 pt-1.5">
           {tree.map(style => (
             <button
               key={style.id}
