@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ZeusPack — Control Center</title>
+<style>
+  :root {
+    --bg:#0f1115; --surface:#171a21; --raised:#1e222b; --border:#2a2f3a;
+    --text:#e6e9ef; --text-2:#a6adbb; --text-3:#6b7280;
+    --accent:#6c8cff; --ok:#22c55e; --warn:#eab308; --err:#ef4444;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#f5f6f8; --surface:#fff; --raised:#f0f2f5; --border:#dfe3ea;
+            --text:#12141a; --text-2:#4b5563; --text-3:#8b93a1; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:28px 20px 60px; background:var(--bg); color:var(--text);
+         font:14px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  .wrap { max-width:900px; margin:0 auto; }
+  h1 { font-size:20px; margin:0 0 2px; letter-spacing:-.2px; }
+  .sub { color:var(--text-3); font-size:12px; margin-bottom:22px; }
+  .card { background:var(--surface); border:1px solid var(--border);
+          border-radius:14px; padding:18px; margin-bottom:16px; }
+  .card h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em;
+             color:var(--text-3); margin:0 0 14px; font-weight:600; }
+  .grid3 { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:12px; }
+  .svc { background:var(--raised); border:1px solid var(--border); border-radius:12px; padding:14px; }
+  .svc .top { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+  .svc .name { font-weight:700; font-size:14px; }
+  .svc .meta { font-size:11px; color:var(--text-3); margin-bottom:10px;
+               word-break:break-all; min-height:16px; }
+  .qrow { display:flex; gap:14px; font-size:11px; color:var(--text-2); }
+  .qrow b { font-variant-numeric:tabular-nums; color:var(--text); }
+  .pill { display:inline-flex; align-items:center; gap:6px; font-size:11px;
+          padding:3px 9px; border-radius:999px; background:var(--bg);
+          border:1px solid var(--border); white-space:nowrap; }
+  .dot { width:8px; height:8px; border-radius:50%; background:var(--text-3); flex-shrink:0; }
+  .dot.ok{background:var(--ok)} .dot.err{background:var(--err)} .dot.warn{background:var(--warn)}
+  .row { display:flex; gap:12px; flex-wrap:wrap; }
+  .row > * { flex:1; min-width:180px; }
+  label { display:block; font-size:11px; color:var(--text-2); margin-bottom:5px; }
+  input, select, textarea {
+    width:100%; padding:8px 10px; background:var(--raised); color:var(--text);
+    border:1px solid var(--border); border-radius:8px; font:inherit; font-size:13px; outline:none; }
+  input:focus, select:focus, textarea:focus { border-color:var(--accent); }
+  textarea { resize:vertical; min-height:64px; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; }
+  .field { margin-bottom:12px; }
+  .hint { font-size:11px; color:var(--text-3); margin-top:4px; }
+  button { padding:8px 15px; border-radius:8px; border:1px solid var(--accent);
+           background:var(--accent); color:#fff; font:inherit; font-size:13px;
+           font-weight:600; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--text-2); border-color:var(--border); }
+  button.sm { padding:5px 11px; font-size:12px; }
+  button:disabled { opacity:.45; cursor:default; }
+  .gpu { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  .bar { height:6px; background:var(--raised); border-radius:999px; overflow:hidden;
+         border:1px solid var(--border); margin-top:10px; }
+  .bar > div { height:100%; background:var(--accent); width:0%; transition:width .3s; }
+  .out { white-space:pre-wrap; background:var(--raised); border:1px solid var(--border);
+         border-radius:10px; padding:12px; font-family:ui-monospace,Menlo,Consolas,monospace;
+         font-size:12px; margin-top:12px; max-height:300px; overflow:auto; }
+  .toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%);
+           background:var(--surface); border:1px solid var(--border); border-radius:10px;
+           padding:10px 18px; font-size:13px; opacity:0; transition:opacity .2s; pointer-events:none; }
+  .toast.show { opacity:1; } .toast.err { border-color:var(--err); color:#fca5a5; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>ZeusPack — Control Center</h1>
+  <div class="sub">Tagger · RAG · LLM &nbsp;|&nbsp; host <span id="hostLabel"></span></div>
+
+  <!-- SERVICES -->
+  <div class="card">
+    <h2>Services</h2>
+    <div class="grid3" id="services"></div>
+    <div class="hint" style="margin-top:12px">
+      Ports are assumed 8000 (Tagger) / 8001 (RAG) / 8002 (LLM) on this host.
+    </div>
+  </div>
+
+  <!-- GPU -->
+  <div class="card">
+    <h2>GPU — who holds the card</h2>
+    <div class="gpu">
+      <button class="sm" id="useLLM">Switch to LLM</button>
+      <button class="sm" id="useTagger">Switch to Tagger</button>
+      <button class="sm ghost" id="freeAll">Unload both</button>
+      <span class="pill" id="vramPill">VRAM —</span>
+    </div>
+    <div class="bar"><div id="vramBar"></div></div>
+    <div class="hint" style="margin-top:8px">
+      Both models share one GPU. Switching unloads the other side first, so you don't run out of VRAM.
+      Loading takes a few seconds; the app will also auto-load on demand.
+    </div>
+  </div>
+
+  <!-- LLM PROVIDER -->
+  <div class="card">
+    <h2>LLM Provider</h2>
+    <div class="row">
+      <div class="field">
+        <label>Provider</label>
+        <select id="provider">
+          <option value="local">Local — Gemma (this GPU)</option>
+          <option value="anthropic">Anthropic — Claude</option>
+          <option value="gemini">Google — Gemini</option>
+          <option value="openai">OpenAI-compatible (GLM / DeepSeek / Qwen / vLLM)</option>
+        </select>
+        <div class="hint" id="providerHint"></div>
+      </div>
+      <div class="field">
+        <label>Model</label>
+        <input id="model" placeholder="e.g. claude-sonnet-5" />
+        <div class="hint">Ignored for Local.</div>
+      </div>
+    </div>
+    <div class="field" id="baseUrlField">
+      <label>Base URL</label>
+      <input id="base_url" placeholder="https://open.bigmodel.cn/api/paas/v4" />
+      <div class="hint">OpenAI-compatible only. The server appends <code>/chat/completions</code>.</div>
+    </div>
+    <div class="field" id="apiKeyField">
+      <label>API key</label>
+      <input id="api_key" type="password" placeholder="leave blank to keep the saved key" />
+      <div class="hint" id="keyHint"></div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>Default max tokens</label>
+        <input id="max_tokens" type="number" min="1" />
+      </div>
+      <div class="field">
+        <label>Concurrency</label>
+        <input id="concurrency" type="number" min="1" />
+        <div class="hint">1 for local GPU · 4–8 for cloud APIs.</div>
+      </div>
+    </div>
+    <button id="save">Save</button>
+    <button class="ghost" id="reload">Reload</button>
+  </div>
+
+  <!-- TEST -->
+  <div class="card">
+    <h2>Test LLM</h2>
+    <div class="field"><label>System</label><textarea id="tSystem">You are a helpful assistant.</textarea></div>
+    <div class="field"><label>Prompt</label><textarea id="tPrompt">Say hello in one short sentence.</textarea></div>
+    <button id="run">Run test</button>
+    <div class="out" id="out" style="display:none"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const HOST = location.hostname || 'localhost';
+const SVC = {
+  tagger: { port: 8000, label: 'Tagger', gpu: true  },
+  rag:    { port: 8001, label: 'RAG',    gpu: false },
+  llm:    { port: 8002, label: 'LLM',    gpu: true  },
+};
+const url = (k, path) => `http://${HOST}:${SVC[k].port}${path}`;
+$('hostLabel').textContent = HOST;
+
+const HINTS = {
+  local:     "Runs Gemma on this machine's GPU. No API key needed.",
+  anthropic: "Claude via api.anthropic.com. Model e.g. claude-sonnet-5.",
+  gemini:    "Gemini via generativelanguage.googleapis.com. Model e.g. gemini-2.0-flash.",
+  openai:    "Any OpenAI-compatible API — set both Base URL and Model.",
+};
+
+function toast(msg, isErr) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (isErr ? ' err' : '');
+  setTimeout(() => { t.className = 'toast'; }, 2800);
+}
+
+async function jget(u, ms = 4000) {
+  const c = new AbortController();
+  const timer = setTimeout(() => c.abort(), ms);
+  try {
+    const r = await fetch(u, { signal: c.signal });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return await r.json();
+  } finally { clearTimeout(timer); }
+}
+async function jpost(u, body, ms = 180000) {
+  const c = new AbortController();
+  const timer = setTimeout(() => c.abort(), ms);
+  try {
+    const r = await fetch(u, {
+      method: 'POST', signal: c.signal,
+      headers: { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || ('HTTP ' + r.status));
+    return d;
+  } finally { clearTimeout(timer); }
+}
+
+// ── Build service cards ──
+function cardHtml(key) {
+  const s = SVC[key];
+  return `<div class="svc" id="svc-${key}">
+    <div class="top">
+      <span class="name">${s.label}</span>
+      <span class="pill"><span class="dot" id="dot-${key}"></span><span id="st-${key}">…</span></span>
+    </div>
+    <div class="meta" id="meta-${key}">:${s.port}</div>
+    <div class="qrow">
+      <span>run <b id="qa-${key}">–</b></span>
+      <span>wait <b id="qw-${key}">–</b></span>
+      <span>done <b id="qd-${key}">–</b></span>
+    </div>
+    ${s.gpu ? `<div style="margin-top:10px;display:flex;gap:6px">
+      <button class="sm ghost" data-load="${key}">Load</button>
+      <button class="sm ghost" data-unload="${key}">Unload</button>
+    </div>` : ''}
+  </div>`;
+}
+$('services').innerHTML = Object.keys(SVC).map(cardHtml).join('');
+
+let lastVram = null;
+
+async function refresh() {
+  lastVram = null;
+  for (const key of Object.keys(SVC)) {
+    // /model-status doubles as the reachability check (all three expose it)
+    try {
+      const m = await jget(url(key, '/model-status'));
+      const loaded = m.loaded ? 'loaded' : 'not loaded';
+      $('dot-' + key).className = 'dot ' + (SVC[key].gpu && !m.loaded ? 'warn' : 'ok');
+      $('st-' + key).textContent = SVC[key].gpu && !m.loaded ? 'idle' : 'online';
+      $('meta-' + key).textContent = `${m.model || '—'} · ${SVC[key].gpu ? loaded : 'CPU'}`;
+      if (m.vram) lastVram = m.vram;
+    } catch (e) {
+      $('dot-' + key).className = 'dot err';
+      $('st-' + key).textContent = 'offline';
+      $('meta-' + key).textContent = ':' + SVC[key].port + ' — not reachable';
+      ['qa','qw','qd'].forEach(p => $(p + '-' + key).textContent = '–');
+      continue;
+    }
+    // queue info (the tagger has no queue yet — shows as –)
+    try {
+      const q = await jget(url(key, '/queue-status'));
+      $('qa-' + key).textContent = q.active;
+      $('qw-' + key).textContent = q.waiting;
+      $('qd-' + key).textContent = q.processed;
+    } catch (e) { ['qa','qw','qd'].forEach(p => $(p + '-' + key).textContent = '–'); }
+  }
+  if (lastVram) {
+    const pct = Math.min(100, (lastVram.used_gb / lastVram.total_gb) * 100);
+    $('vramPill').textContent = `VRAM ${lastVram.used_gb} / ${lastVram.total_gb} GB`;
+    $('vramBar').style.width = pct + '%';
+  } else {
+    $('vramPill').textContent = 'VRAM —';
+    $('vramBar').style.width = '0%';
+  }
+}
+
+// ── GPU switching ──
+function busy(on) { document.querySelectorAll('.gpu button').forEach(b => b.disabled = on); }
+
+async function switchTo(target) {
+  busy(true);
+  const other = target === 'llm' ? 'tagger' : 'llm';
+  try {
+    toast('Unloading ' + SVC[other].label + '…');
+    await jpost(url(other, '/model/unload'));
+    toast('Loading ' + SVC[target].label + '… this can take a moment');
+    await jpost(url(target, '/model/load'));
+    toast(SVC[target].label + ' is ready');
+  } catch (e) { toast(e.message, true); }
+  busy(false); refresh();
+}
+$('useLLM').addEventListener('click', () => switchTo('llm'));
+$('useTagger').addEventListener('click', () => switchTo('tagger'));
+$('freeAll').addEventListener('click', async () => {
+  busy(true);
+  try {
+    await jpost(url('llm', '/model/unload'));
+    await jpost(url('tagger', '/model/unload'));
+    toast('Both models unloaded — GPU free');
+  } catch (e) { toast(e.message, true); }
+  busy(false); refresh();
+});
+
+document.addEventListener('click', async (e) => {
+  const load = e.target.dataset?.load, unload = e.target.dataset?.unload;
+  if (!load && !unload) return;
+  e.target.disabled = true;
+  try {
+    await jpost(url(load || unload, load ? '/model/load' : '/model/unload'));
+    toast((load ? 'Loaded ' : 'Unloaded ') + SVC[load || unload].label);
+  } catch (err) { toast(err.message, true); }
+  e.target.disabled = false; refresh();
+});
+
+// ── LLM provider config ──
+function syncProviderUI() {
+  const p = $('provider').value;
+  $('providerHint').textContent = HINTS[p] || '';
+  $('baseUrlField').style.display = p === 'openai' ? '' : 'none';
+  $('apiKeyField').style.display  = p === 'local' ? 'none' : '';
+}
+async function loadConfig() {
+  try {
+    const c = await jget(url('llm', '/config'));
+    $('provider').value    = c.provider;
+    $('model').value       = c.model || '';
+    $('base_url').value    = c.base_url || '';
+    $('max_tokens').value  = c.max_tokens;
+    $('concurrency').value = c.concurrency;
+    $('keyHint').textContent = c.has_api_key
+      ? 'A key is saved. Leave blank to keep it, or type a new one to replace it.'
+      : 'No key saved yet.';
+    syncProviderUI();
+  } catch (e) { toast('LLM server unreachable — config unavailable', true); }
+}
+$('provider').addEventListener('change', syncProviderUI);
+$('reload').addEventListener('click', loadConfig);
+$('save').addEventListener('click', async () => {
+  $('save').disabled = true;
+  try {
+    await jpost(url('llm', '/config'), {
+      provider:    $('provider').value,
+      model:       $('model').value,
+      base_url:    $('base_url').value,
+      api_key:     $('api_key').value,
+      max_tokens:  Number($('max_tokens').value) || 512,
+      concurrency: Number($('concurrency').value) || 1,
+    }, 15000);
+    $('api_key').value = '';
+    await loadConfig(); refresh();
+    toast('Saved — applies to the next request');
+  } catch (e) { toast(e.message, true); }
+  $('save').disabled = false;
+});
+
+// ── Test ──
+$('run').addEventListener('click', async () => {
+  $('run').disabled = true;
+  $('out').style.display = '';
+  $('out').textContent = 'Generating…';
+  const t0 = performance.now();
+  try {
+    const d = await jpost(url('llm', '/generate'),
+      { system: $('tSystem').value, prompt: $('tPrompt').value });
+    const secs = ((performance.now() - t0) / 1000).toFixed(1);
+    $('out').textContent = '[' + d.provider + ' · ' + secs + 's]\n\n' + (d.text || '(empty response)');
+  } catch (e) { $('out').textContent = 'Error: ' + e.message; }
+  $('run').disabled = false;
+});
+
+loadConfig();
+refresh();
+setInterval(refresh, 5000);
+</script>
+</body>
+</html>

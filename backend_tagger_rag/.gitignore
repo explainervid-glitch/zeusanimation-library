@@ -11,3 +11,6 @@ models/
 qdrant_db/
 input/
 *.log
+
+# LLM provider config — CONTAINS API KEYS, never commit
+llm_config.json

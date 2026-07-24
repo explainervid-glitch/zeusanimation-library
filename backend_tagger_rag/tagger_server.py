@@ -1,4 +1,5 @@
 import os
+import gc
 import json
 import torch
 import uvicorn
@@ -6,9 +7,11 @@ import asyncio
 import av
 import numpy as np
 import tempfile
+import threading
 from typing import List
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from transformers import Qwen2VLForConditionalGeneration, AutoProcessor, BitsAndBytesConfig
 from PIL import Image
 from schemas import AssetBackground, AssetCharacter, AssetAnimation, AssetInspiration
@@ -40,17 +43,84 @@ bnb_config = BitsAndBytesConfig(
     bnb_4bit_use_double_quant=True,
 )
 
-print("Loading Qwen2-VL-7B (4-bit optimized)...")
-processor = AutoProcessor.from_pretrained(MODEL_PATH, trust_remote_code=True)
-model = Qwen2VLForConditionalGeneration.from_pretrained(
-    MODEL_PATH,
-    quantization_config=bnb_config,
-    device_map="auto",
-    attn_implementation="sdpa",
-    trust_remote_code=True,
-)
-model.eval()
-print("Model ready.")
+# The model is loaded lazily and can be unloaded again, so the GPU can be
+# handed over to the LLM server when the tagger isn't in use.
+# Controlled from the Control Center UI (/model/load, /model/unload).
+model       = None
+processor   = None
+_model_lock = threading.Lock()
+
+
+def _ensure_model():
+    """Load Qwen into VRAM if it isn't already. Called before every inference."""
+    global model, processor
+    with _model_lock:
+        if model is None or processor is None:
+            print("Loading Qwen2-VL-7B (4-bit optimized)...")
+            processor = AutoProcessor.from_pretrained(MODEL_PATH, trust_remote_code=True)
+            model = Qwen2VLForConditionalGeneration.from_pretrained(
+                MODEL_PATH,
+                quantization_config=bnb_config,
+                device_map="auto",
+                attn_implementation="sdpa",
+                trust_remote_code=True,
+            )
+            model.eval()
+            print("Model ready.")
+    return model, processor
+
+
+def _unload_model():
+    """Drop the model and free VRAM so another server can use the GPU."""
+    global model, processor
+    with _model_lock:
+        model     = None
+        processor = None
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    print("Tagger model unloaded — GPU freed.")
+
+
+def _vram():
+    if not torch.cuda.is_available():
+        return None
+    return {
+        "used_gb":  round(torch.cuda.memory_allocated() / 1e9, 2),
+        "total_gb": round(torch.cuda.get_device_properties(0).total_memory / 1e9, 2),
+    }
+
+
+# ── Model control (used by the Control Center UI) ─────────────
+@app.get("/")
+async def control_center():
+    page = os.path.join(os.path.dirname(os.path.abspath(__file__)), "control_center.html")
+    if not os.path.exists(page):
+        raise HTTPException(404, "control_center.html not found")
+    return FileResponse(page)
+
+
+@app.get("/model-status")
+async def model_status():
+    return {
+        "success":  True,
+        "service":  "tagger",
+        "model":    os.path.basename(MODEL_PATH),
+        "loaded":   model is not None,
+        "vram":     _vram(),
+    }
+
+
+@app.post("/model/load")
+async def model_load():
+    _ensure_model()
+    return {"success": True, "loaded": True, "vram": _vram()}
+
+
+@app.post("/model/unload")
+async def model_unload():
+    _unload_model()
+    return {"success": True, "loaded": False, "vram": _vram()}
 
 # ══════════════════════════════════════════════════════════════
 # SYSTEM PROMPTS — separate per asset type for better focus
@@ -359,6 +429,7 @@ def _build_context_note(existing_json: dict | None, full_schema: dict) -> tuple[
 
 def _qwen_image_inference(image: Image.Image, prompt_text: str, max_new_tokens: int = 512) -> str:
     """Run Qwen2-VL inference for a single image. Returns raw output string."""
+    _ensure_model()
     messages = [
         {"role": "user", "content": [
             {"type": "image", "image": image},
@@ -396,6 +467,7 @@ def _qwen_image_inference(image: Image.Image, prompt_text: str, max_new_tokens: 
 def _qwen_multi_image_inference(images: list, prompt_text: str, max_new_tokens: int = 300) -> str:
     """Run Qwen2-VL over several images at once. Used to draft a style guide
     from a handful of sample assets. Returns raw output string."""
+    _ensure_model()
     content = [{"type": "image", "image": im} for im in images]
     content.append({"type": "text", "text": prompt_text})
     messages = [{"role": "user", "content": content}]
@@ -430,6 +502,7 @@ def _qwen_multi_image_inference(images: list, prompt_text: str, max_new_tokens: 
 
 def _qwen_video_inference(video_frames: np.ndarray, prompt_text: str, max_new_tokens: int = 600) -> str:
     """Run Qwen2-VL inference for video frames. Returns raw output string."""
+    _ensure_model()
     messages = [
         {"role": "user", "content": [
             {
@@ -867,6 +940,14 @@ async def batch_tag_video():
 
 
 if __name__ == "__main__":
+    # Preload unless TAGGER_PRELOAD=0 — set that when you want the GPU left free
+    # for the LLM until you switch to the tagger in the Control Center.
+    if os.getenv("TAGGER_PRELOAD", "1") != "0":
+        try:
+            _ensure_model()
+        except Exception as e:
+            print(f"[Tagger] Model failed to preload: {e}")
+    print("[Tagger] Control Center: http://localhost:8000/")
     uvicorn.run("tagger_server:app", host="0.0.0.0", port=8000, log_level="info")
 
 

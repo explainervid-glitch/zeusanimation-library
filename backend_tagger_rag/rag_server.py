@@ -10,6 +10,7 @@ from typing import List, Optional
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -330,6 +331,21 @@ async def rag_reset():
     except Exception as e:
         print(f"[RAG] reset error: {e}")
         raise HTTPException(500, str(e))
+
+
+@app.get("/")
+async def control_center():
+    """The unified Control Center GUI (shared by all three servers)."""
+    page = os.path.join(BASE_DIR, "control_center.html")
+    if not os.path.exists(page):
+        raise HTTPException(404, "control_center.html not found")
+    return FileResponse(page)
+
+
+@app.get("/model-status")
+async def model_status():
+    """RAG runs on CPU (FastEmbed ONNX) — no GPU model to load or unload."""
+    return {"success": True, "service": "rag", "model": EMBED_MODEL, "loaded": True, "vram": None}
 
 
 @app.get("/queue-status")
