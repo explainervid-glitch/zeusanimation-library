@@ -161,9 +161,22 @@ async function triggerRagBulkIndex(activePath, sender = null) {
 export async function registerIpcHandlers() {
   const initSettings = readSettings()
   const initPath     = getActivePath(initSettings)
-  if (initPath) await getDb(initPath)
-  lastDbMtime = getDbMtime()  // Initialize on startup
-  console.log('[IPC] DB ready ✓')
+  // Non-fatal: if the pack drive is disconnected (e.g. W:\ not mounted), the
+  // initial DB load fails. The app must still launch so the user can reconnect
+  // or switch packs — otherwise the window is never created and the splash
+  // hangs forever. Handlers below re-resolve the path per call, so they recover
+  // once the drive is back.
+  if (initPath) {
+    try {
+      await getDb(initPath)
+      console.log('[IPC] DB ready ✓')
+    } catch (err) {
+      console.warn(`[IPC] Initial DB load skipped — pack path unavailable (${initPath}): ${err.message}`)
+    }
+  } else {
+    console.warn('[IPC] No active pack path configured — starting without a DB')
+  }
+  lastDbMtime = getDbMtime()  // Initialize on startup (0 if no DB loaded)
 
   // ─── GET ASSET TREE ──────────────────────────────────────────
   ipcMain.handle('get-asset-tree', async () => {

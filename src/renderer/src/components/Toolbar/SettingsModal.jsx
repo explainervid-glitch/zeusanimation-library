@@ -339,7 +339,7 @@ export default function SettingsModal() {
                   {/* Heading + master toggle on one row */}
                   <div className="flex items-center justify-between mb-2">
                     <label className="text-xs font-semibold text-c-text uppercase tracking-wider">
-                      Character Import
+                      Direct Import
                     </label>
                     <button
                       onClick={toggleImportCharactersEnabled}

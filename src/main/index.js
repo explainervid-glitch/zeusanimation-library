@@ -169,11 +169,21 @@ app.whenReady().then(async () => {
   // 1. Tampilkan splash dulu
   const splash = createSplash()
 
-  // 2. Register IPC (bisa lama karena sql.js WASM)
-  await registerIpcHandlers()
+  // 2. Register IPC (bisa lama karena sql.js WASM).
+  //    Guard it: a failure here (e.g. pack drive offline) must NOT stop the
+  //    window from opening, or the splash hangs forever with no way out.
+  try {
+    await registerIpcHandlers()
+  } catch (err) {
+    console.error('[Main] IPC init failed — launching anyway:', err)
+  }
 
   // 3. Buka bridge setelah semua command terdaftar
-  startBridge()
+  try {
+    startBridge()
+  } catch (err) {
+    console.error('[Main] Bridge failed to start:', err)
+  }
 
   // 4. Buat main window — splash otomatis tutup saat ready-to-show
   createWindow(splash)
