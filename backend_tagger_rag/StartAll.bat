@@ -11,10 +11,13 @@ REM ============================================================
 cd /d "%~dp0"
 title ZeusPack - Launcher
 
-REM ---- Optional: start models UNLOADED to keep the GPU free ----
-REM  Uncomment the next line so the Tagger boots instantly and only
-REM  loads Qwen when you tag something (or press Load in the UI).
-REM set TAGGER_PRELOAD=0
+REM ---- Models start IDLE (no VRAM used) ----------------------
+REM  Both servers boot without loading anything into VRAM. A model is
+REM  pulled in on first use, or when you press Load / "Switch to..."
+REM  in the Control Center.
+REM  Uncomment a line below to load that model up front instead:
+REM set TAGGER_PRELOAD=1
+REM set LLM_PRELOAD=1
 
 echo.
 echo  Starting ZeusPack backends...

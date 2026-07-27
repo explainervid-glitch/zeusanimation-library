@@ -3,7 +3,9 @@
 # Port: 8001 — fully separate from tagger (port 8000)
 # Install: pip install qdrant-client fastembed
 
+import gc
 import os
+import threading
 import uuid
 from typing import List, Optional
 
@@ -49,9 +51,32 @@ app.add_middleware(
 # ══════════════════════════════════════════════════════════════
 # MODELS — load once at startup
 # ══════════════════════════════════════════════════════════════
-print("Loading FastEmbed model (ONNX, CPU)...")
-embedder = TextEmbedding(EMBED_MODEL)
-print(f"Embedder ready: {EMBED_MODEL}")
+# The embedder is loaded lazily and can be unloaded again, so the server can sit
+# idle holding no model in memory. Controlled from the Control Center UI
+# (/model/load, /model/unload). Qdrant itself stays connected — it's the
+# datastore, not a model, and status/counts need it.
+embedder    = None
+_embed_lock = threading.Lock()
+
+
+def _ensure_embedder():
+    """Load FastEmbed if it isn't already. Called before every embed."""
+    global embedder
+    with _embed_lock:
+        if embedder is None:
+            print("Loading FastEmbed model (ONNX, CPU)...")
+            embedder = TextEmbedding(EMBED_MODEL)
+            print(f"Embedder ready: {EMBED_MODEL}")
+    return embedder
+
+
+def _unload_embedder():
+    """Drop the embedder and free its memory."""
+    global embedder
+    with _embed_lock:
+        embedder = None
+    gc.collect()
+    print("RAG embedder unloaded — memory freed.")
 
 # ── QUEUE ─────────────────────────────────────────────────────
 # Search is fast (~tens of ms: CPU embedding + Qdrant), so serial is plenty for
@@ -172,12 +197,12 @@ def _build_text(asset: RagAssetPayload) -> str:
 
 def _embed_one(text: str) -> list:
     """Embed a single string, return as list."""
-    return list(next(embedder.embed([text])))
+    return list(next(_ensure_embedder().embed([text])))
 
 
 def _embed_many(texts: list) -> list:
     """Embed a list of strings, return list of vectors."""
-    return list(embedder.embed(texts))
+    return list(_ensure_embedder().embed(texts))
 
 
 def _embed_query(text: str) -> list:
@@ -186,10 +211,11 @@ def _embed_query(text: str) -> list:
     un-prefixed via plain embed(). This asymmetry is how BGE is meant to be
     used and measurably improves retrieval. Falls back to embed() on older
     fastembed builds that lack query_embed()."""
+    e = _ensure_embedder()
     try:
-        return list(next(embedder.query_embed([text])))
+        return list(next(e.query_embed([text])))
     except AttributeError:
-        return list(next(embedder.embed([text])))
+        return list(next(e.embed([text])))
 
 # ══════════════════════════════════════════════════════════════
 # ENDPOINTS
@@ -344,8 +370,27 @@ async def control_center():
 
 @app.get("/model-status")
 async def model_status():
-    """RAG runs on CPU (FastEmbed ONNX) — no GPU model to load or unload."""
-    return {"success": True, "service": "rag", "model": EMBED_MODEL, "loaded": True, "vram": None}
+    """RAG runs on CPU (FastEmbed ONNX) — loads/unloads RAM, never VRAM."""
+    return {
+        "success": True,
+        "service": "rag",
+        "model":   EMBED_MODEL,
+        "loaded":  embedder is not None,
+        "device":  "cpu",
+        "vram":    None,
+    }
+
+
+@app.post("/model/load")
+async def model_load():
+    _ensure_embedder()
+    return {"success": True, "loaded": True}
+
+
+@app.post("/model/unload")
+async def model_unload():
+    _unload_embedder()
+    return {"success": True, "loaded": False}
 
 
 @app.get("/queue-status")
@@ -427,4 +472,15 @@ async def rag_search(payload: RagSearchPayload):
 # ENTRY
 # ══════════════════════════════════════════════════════════════
 if __name__ == "__main__":
+    # Start IDLE by default — the embedder loads on the first search/index, or
+    # when you press Load in the Control Center. Set RAG_PRELOAD=1 to load it
+    # up front (avoids a slow first search).
+    if os.getenv("RAG_PRELOAD", "0") == "1":
+        try:
+            _ensure_embedder()
+        except Exception as e:
+            print(f"[RAG] Embedder failed to preload: {e}")
+    else:
+        print("[RAG] Idle — embedder loads on first use.")
+    print("[RAG] Control Center: http://localhost:8001/")
     uvicorn.run(app, host="0.0.0.0", port=8001, log_level="info")

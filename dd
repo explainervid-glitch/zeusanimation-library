@@ -1,0 +1,345 @@
+[33mcommit 6f41a8ef35fed8340c78b37997f66694bf6b4c10[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m
+Author: tegarfolder <fputrtegar@gmail.com>
+Date:   Fri Jul 24 09:04:51 2026 +0700
+
+    feat(backend): Control Center UI + swappable LLM providers
+    
+    Adds a single web UI for all three servers and makes the LLM provider
+    configurable at runtime, so the shared GPU can be handed between the
+    LLM and the Tagger without editing code or restarting.
+    
+    Control Center (control_center.html, served at / by all three servers):
+    - Per-service cards: online/idle/offline, model, loaded state, live
+      queue counters.
+    - GPU section: "Switch to LLM" / "Switch to Tagger" / "Unload both",
+      with a live VRAM readout. Switching unloads the other side first so
+      the card never runs out of memory.
+    - LLM provider form + a test prompt box.
+    
+    llm_server.py:
+    - Provider registry behind the unchanged /generate contract:
+      local (Gemma), anthropic, gemini, and any OpenAI-compatible endpoint
+      (GLM / DeepSeek / Qwen / vLLM). Cloud calls use plain REST - no new
+      SDK dependencies.
+    - Config persisted to llm_config.json, editable from the UI; applies
+      on the next request. API key is never echoed back to the browser.
+    - Gemma is lazy-loaded, so pointing at a cloud provider costs no VRAM.
+    - New /config, /model-status, /model/load, /model/unload.
+    
+    tagger_server.py:
+    - Qwen is lazy-loaded via _ensure_model() and can be unloaded to free
+      VRAM. Preloads at startup as before unless TAGGER_PRELOAD=0.
+    - New /model-status, /model/load, /model/unload.
+    
+    rag_server.py:
+    - Serves the UI and reports /model-status (CPU, nothing to unload).
+    
+    StartAll.bat: launches all three servers in their own windows and opens
+    the Control Center.
+    
+    .gitignore: llm_config.json (contains API keys).
+    
+    Co-Authored-By: Claude Opus 4.8
+
+[33mcommit 31ae062f2bc6b5dea1078c1ada2aa9b72117a014[m
+Author: tegarfolder <fputrtegar@gmail.com>
+Date:   Thu Jul 23 15:41:55 2026 +0700
+
+    Enable Resizing Coworker Panel
+
+[33mcommit ccd0bf699a7f6e5527fec8836070431f0f4429f8[m
+Author: tegarfolder <fputrtegar@gmail.com>
+Date:   Thu Jul 23 09:38:53 2026 +0700
+
+    Some changes in the UI:
+    
+    1. Bubble Notification in Coworker Toggle Button
+    2. LLM Server Status in Co-Worker Panel
+    3. Increase highlight card timeout to 10 seconds
+
+[33mcommit 3c73b199d9dc6b59a3aab45e2852c707b052ff51[m
+Author: tegarfolder <fputrtegar@gmail.com>
+Date:   Thu Jul 23 08:54:44 2026 +0700
+
+    feat: server-side request queue + Co-Worker UI
+    
+    Add a queue so the team (<20 people) sharing one GPU server no longer
+    collides on the LLM/RAG endpoints, plus the Co-Worker panel rework.
+    
+    Backend (deploy to server PC):
+    - gpu_queue.py: reusable async queue — concurrency limit, FIFO,
+      bounded waiting room (503 when full), runs blocking model calls off
+      the event loop, live counters.
+    - llm_server.py: /generate goes through an LLM queue (concurrency 1);
+      add /queue-status.
+    - rag_server.py: /rag-search goes through a RAG queue (concurrency 1,
+      avoids embedded-Qdrant concurrency issues); add /queue-status.
+    
+    App:
+    - Co-Worker: rename from "AI Search"; toggle moved to a circular,
+      accent-colored button beside the search bar with a red pulsing
+      bubble while generating/queueing.
+    - Panel: draggable/resizable floating chat; Script mode is now default.
+    - Live "N ahead of you in the queue" indicator (polls /queue-status).
+    - assets.js: queue-status IPC (polls both servers); bump LLM/RAG
+      fetch timeouts so queued requests don't abort while waiting.
+    - preload/browser-shim: expose queueStatus().
+    
+    Co-Authored-By: Claude Opus 4.8
+
+[33mcommit 342615f426d53c99aa575a28f787194e7447825b[m
+Author: tegarfolder <fputrtegar@gmail.com>
+Date:   Wed Jul 22 09:33:52 2026 +0700
+
+    feat: LLM server status + draggable AI panel, click-to-navigate results
+    
+    LLM server config & status:
+    - Add llmUrl setting and an "LLM Server" status block in Preferences (endpoint,
+      ping, online/offline) right below RAG Search Server. New llm-ping IPC + llmPing.
+    
+    AI panel UX:
+    - Make the floating AI Search panel draggable (grab the header) and resizable;
+      position + size persist and are clamped back on-screen on load.
+    - Recommendation box now renders light Markdown (**bold**, bullets) + emoji,
+      allows text selection (overriding the global user-select:none), and drops
+      the border.
+    - Fix "stuck Searching…" on launch: persist only UI prefs (isOpen / width /
+      position), never transient search or generation state.
+    
+    Click-to-navigate:
+    - Clicking a recommendation result navigates the grid to that asset's category
+      and scrolls to + highlights the card (auto-clears after a moment).
+    
+    Chore: bump version to 1.0.6.
+
+[33mcommit 72e8a2d216e0ea4b3e1f19f1fefc6bbcd12807aa[m
+Author: tegarfolder <fputrtegar@gmail.com>
+Date:   Tue Jul 21 15:49:58 2026 +0700
+
+    1. Bump version to 1.0.5
+    2. Fixxing UI in AI Chat
+
+[33mcommit 57bca495ee59a2758eff886bce1cd18c0ec875c8[m
+Author: tegarfolder <fputrtegar@gmail.com>
+Date:   Tue Jul 21 15:23:08 2026 +0700
+
+    feat: floating AI search panel with local LLM recommendations
+    
+    AI search — floating panel + generation:
+    - Convert the AI search sidebar into a floating overlay toggled by a new "AI"
+      button beside the search bar (it no longer docks into / pushes the grid).
+    - Add an LLM generation step: after a RAG search, the top candidates are turned
+      into a prompt and sent to a local Gemma 4 server; the recommendation renders
+      above the results, non-blocking (results show first, it fills in when ready).
+    - New backend_tagger_rag/llm_server.py (+ StartLLM.bat): serves Gemma 4
+      (E4B, any-to-any) on port 8002 via the transformers pipeline API.
+    - App wiring: llmUrl setting, ai-generate IPC (the provider "adapter" — point
+      llmUrl elsewhere to swap providers), aiGenerate preload/shim, and
+      genText/genLoading/genError state in the AI sidebar store.
+    
+    UI polish:
+    - Extract the Lottie loading overlay into a shared <LottieOverlay> and reuse it
+      for the asset-card processing overlay and the edit modal (dedupes the inline copy).
+    - Play a completion chime (lib/sound.js) when a batch-tag run finishes.
+
+[33mcommit 8d8353efa4cfa7619270d6f0fc99596f459fa133[m
+Author: tegarfolder <fputrtegar@gmail.com>
+Date:   Sun Jul 19 13:48:04 2026 +0700
+
+    feat: MCP bridge, RAG index fixes, and asset-edit/batch UX
+    
+    MCP
+    - New loopback control bridge (src/main/bridge) exposing the app's existing IPC
+      commands over 127.0.0.1:8765, captured by wrapping ipcMain.handle so the
+      renderer path is untouched and both transports run the same functions.
+      Allowlisted to library read/write; project, dialog, settings, Blender and
+      shell commands are deliberately excluded.
+    - New mcp/zeuspack-mcp stdio server + .mcp.json, so Claude can browse, search
+      (keyword + semantic) and read/write asset metadata in a running instance.
+    
+    RAG indexing
+    - Derive point ids from the asset's json_path instead of the SQLite
+      autoincrement id: rescans reassign those ids, which orphaned every vector.
+      Stable ids mean re-embedding upserts over the same point.
+    - Scope index and search by pack_id, and clear a pack's vectors before a
+      re-embed so stale points can't pile up beside the new ones.
+    - Tagger: protect FileName/Category from AI overwrite — those are system
+      managed (folder layout + categories JSON).
+    
+    Asset edit modal
+    - Pause the background DB sync while the modal is open; a silent refresh
+      mid-edit reverted unsaved changes (e.g. the category dropdown).
+    - Enter saves — skips textareas, modifier combos, IME composition, and the
+      category dropdown.
+    - Category dropdown is now type-to-search, with prefix-first ranking and
+      arrow-key navigation.
+    
+    Batch tagger
+    - Leaving batch mode no longer tears down a running batch: the tray, progress
+      and results survive, so assets can be edited while tagging finishes.
+    - Add a collapse toggle; ✕/Stop now discards explicitly, and runs are abortable
+      via a run token so a discarded loop stops writing to the store.
+
+[33mcommit 93fd579a1ff0085e6d822cad3f87f850277fea7c[m
+Author: tegarfolder <fputrtegar@gmail.com>
+Date:   Fri Jul 17 09:48:55 2026 +0700
+
+    Fixing some UI:
+    1. Toggle Character Import in SettingModal
+    2. Changing Batch Tagger modal behavior to the corner tray
+
+[33mcommit d9ad0e5b14c84465e116e5de7ae0cec28092cc26[m
+Author: tegarfolder <fputrtegar@gmail.com>
+Date:   Thu Jul 16 16:24:00 2026 +0700
+
+    feat: rename asset when sending to project (floating popover)
+    
+    In Send-to-Project-only mode, the Import button on a Character card now
+    opens a floating popover (anchored under the button, dropdown-style)
+    instead of copying immediately:
+    
+    - Prefilled with the current filename, name stem pre-selected so you can
+      retype directly; Enter / check copies into {project}/Chars under that
+      name, Esc / outside-click cancels.
+    - Rendered outside the card so overflow/transform can't clip it; stays
+      on-screen (right-aligned, clamped to the viewport edge).
+    - send-to-project IPC gains an optional targetName: strips path parts (no
+      traversal), rejects invalid filename characters, and re-appends the
+      source extension if it was dropped.
+
+[33mcommit fc3a50d688a02ea6d7b0cbda7b5877acc537950c[m
+Author: tegarfolder <fputrtegar@gmail.com>
+Date:   Thu Jul 16 15:57:53 2026 +0700
+
+    feat: per-style tagger hints, type-wide batch tagging, and RAG retrieval tuning
+    
+    Tagger (backend_tagger_rag):
+    - Inject an optional per-style "style hint" into image/video tagging prompts
+      so the model reads each pack's art style correctly (e.g. monochrome ground
+      is not snow). Hints are stored per-style in each pack's stylenames.json.
+    - Add /generate-style-guide endpoint: drafts a hint from a few sample images
+      via multi-image Qwen2-VL, for the user to review and edit.
+    
+    RAG (backend_tagger_rag/rag_server.py):
+    - Embed search queries with BGE's query_embed() instruction prefix
+      (query/passage asymmetry) for better retrieval — no re-embed required.
+    - Reorder embed text so description/scene_prompt/keywords come first and drop
+      the FileName slug, so meaningful fields survive the token limit (needs re-embed).
+    
+    Preferences modal:
+    - Convert Settings into a tabbed Preferences modal (General / Tagger).
+    - Add a per-style hint editor: pack selector, hides styles without a
+      description, and a "Draft with AI" button per style.
+    
+    Batch tagging:
+    - Right-click an asset type in the sidebar to batch-tag every asset across all
+      its categories (new get-assets-by-style-type query/IPC).
+    - Batch modal now shows a scrollable list with previews instead of a capped
+      grid; modal open state moved into the batch store so the sidebar can open it.
+    
+    Chore:
+    - Move the Tagger + RAG Python servers into the repo (backend_tagger_rag/) with
+      a .gitignore for model weights / qdrant_db / venv.
+    - Bump version to 1.0.1.
+    
+    Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+[33mcommit 5cf93fb58fa031cc08eb517658c21c4e6cc74ff7[m
+Author: tegarfolder <fputrtegar@gmail.com>
+Date:   Wed Jul 15 15:13:34 2026 +0700
+
+    feat: Compile — one-shot import Character + append Movement (3D pack)
+    
+    Adds a "Compile" mode, exclusive to the 3D pack and only when Import to
+    Blender is enabled, that combines the two Blender operations into one:
+    
+    - Toolbar "Compile" toggle (shown only for 3D pack + Import enabled).
+    - In compile mode, clicking a Character card fills the character slot and
+      a Movement card fills the movement slot (click another of the same type
+      to swap); picked cards get an accent highlight and hover actions are
+      suppressed.
+    - A corner Compile tray shows both slots (thumbnail + name, pop-in when
+      filled) with per-slot clear and a Compile button (enabled when both
+      slots are set).
+    - Combined CompileModal: copies the character into the project, scans
+      Blender once, then picks a Character + Movement collection and runs
+      import-character (append or link per the method setting) followed by
+      append-movement — both into the Temporary scene. Cancel cleans up a
+      freshly-copied character.
+    - Leaving the 3D pack or disabling Import auto-exits compile mode.
+    
+    Also:
+    - Default asset-grid size is now 80%.
+    - Bump app version to 1.0.0.
+
+[33mcommit 363120ce86d28220ac8444fe71e58a623e6fe642[m
+Author: tegarfolder <fputrtegar@gmail.com>
+Date:   Wed Jul 15 11:37:34 2026 +0700
+
+    feat: character Append or Link to Blender, with Append default
+    
+    Character Import in Settings is now two toggles:
+    - Import to Blender on/off (default off — plain Send to Project)
+    - Method: Append or Link (default Append), shown when import is on
+    
+    - Unify the character import into one mode-aware modal
+      (BlenderLinkModal -> BlenderImportModal): identical copy-to-project +
+      pick-collection flow, then append or link per the setting.
+    - Append reuses the /append endpoint with a new temp_scene flag so it
+      lands in the Temporary scene like Link; blenderAppend IPC + preload
+      gain a tempScene passthrough.
+    
+    Addon (zeuspack_bridge):
+    - /append accepts temp_scene to route the character append into the
+      Temporary scene (animation append is unchanged).
+    - Outliner right-click: add "Delete Temporary Scene" to the collection
+      menu, and add "Temporary Scene" + "Delete Temporary Scene" to the
+      general context menu so they work with no selection.
+    
+    Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+[33mcommit ca72fc1e31c1e7bf0d925ea13b2fc821e2832c3a[m
+Author: tegarfolder <fputrtegar@gmail.com>
+Date:   Tue Jul 14 14:52:40 2026 +0700
+
+    Update an addon
+
+[33mcommit 9cbca026ae09c83c9da977a54ca63d1a2f612a09[m[33m ([m[1;32mv1[m[33m)[m
+Author: tegarfolder <fputrtegar@gmail.com>
+Date:   Tue Jul 14 09:54:00 2026 +0700
+
+    feat: update version to 0.9.8 and add zeuspack_bridge.zip
+
+[33mcommit dd61fa656ada70b67e2cf0038873285a20a12815[m
+Author: tegarfolder <fputrtegar@gmail.com>
+Date:   Tue Jul 14 09:52:47 2026 +0700
+
+    feat: link character assets to Blender via project, unify Import button
+    
+    - Rename addon_bridge/ to a proper zeuspack_bridge/ package: bl_info now
+      lives literally in __init__.py (Blender parses it statically, so the old
+      `import *` re-export triggered a "missing bl_info" warning).
+    - Add /link endpoint alongside /append: links (not copies) a collection into
+      the active scene, reusing a shared ensure_temp_scene() helper so both the
+      "Create Scene" button and /link land in the same Temporary scene.
+    - New Electron IPC: blender-link (calls /link) and delete-project-file
+      (used to clean up a copy if a link attempt is cancelled).
+    - New BlenderLinkModal: copies a Character asset into {project}/Chars, lists
+      collections from that copy, and links the chosen one into a running
+      Blender. Cancelling before a successful link removes the copy again, but
+      only if this run created it and only if nothing was linked yet.
+    - Collapse the separate "Send to Project" and "Link to Blender" buttons on
+      Character cards into one Import button; a new "Character Import" toggle
+      in Settings (default off) decides which flow it runs.
+
+[33mcommit 042488de480e4f83a6cfa2decc345276354fe4b1[m
+Author: tegarfolder <fputrtegar@gmail.com>
+Date:   Mon Jul 13 14:44:45 2026 +0700
+
+    feat: restore last view on launch, animate sidebar, UI polish
+    
+    Session restore
+    - Persist the last main-panel view (pack, style, selected category, and
+      which sidebar type sections are expanded) in a small useSessionStore, and
+      reopen there on launch instead of resetting to pack 0.
+    - Add restoreSession: replays pack → style → category, verifying

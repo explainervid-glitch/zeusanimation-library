@@ -379,12 +379,15 @@ async def generate(p: GenPayload):
 
 
 if __name__ == "__main__":
-    # Preload the local model only when that's the selected provider, so
-    # pointing at a cloud API leaves the GPU completely free.
-    if CONFIG.get("provider") == "local":
+    # Start IDLE by default — Gemma is only pulled into VRAM on the first
+    # /generate, or when you press Load / "Switch to LLM" in the Control Center.
+    # Set LLM_PRELOAD=1 to load it up front instead (local provider only).
+    if os.getenv("LLM_PRELOAD", "0") == "1" and CONFIG.get("provider") == "local":
         try:
             _get_pipe()
         except Exception as e:
             print(f"[LLM] Local model failed to load: {e}")
+    else:
+        print("[LLM] Idle — model loads on first use (no VRAM held).")
     print(f"[LLM] provider = {CONFIG['provider']}  |  GUI: http://localhost:8002/")
     uvicorn.run(app, host="0.0.0.0", port=8002, log_level="info")

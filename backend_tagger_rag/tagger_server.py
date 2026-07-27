@@ -1,6 +1,8 @@
 import os
 import gc
+import io
 import json
+import base64
 import torch
 import uvicorn
 import asyncio
@@ -8,10 +10,12 @@ import av
 import numpy as np
 import tempfile
 import threading
-from typing import List
+import requests
+from typing import List, Optional
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 from transformers import Qwen2VLForConditionalGeneration, AutoProcessor, BitsAndBytesConfig
 from PIL import Image
 from schemas import AssetBackground, AssetCharacter, AssetAnimation, AssetInspiration
@@ -91,6 +95,136 @@ def _vram():
     }
 
 
+# ══════════════════════════════════════════════════════════════
+# PROVIDER — the tagger's vision model can be local Qwen (default)
+# or a cloud vision model. Same JSON contract on /auto-tag either way.
+# Config lives in tagger_config.json, edited from the Control Center.
+# ══════════════════════════════════════════════════════════════
+BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
+CONFIG_PATH = os.path.join(BASE_DIR, "tagger_config.json")
+
+DEFAULT_CONFIG = {
+    "provider": "local",   # local | anthropic | gemini | openai
+    "model":    "",        # cloud model id (ignored for local)
+    "base_url": "",        # only for provider "openai" (GPT-4o / GLM-4V / Qwen-VL API)
+    "api_key":  "",
+}
+PROVIDER_IDS = ("local", "anthropic", "gemini", "openai")
+
+
+def load_config() -> dict:
+    cfg = dict(DEFAULT_CONFIG)
+    if os.path.exists(CONFIG_PATH):
+        try:
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                cfg.update(json.load(f) or {})
+        except Exception as e:
+            print(f"[Tagger] Could not read {CONFIG_PATH}: {e}")
+    cfg["api_key"] = cfg.get("api_key") or os.getenv("TAGGER_API_KEY", "")
+    return cfg
+
+
+def save_config(cfg: dict) -> None:
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2)
+
+
+TAGGER_CONFIG = load_config()
+
+
+# ── Vision helpers (cloud) ────────────────────────────────────
+def _pil_to_b64_jpeg(im: Image.Image, quality: int = 85) -> str:
+    buf = io.BytesIO()
+    im.convert("RGB").save(buf, format="JPEG", quality=quality)
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+def _frames_to_pils(frames: np.ndarray, max_n: int = 8) -> list:
+    """Subsample video frames down to a handful of stills for cloud vision
+    (which take images, not video). Local Qwen keeps the native video path."""
+    n = frames.shape[0]
+    idx = np.linspace(0, n - 1, min(max_n, n), dtype=int)
+    return [Image.fromarray(frames[i]) for i in idx]
+
+
+def _cloud_anthropic(cfg, images, prompt, max_tokens) -> str:
+    content = [
+        {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                     "data": _pil_to_b64_jpeg(im)}}
+        for im in images
+    ]
+    content.append({"type": "text", "text": prompt})
+    r = requests.post(
+        "https://api.anthropic.com/v1/messages",
+        headers={"x-api-key": cfg["api_key"], "anthropic-version": "2023-06-01",
+                 "content-type": "application/json"},
+        json={"model": cfg["model"] or "claude-sonnet-5", "max_tokens": max_tokens,
+              "messages": [{"role": "user", "content": content}]},
+        timeout=180,
+    )
+    if r.status_code >= 400:
+        raise RuntimeError(f"Anthropic {r.status_code}: {r.text[:300]}")
+    data = r.json()
+    return "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text").strip()
+
+
+def _cloud_gemini(cfg, images, prompt, max_tokens) -> str:
+    model = cfg["model"] or "gemini-2.0-flash"
+    parts = [{"inline_data": {"mime_type": "image/jpeg", "data": _pil_to_b64_jpeg(im)}} for im in images]
+    parts.append({"text": prompt})
+    r = requests.post(
+        f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+        params={"key": cfg["api_key"]},
+        headers={"content-type": "application/json"},
+        json={"contents": [{"role": "user", "parts": parts}],
+              "generationConfig": {"maxOutputTokens": max_tokens}},
+        timeout=180,
+    )
+    if r.status_code >= 400:
+        raise RuntimeError(f"Gemini {r.status_code}: {r.text[:300]}")
+    data = r.json()
+    try:
+        return "".join(p.get("text", "") for p in data["candidates"][0]["content"]["parts"]).strip()
+    except Exception:
+        return ""
+
+
+def _cloud_openai(cfg, images, prompt, max_tokens) -> str:
+    """Any OpenAI-compatible vision endpoint: GPT-4o, GLM-4V, Qwen-VL API, …"""
+    base = (cfg["base_url"] or "https://api.openai.com/v1").rstrip("/")
+    content = [{"type": "text", "text": prompt}]
+    for im in images:
+        content.append({"type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{_pil_to_b64_jpeg(im)}"}})
+    r = requests.post(
+        f"{base}/chat/completions",
+        headers={"Authorization": f"Bearer {cfg['api_key']}", "content-type": "application/json"},
+        json={"model": cfg["model"], "max_tokens": max_tokens,
+              "messages": [{"role": "user", "content": content}]},
+        timeout=180,
+    )
+    if r.status_code >= 400:
+        raise RuntimeError(f"Vision API {r.status_code}: {r.text[:300]}")
+    data = r.json()
+    try:
+        return (data["choices"][0]["message"]["content"] or "").strip()
+    except Exception:
+        return ""
+
+
+CLOUD_PROVIDERS = {"anthropic": _cloud_anthropic, "gemini": _cloud_gemini, "openai": _cloud_openai}
+
+
+def _cloud_vision(images: list, prompt: str, max_tokens: int) -> str:
+    cfg = TAGGER_CONFIG
+    fn  = CLOUD_PROVIDERS.get(cfg["provider"])
+    if fn is None:
+        raise RuntimeError(f"Unknown tagger provider '{cfg['provider']}'")
+    if not cfg.get("api_key"):
+        raise RuntimeError(f"No API key set for tagger provider '{cfg['provider']}' — add one in the Control Center.")
+    return fn(cfg, images, prompt, max_tokens)
+
+
 # ── Model control (used by the Control Center UI) ─────────────
 @app.get("/")
 async def control_center():
@@ -102,17 +236,24 @@ async def control_center():
 
 @app.get("/model-status")
 async def model_status():
+    prov  = TAGGER_CONFIG["provider"]
+    label = os.path.basename(MODEL_PATH) if prov == "local" else (TAGGER_CONFIG["model"] or prov)
     return {
         "success":  True,
         "service":  "tagger",
-        "model":    os.path.basename(MODEL_PATH),
-        "loaded":   model is not None,
+        "provider": prov,
+        "model":    label,
+        # For a cloud provider there's no local model, so it's "loaded" (ready)
+        # by definition — nothing to pull into VRAM.
+        "loaded":   (model is not None) if prov == "local" else True,
         "vram":     _vram(),
     }
 
 
 @app.post("/model/load")
 async def model_load():
+    if TAGGER_CONFIG["provider"] != "local":
+        return {"success": True, "loaded": True, "message": "Cloud provider — nothing to load."}
     _ensure_model()
     return {"success": True, "loaded": True, "vram": _vram()}
 
@@ -121,6 +262,47 @@ async def model_load():
 async def model_unload():
     _unload_model()
     return {"success": True, "loaded": False, "vram": _vram()}
+
+
+# ── Provider config (Control Center) ──────────────────────────
+class TaggerConfigPayload(BaseModel):
+    provider: Optional[str] = None
+    model:    Optional[str] = None
+    base_url: Optional[str] = None
+    api_key:  Optional[str] = None
+
+
+def _public_tagger_config() -> dict:
+    c = dict(TAGGER_CONFIG)
+    c.pop("api_key", None)
+    c["has_api_key"] = bool(TAGGER_CONFIG.get("api_key"))
+    c["providers"]   = list(PROVIDER_IDS)
+    c["local_model"] = os.path.basename(MODEL_PATH)
+    return c
+
+
+@app.get("/config")
+async def get_tagger_config():
+    return {"success": True, **_public_tagger_config()}
+
+
+@app.post("/config")
+async def set_tagger_config(p: TaggerConfigPayload):
+    global TAGGER_CONFIG
+    new = dict(TAGGER_CONFIG)
+    if p.provider is not None:
+        if p.provider not in PROVIDER_IDS:
+            raise HTTPException(400, f"provider must be one of {PROVIDER_IDS}")
+        new["provider"] = p.provider
+    if p.model    is not None: new["model"]    = p.model.strip()
+    if p.base_url is not None: new["base_url"] = p.base_url.strip()
+    # Blank api_key means "keep the existing one" (the GUI never sees it).
+    if p.api_key is not None and p.api_key.strip():
+        new["api_key"] = p.api_key.strip()
+    TAGGER_CONFIG = new
+    save_config(TAGGER_CONFIG)
+    print(f"[Tagger] config updated → provider={TAGGER_CONFIG['provider']} model={TAGGER_CONFIG['model'] or '-'}")
+    return {"success": True, **_public_tagger_config()}
 
 # ══════════════════════════════════════════════════════════════
 # SYSTEM PROMPTS — separate per asset type for better focus
@@ -427,7 +609,27 @@ def _build_context_note(existing_json: dict | None, full_schema: dict) -> tuple[
     return prompt_schema, context_note
 
 
+# ── Inference dispatchers — local Qwen or a cloud vision provider ──
 def _qwen_image_inference(image: Image.Image, prompt_text: str, max_new_tokens: int = 512) -> str:
+    if TAGGER_CONFIG["provider"] != "local":
+        return _cloud_vision([image], prompt_text, max_new_tokens)
+    return _qwen_image_local(image, prompt_text, max_new_tokens)
+
+
+def _qwen_multi_image_inference(images: list, prompt_text: str, max_new_tokens: int = 300) -> str:
+    if TAGGER_CONFIG["provider"] != "local":
+        return _cloud_vision(images, prompt_text, max_new_tokens)
+    return _qwen_multi_image_local(images, prompt_text, max_new_tokens)
+
+
+def _qwen_video_inference(video_frames: np.ndarray, prompt_text: str, max_new_tokens: int = 600) -> str:
+    if TAGGER_CONFIG["provider"] != "local":
+        # Cloud vision takes stills — send a handful of sampled frames.
+        return _cloud_vision(_frames_to_pils(video_frames, max_n=8), prompt_text, max_new_tokens)
+    return _qwen_video_local(video_frames, prompt_text, max_new_tokens)
+
+
+def _qwen_image_local(image: Image.Image, prompt_text: str, max_new_tokens: int = 512) -> str:
     """Run Qwen2-VL inference for a single image. Returns raw output string."""
     _ensure_model()
     messages = [
@@ -464,7 +666,7 @@ def _qwen_image_inference(image: Image.Image, prompt_text: str, max_new_tokens: 
     ).strip()
 
 
-def _qwen_multi_image_inference(images: list, prompt_text: str, max_new_tokens: int = 300) -> str:
+def _qwen_multi_image_local(images: list, prompt_text: str, max_new_tokens: int = 300) -> str:
     """Run Qwen2-VL over several images at once. Used to draft a style guide
     from a handful of sample assets. Returns raw output string."""
     _ensure_model()
@@ -500,7 +702,7 @@ def _qwen_multi_image_inference(images: list, prompt_text: str, max_new_tokens: 
     ).strip()
 
 
-def _qwen_video_inference(video_frames: np.ndarray, prompt_text: str, max_new_tokens: int = 600) -> str:
+def _qwen_video_local(video_frames: np.ndarray, prompt_text: str, max_new_tokens: int = 600) -> str:
     """Run Qwen2-VL inference for video frames. Returns raw output string."""
     _ensure_model()
     messages = [
@@ -940,13 +1142,17 @@ async def batch_tag_video():
 
 
 if __name__ == "__main__":
-    # Preload unless TAGGER_PRELOAD=0 — set that when you want the GPU left free
-    # for the LLM until you switch to the tagger in the Control Center.
-    if os.getenv("TAGGER_PRELOAD", "1") != "0":
+    # Start IDLE by default — no VRAM used until someone actually tags something
+    # or presses Load / "Switch to Tagger" in the Control Center. This keeps the
+    # GPU free so the LLM and the Tagger don't fight over it at boot.
+    # Set TAGGER_PRELOAD=1 to load the model up front instead.
+    if os.getenv("TAGGER_PRELOAD", "0") == "1" and TAGGER_CONFIG["provider"] == "local":
         try:
             _ensure_model()
         except Exception as e:
             print(f"[Tagger] Model failed to preload: {e}")
+    else:
+        print(f"[Tagger] provider={TAGGER_CONFIG['provider']} — idle, model loads on first use.")
     print("[Tagger] Control Center: http://localhost:8000/")
     uvicorn.run("tagger_server:app", host="0.0.0.0", port=8000, log_level="info")
 

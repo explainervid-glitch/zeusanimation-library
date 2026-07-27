@@ -141,6 +141,44 @@
     <button class="ghost" id="reload">Reload</button>
   </div>
 
+  <!-- TAGGER PROVIDER -->
+  <div class="card">
+    <h2>Tagger Provider (vision)</h2>
+    <div class="row">
+      <div class="field">
+        <label>Provider</label>
+        <select id="t_provider">
+          <option value="local">Local — Qwen2-VL (this GPU)</option>
+          <option value="anthropic">Anthropic — Claude (vision)</option>
+          <option value="gemini">Google — Gemini (vision)</option>
+          <option value="openai">OpenAI-compatible (GPT-4o / GLM-4V / Qwen-VL)</option>
+        </select>
+        <div class="hint" id="t_providerHint"></div>
+      </div>
+      <div class="field">
+        <label>Model</label>
+        <input id="t_model" placeholder="e.g. claude-sonnet-5" />
+        <div class="hint">Ignored for Local.</div>
+      </div>
+    </div>
+    <div class="field" id="t_baseUrlField">
+      <label>Base URL</label>
+      <input id="t_base_url" placeholder="https://api.openai.com/v1" />
+      <div class="hint">OpenAI-compatible only. The server appends <code>/chat/completions</code>.</div>
+    </div>
+    <div class="field" id="t_apiKeyField">
+      <label>API key</label>
+      <input id="t_api_key" type="password" placeholder="leave blank to keep the saved key" />
+      <div class="hint" id="t_keyHint"></div>
+    </div>
+    <div class="hint" style="margin-bottom:12px">
+      Cloud vision is billed per image — bulk batch-tagging can get expensive.
+      For movement/video, a few sampled frames are sent as stills.
+    </div>
+    <button id="t_save">Save</button>
+    <button class="ghost" id="t_reload">Reload</button>
+  </div>
+
   <!-- TEST -->
   <div class="card">
     <h2>Test LLM</h2>
@@ -156,10 +194,11 @@
 <script>
 const $ = (id) => document.getElementById(id);
 const HOST = location.hostname || 'localhost';
+// gpu = holds VRAM (part of the GPU switch). loadable = has Load/Unload.
 const SVC = {
-  tagger: { port: 8000, label: 'Tagger', gpu: true  },
-  rag:    { port: 8001, label: 'RAG',    gpu: false },
-  llm:    { port: 8002, label: 'LLM',    gpu: true  },
+  tagger: { port: 8000, label: 'Tagger', gpu: true,  loadable: true },
+  rag:    { port: 8001, label: 'RAG',    gpu: false, loadable: true },
+  llm:    { port: 8002, label: 'LLM',    gpu: true,  loadable: true },
 };
 const url = (k, path) => `http://${HOST}:${SVC[k].port}${path}`;
 $('hostLabel').textContent = HOST;
@@ -216,7 +255,7 @@ function cardHtml(key) {
       <span>wait <b id="qw-${key}">–</b></span>
       <span>done <b id="qd-${key}">–</b></span>
     </div>
-    ${s.gpu ? `<div style="margin-top:10px;display:flex;gap:6px">
+    ${s.loadable ? `<div style="margin-top:10px;display:flex;gap:6px">
       <button class="sm ghost" data-load="${key}">Load</button>
       <button class="sm ghost" data-unload="${key}">Unload</button>
     </div>` : ''}
@@ -232,10 +271,12 @@ async function refresh() {
     // /model-status doubles as the reachability check (all three expose it)
     try {
       const m = await jget(url(key, '/model-status'));
-      const loaded = m.loaded ? 'loaded' : 'not loaded';
-      $('dot-' + key).className = 'dot ' + (SVC[key].gpu && !m.loaded ? 'warn' : 'ok');
-      $('st-' + key).textContent = SVC[key].gpu && !m.loaded ? 'idle' : 'online';
-      $('meta-' + key).textContent = `${m.model || '—'} · ${SVC[key].gpu ? loaded : 'CPU'}`;
+      const idle = SVC[key].loadable && !m.loaded;
+      const where = SVC[key].gpu ? 'VRAM' : 'RAM';
+      $('dot-' + key).className = 'dot ' + (idle ? 'warn' : 'ok');
+      $('st-' + key).textContent = idle ? 'idle' : 'online';
+      $('meta-' + key).textContent =
+        `${m.model || '—'} · ${m.loaded ? 'loaded (' + where + ')' : 'not loaded'}`;
       if (m.vram) lastVram = m.vram;
     } catch (e) {
       $('dot-' + key).className = 'dot err';
@@ -341,6 +382,49 @@ $('save').addEventListener('click', async () => {
   $('save').disabled = false;
 });
 
+// ── Tagger provider config ──
+const T_HINTS = {
+  local:     "Runs Qwen2-VL on this GPU. No API key needed.",
+  anthropic: "Claude vision via api.anthropic.com. Model e.g. claude-sonnet-5.",
+  gemini:    "Gemini vision. Model e.g. gemini-2.0-flash.",
+  openai:    "Any OpenAI-compatible vision API — set both Base URL and Model.",
+};
+function syncTaggerUI() {
+  const p = $('t_provider').value;
+  $('t_providerHint').textContent = T_HINTS[p] || '';
+  $('t_baseUrlField').style.display = p === 'openai' ? '' : 'none';
+  $('t_apiKeyField').style.display  = p === 'local' ? 'none' : '';
+}
+async function loadTaggerConfig() {
+  try {
+    const c = await jget(url('tagger', '/config'));
+    $('t_provider').value = c.provider;
+    $('t_model').value    = c.model || '';
+    $('t_base_url').value = c.base_url || '';
+    $('t_keyHint').textContent = c.has_api_key
+      ? 'A key is saved. Leave blank to keep it, or type a new one to replace it.'
+      : 'No key saved yet.';
+    syncTaggerUI();
+  } catch (e) { toast('Tagger server unreachable — config unavailable', true); }
+}
+$('t_provider').addEventListener('change', syncTaggerUI);
+$('t_reload').addEventListener('click', loadTaggerConfig);
+$('t_save').addEventListener('click', async () => {
+  $('t_save').disabled = true;
+  try {
+    await jpost(url('tagger', '/config'), {
+      provider: $('t_provider').value,
+      model:    $('t_model').value,
+      base_url: $('t_base_url').value,
+      api_key:  $('t_api_key').value,
+    }, 15000);
+    $('t_api_key').value = '';
+    await loadTaggerConfig(); refresh();
+    toast('Saved — applies to the next tag');
+  } catch (e) { toast(e.message, true); }
+  $('t_save').disabled = false;
+});
+
 // ── Test ──
 $('run').addEventListener('click', async () => {
   $('run').disabled = true;
@@ -357,6 +441,7 @@ $('run').addEventListener('click', async () => {
 });
 
 loadConfig();
+loadTaggerConfig();
 refresh();
 setInterval(refresh, 5000);
 </script>
