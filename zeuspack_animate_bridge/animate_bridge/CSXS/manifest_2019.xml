@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    ZeusPack Bridge — manifest for Adobe Animate CC 2019 (19.x) ONLY.
+
+    The default manifest.xml already covers [19.0,99.9] and should work on
+    2019 as-is. Use this file only if 2019 refuses to list the panel:
+
+        1. In the INSTALLED folder
+           %APPDATA%\Adobe\CEP\extensions\zeuspack_animate_bridge\CSXS\
+        2. Rename  manifest.xml       ->  manifest_modern.xml
+        3. Rename  manifest_2019.xml  ->  manifest.xml
+        4. Restart Animate
+
+    Differences from the default: host range pinned to 19.x-21.x, and the
+    Geometry block is trimmed to Size + MinSize (CEP 9 predates some newer
+    manifest elements, and an unrecognised element can make it skip the
+    extension entirely).
+-->
+<ExtensionManifest Version="5.0" ExtensionBundleId="com.zeus.zeuspackbridge" ExtensionBundleVersion="1.0.0"
+    ExtensionBundleName="ZeusPack Bridge" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <ExtensionList>
+        <Extension Id="com.zeus.zeuspackbridge.panel" Version="1.0.0" />
+    </ExtensionList>
+    <ExecutionEnvironment>
+        <HostList>
+            <!-- Animate CC 2019 (19.x) through 2021 (21.x) — CEP 9/10/11 -->
+            <Host Name="FLPR" Version="[19.0,21.9]" />
+        </HostList>
+        <LocaleList>
+            <Locale Code="All" />
+        </LocaleList>
+        <RequiredRuntimeList>
+            <!-- CEP 9 is what Animate CC 2019 ships with -->
+            <RequiredRuntime Name="CSXS" Version="9.0" />
+        </RequiredRuntimeList>
+    </ExecutionEnvironment>
+    <DispatchInfoList>
+        <Extension Id="com.zeus.zeuspackbridge.panel">
+            <DispatchInfo>
+                <Resources>
+                    <MainPath>./index.html</MainPath>
+                    <ScriptPath>./jsx/host.jsx</ScriptPath>
+                </Resources>
+                <Lifecycle>
+                    <AutoVisible>true</AutoVisible>
+                </Lifecycle>
+                <UI>
+                    <Type>Panel</Type>
+                    <Menu>ZeusPack Bridge</Menu>
+                    <Geometry>
+                        <Size>
+                            <Height>40</Height>
+                            <Width>240</Width>
+                        </Size>
+                        <MinSize>
+                            <Height>32</Height>
+                            <Width>150</Width>
+                        </MinSize>
+                    </Geometry>
+                </UI>
+            </DispatchInfo>
+        </Extension>
+    </DispatchInfoList>
+</ExtensionManifest>

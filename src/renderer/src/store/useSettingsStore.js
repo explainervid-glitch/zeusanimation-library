@@ -52,13 +52,6 @@ const useSettingsStore = create(
       setChar2dImportEnabled:    (v) => set({ char2dImportEnabled: v }),
       toggleChar2dImportEnabled: ()  => set(s => ({ char2dImportEnabled: !s.char2dImportEnabled })),
 
-      // Auto-answer Animate's native "Resolve Library Conflict" modal with its
-      // default ("Don't replace existing items"). JSFL is blocked behind that
-      // dialog, so ZeusPack answers it via Win32 while a compile job runs.
-      // Windows-only; turn off to click it yourself.
-      autoResolveConflict: true,
-      setAutoResolveConflict:    (v) => set({ autoResolveConflict: v }),
-      toggleAutoResolveConflict: ()  => set(s => ({ autoResolveConflict: !s.autoResolveConflict })),
 
       assetPaths:      [{ label: 'Pack 1', path: '' }],
       activePathIndex: 0,
@@ -176,6 +169,14 @@ const useSettingsStore = create(
 }),
     {
       name: 'settings-store',  // localStorage key for persist
+      // v1: drops the removed autoResolveConflict flag (an auto-clicker for
+      // Animate's conflict dialog). It could press Enter on the wrong modal,
+      // so the feature is gone — clear any persisted copy.
+      version: 1,
+      migrate: (persisted) => {
+        if (persisted) delete persisted.autoResolveConflict
+        return persisted
+      },
     }
   )
 )

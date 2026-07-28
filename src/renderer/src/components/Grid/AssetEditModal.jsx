@@ -954,6 +954,9 @@ export default function AssetEditModal({ asset, type, styleTypeId, onClose, onSa
           ...asset,
           name:    data.FileName,
           detail:  data.Detail,
+          // An asset with no metadata file gets one created on save — carry the
+          // new path back so the UI stops reporting "No JSON file".
+          json_path: result.jsonPath || asset.json_path,
         })
       } else {
         setError(result.error)

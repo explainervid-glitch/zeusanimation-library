@@ -15,17 +15,9 @@ export default function AnimateImportModal({ asset, onClose }) {
   const load = useCallback(async () => {
     setStatus('loading'); setError(null); setItems([]); setSelected(null)
 
-    // Pre-warm (fire-and-forget): tell Animate to open the movement .fla in
-    // the background NOW, so its load overlaps with the user browsing the
-    // tree. By Import-click time the doc is warm → copy/paste is instant.
-    // Silently skipped when the bridge/Animate isn't connected.
-    window.api.animateStatus()
-      .then((st) => {
-        if (st?.connected) {
-          window.api.animateRun({ action: 'open-fla', params: { flaPath: asset.raw_path } }).catch(() => {})
-        }
-      })
-      .catch(() => {})
+    // NOTE: no pre-warm here. Opening the .fla in Animate just to browse it
+    // made files pop open unprompted; the file now loads only when the user
+    // actually imports. (zb_openFla still exists, just isn't called.)
 
     // 1) Read straight from the .fla on disk — instant, no Animate needed.
     const disk = await window.api.readFlaLibrary({ flaPath: asset.raw_path }).catch(() => ({ success: false }))

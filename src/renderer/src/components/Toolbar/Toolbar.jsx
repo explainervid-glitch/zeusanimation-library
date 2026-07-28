@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Plus, Settings, ChevronDown, Check, Package, Search, X, Astroid, RefreshCw, Sparkles, BotMessageSquare, Columns2, FilePlus, MoreVertical, Combine } from 'lucide-react'
+import { Plus, Settings, ChevronDown, Check, Package, Search, X, Astroid, RefreshCw, Sparkles, BotMessageSquare, Columns2, FilePlus, MoreVertical, Combine, Layers } from 'lucide-react'
 import useAssetStore    from '../../store/useAssetStore'
 import useSettingsStore from '../../store/useSettingsStore'
 import useBatchStore    from '../../store/useBatchStore'
@@ -8,14 +8,22 @@ import useCompileStore  from '../../store/useCompileStore'
 import useAISidebarStore from '../../store/useAISidebarStore'
 import SettingsModal    from './SettingsModal'
 import AddModal         from './AddModal'
+import AddStyleModal    from './AddStyleModal'
 import BatchTaggerModal from './BatchTaggerModal'
 import WindowControls   from './WindowControls'
 import icon from '../../assets/icon.png'
 
+// ⚠ HARDCODED pack list — the toolbar dropdown shows ONLY what's listed here,
+// regardless of how many Asset Paths exist in Settings. To expose another pack:
+//   1. uncomment / add its line below, and
+//   2. make sure that same slot has a path in Settings ▸ Asset Paths
+//      (index must match the position in `assetPaths`).
 const PACK_LIST = [
   { label: '2D', index: 0 },
   { label: '3D', index: 1 },
-  // { label: '-', index: 2 },
+  { label: '2D Lagu Anak', index: 2 },
+  { label: '-', index: 3 },
+  // { label: 'Pack 5', index: 4 },
 ]
 
 const TYPE_LABEL = {
@@ -289,7 +297,7 @@ function SearchBar() {
 }
 
 // ─── ADD DROPDOWN ─────────────────────────────────────────────
-function AddDropdown({ disabled, onAddAsset, onBatchTag, batchDisabled, batchTitle }) {
+function AddDropdown({ disabled, onAddAsset, onAddStyle, onBatchTag, batchDisabled, batchTitle }) {
   const [open, setOpen] = useState(false)
   const ref             = useRef(null)
 
@@ -346,6 +354,17 @@ function AddDropdown({ disabled, onAddAsset, onBatchTag, batchDisabled, batchTit
             <div>
               <p className="text-xs font-medium">Asset</p>
               <p className="text-[10px] text-c-text-4">Add an asset to a category</p>
+            </div>
+          </button>
+          <button
+            onClick={() => pick(onAddStyle)}
+            className="w-full flex items-start gap-2.5 px-3 py-2 text-left
+              text-c-text-2 hover:bg-c-raised hover:text-c-text transition-all"
+          >
+            <Layers size={14} className="text-c-accent flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-xs font-medium">Style</p>
+              <p className="text-[10px] text-c-text-4">Create a new style in this pack</p>
             </div>
           </button>
         </div>
@@ -435,9 +454,14 @@ export default function Toolbar() {
   // Compile availability per pack (Settings ▸ Direct Character Import):
   //   3D pack: Compile mode toggle on (append/link into Blender)
   //   2D pack: master on + Compile mode + "2D Character" on (Animate flow)
+  // 3D compile needs the Blender import mode on. 2D (Animate) is available for
+  // the whole pack — it works without a project folder and without Direct
+  // Character Import, it just skips the copy step and opens the pack file
+  // read-only instead. "2D Character" remains an explicit opt-out.
   const canCompile = (activePackIndex === 1 && blenderImportEnabled) ||
-    (activePackIndex === 0 && importCharactersEnabled && blenderImportEnabled && char2dImportEnabled)
+    (activePackIndex === 0 && char2dImportEnabled)
   const [showAddModal, setShowAddModal]   = useState(false)
+  const [showAddStyle, setShowAddStyle]   = useState(false)
   const [refreshing, setRefreshing]       = useState(false)
   const [refreshed, setRefreshed]         = useState(false)
 
@@ -526,6 +550,7 @@ export default function Toolbar() {
           <AddDropdown
             disabled={scanning}
             onAddAsset={() => setShowAddModal(true)}
+            onAddStyle={() => setShowAddStyle(true)}
             onBatchTag={() => enterBatchMode()}
             batchDisabled={isBatchMode || !selectedCategory || assets.length === 0 || scanning}
             batchTitle={
@@ -555,6 +580,7 @@ export default function Toolbar() {
       </header>
 
       <AddModal isOpen={showAddModal} onClose={() => setShowAddModal(false)} />
+      <AddStyleModal isOpen={showAddStyle} onClose={() => setShowAddStyle(false)} />
       <SettingsModal />
       <BatchTaggerModal />
     </>

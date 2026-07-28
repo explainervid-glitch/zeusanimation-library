@@ -5,6 +5,7 @@ import {
   getDb, switchDb, reinitDb,
   getFullTree, getAssetsByCategory, getAssetsByStyleType,
   hasData, saveDb, insertCategory, insertAsset,
+  insertStyle, insertStyleType,
   insertAssetFts, updateAssetFts, searchAssetsFts,
   getDbMtime, reloadFromDisk
 } from '../db/index.js'
@@ -312,13 +313,43 @@ export async function registerIpcHandlers() {
   // ─── WRITE ASSET JSON ────────────────────────────────────────
   ipcMain.handle('write-asset-json', async (_e, { jsonPath, assetId, data }) => {
     try {
-      if (!jsonPath) return { success: false, error: 'JSON path not specified' }
-      writeFileSync(jsonPath, JSON.stringify(data, null, 4), 'utf-8')
+      const settings   = readSettings()
+      const activePath = getActivePath(settings)
+      const db = assetId ? await getDb(activePath) : null
+
+      // Assets scanned from loose files (no .json) have json_path = NULL and
+      // land in "⚠ Uncategorized". Editing one should CREATE its metadata file
+      // rather than fail — derive the path from whichever source file exists,
+      // using the scanner's own convention: <basename>.json beside the asset.
+      let targetPath = jsonPath
+      let created    = false
+      if (!targetPath && db) {
+        const st = db.prepare('SELECT raw_path, mp4_path, thumbnail_path FROM assets WHERE id = ? LIMIT 1')
+        st.bind([assetId])
+        const row = st.step() ? st.getAsObject() : null
+        st.free()
+        const source = row?.raw_path || row?.mp4_path || row?.thumbnail_path || null
+        if (source) {
+          targetPath = join(dirname(source), `${basename(source, extname(source))}.json`)
+          created    = !existsSync(targetPath)
+        }
+      }
+
+      if (!targetPath) return { success: false, error: 'JSON path not specified' }
+
+      // A brand-new file must carry the asset's own name, or a later rescan
+      // would read back an empty FileName.
+      if (created && !data.FileName) {
+        data = { ...data, FileName: basename(targetPath, '.json') }
+      }
+
+      writeFileSync(targetPath, JSON.stringify(data, null, 4), 'utf-8')
 
       if (assetId) {
-        const settings   = readSettings()
-        const activePath = getActivePath(settings)
-        const db         = await getDb(activePath)
+        // Link the newly created file so future edits and rescans find it.
+        if (created || !jsonPath) {
+          db.run('UPDATE assets SET json_path = ? WHERE id = ?', [targetPath, assetId])
+        }
 
         // 1. Update name & detail
         db.run('UPDATE assets SET name = ?, detail = ? WHERE id = ?',
@@ -358,7 +389,7 @@ export async function registerIpcHandlers() {
 
         saveDb()
       }
-      return { success: true }
+      return { success: true, jsonPath: targetPath, created }
     } catch (err) {
       return { success: false, error: err.message }
     }
@@ -644,6 +675,89 @@ export async function registerIpcHandlers() {
   })
 
   // ─── ADD CATEGORY ───────────────────────────────────────────
+  // ─── ADD STYLE ────────────────────────────────────────────────
+  // A "style" isn't a folder — the scanner derives it from the SUFFIX shared by
+  // sibling folders at the pack root (background2 + image2 + … = Style 2). So
+  // creating one means writing exactly what the scanner looks for:
+  //   1. <prefix><suffix>/ folders          2. categories<prefix><suffix>.json
+  //   3. a stylenames.json entry
+  // The new folders are empty, so we insert the rows directly instead of a full
+  // rescan (which clears and rebuilds all ~19k assets). A later rescan
+  // reproduces the same style from the files written here.
+  ipcMain.handle('add-style', async (_e, { name, description = '', types, copyFromSuffix = null } = {}) => {
+    try {
+      const settings   = readSettings()
+      const activePath = getActivePath(settings)
+      if (!activePath || !existsSync(activePath)) {
+        return { success: false, error: 'Pack path not found. Set it in Settings ▸ Asset Paths.' }
+      }
+
+      const PREFIXES = ['background', 'image', 'movement', 'inspiration']
+      const TYPE_OF  = { background: 'background', image: 'character', movement: 'animation', inspiration: 'inspiration' }
+      const wanted   = (types?.length ? types : PREFIXES).filter(p => PREFIXES.includes(p))
+      if (!wanted.length) return { success: false, error: 'Pick at least one asset type.' }
+
+      // Next free suffix — read from DISK (authoritative), not the DB.
+      const FOLDER_RE = /^(background|image|movement|inspiration)(\d*)$/i
+      const used = new Set()
+      for (const e of readdirSync(activePath, { withFileTypes: true })) {
+        if (!e.isDirectory()) continue
+        const m = e.name.match(FOLDER_RE)
+        if (m) used.add(Number(m[2] || 0))
+      }
+      const suffix  = String(Math.max(0, ...used) + 1)
+      const styleId = Number(suffix)
+
+      // Resolve a categories file for a prefix/suffix, honouring the same
+      // filename variants the scanner accepts.
+      const findCategoriesFile = (prefix, sfx) => {
+        for (const f of [`categories${prefix}${sfx}.json`, `categories${prefix}.json`,
+                         `categories_${prefix}${sfx}.json`, `categories_${prefix}.json`]) {
+          const p = join(activePath, f)
+          if (existsSync(p)) return p
+        }
+        return null
+      }
+      const readCategories = (prefix, sfx) => {
+        const p = findCategoriesFile(prefix, sfx)
+        if (!p) return []
+        try {
+          const c = JSON.parse(readFileSync(p, 'utf-8'))
+          const list = Array.isArray(c) ? c : (c.categories || [])
+          return list.filter(x => x && typeof x === 'string').map(x => x.trim())
+        } catch { return [] }
+      }
+
+      const db = await getDb(activePath)
+      insertStyle(styleId, name?.trim() || null, description?.trim() || null)
+
+      const created = []
+      for (const prefix of wanted) {
+        const folder = join(activePath, `${prefix}${suffix}`)
+        if (!existsSync(folder)) mkdirSync(folder, { recursive: true })
+
+        // Clone the source style's list when asked — categories are near
+        // identical across styles, and an empty list sends every future asset
+        // straight to ⚠ Uncategorized.
+        const cats = copyFromSuffix != null ? readCategories(prefix, String(copyFromSuffix)) : []
+        writeFileSync(join(activePath, `categories${prefix}${suffix}.json`),
+                      JSON.stringify(cats, null, 2), 'utf-8')
+
+        const styleTypeId = insertStyleType(styleId, TYPE_OF[prefix], folder)
+        for (const c of cats) insertCategory(styleTypeId, c)
+        created.push({ prefix, type: TYPE_OF[prefix], folder, categories: cats.length })
+      }
+
+      writeStyleName(suffix, name?.trim() || '', description?.trim() || '', activePath)
+      saveDb()
+
+      console.log(`[IPC] Style ${styleId} created — ${created.map(c => c.prefix).join(', ')}`)
+      return { success: true, data: { styleId, suffix, created }, tree: getFullTree() }
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  })
+
   ipcMain.handle('add-category', async (_e, { styleSuffix, assetType, categoryName }) => {
     try {
       const settings   = readSettings()
@@ -657,11 +771,13 @@ export async function registerIpcHandlers() {
         'background': 'background',
         'image': 'image',
         'movement': 'movement',
+        'inspiration': 'inspiration',
       }
       const typeMap = {
         'background': 'background',
         'image': 'character',
         'movement': 'animation',
+        'inspiration': 'inspiration',
       }
       const prefix = prefixMap[assetType]
       const type = typeMap[assetType]

@@ -34,7 +34,6 @@ export default function SettingsModal() {
     blenderImportEnabled, toggleBlenderImportEnabled,
     blenderImportMode, setBlenderImportMode,
     char2dImportEnabled, toggleChar2dImportEnabled,
-    autoResolveConflict, toggleAutoResolveConflict,
   } = useSettingsStore()
 
   const { rescan, scanning, activePackIndex } = useAssetStore()
@@ -423,18 +422,6 @@ export default function SettingsModal() {
                             />
                           </div>
 
-                          {/* 2D only — auto-answer Animate's conflict dialog */}
-                          {char2dImportEnabled && (
-                            <div className="pt-1 border-t border-c-border/60">
-                              <div className="flex items-center justify-between gap-3">
-                                <span className="text-[11px] font-medium text-c-text">Auto “Don’t replace”</span>
-                                <MiniToggle on={autoResolveConflict} onToggle={toggleAutoResolveConflict} />
-                              </div>
-                              <p className="text-[10px] text-c-text-4 mt-1 leading-relaxed">
-                                Answers Animate’s “Resolve Library Conflict” dialog for you during 2D compile. Windows only.
-                              </p>
-                            </div>
-                          )}
                         </div>
                       )}
                     </div>

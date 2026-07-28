@@ -6,8 +6,11 @@
     </ExtensionList>
     <ExecutionEnvironment>
         <HostList>
-            <!-- FLPR = Adobe Animate | [22.0,99.9] = Animate 2022+ (incl. 2024) -->
-            <Host Name="FLPR" Version="[22.0,99.9]" />
+            <!-- FLPR = Adobe Animate.
+                 [19.0,99.9] covers Animate CC 2019 (19.x, CEP 9) through 2024+.
+                 CEP 9 is the oldest runtime we require, so one manifest serves
+                 the whole range. See manifest_2019.xml for a 2019-only fallback. -->
+            <Host Name="FLPR" Version="[19.0,99.9]" />
         </HostList>
         <LocaleList>
             <Locale Code="All" />

@@ -91,13 +91,9 @@ function SymbolPicker({ movement, symbol, onSelect }) {
       })
       .catch((e) => { if (alive) { setStatus('error'); setError(e.message) } })
 
-    // Pre-warm: let Animate start loading the movement in the background so
-    // the Compile click doesn't pay the file-open cost.
-    window.api.animateStatus().then((st) => {
-      if (st?.connected) {
-        window.api.animateRun({ action: 'open-fla', params: { flaPath: movement.raw_path } }).catch(() => {})
-      }
-    }).catch(() => {})
+    // NOTE: no pre-warm here. Opening the movement in Animate up front made it
+    // pop files open unprompted while browsing; the file now loads only when
+    // Compile actually runs. (zb_openFla still exists, just isn't called.)
 
     return () => { alive = false }
   }, [movement?.raw_path])
@@ -133,7 +129,7 @@ export default function CompileTray() {
   const { isCompileMode, character, movement, exitCompileMode, clearCharacter, clearMovement } = useCompileStore()
   const activePackIndex     = useAssetStore((s) => s.activePackIndex)
   const activeProject       = useProjectStore((s) => s.activeProject)
-  const autoResolveConflict = useSettingsStore((s) => s.autoResolveConflict)
+  const importCharactersEnabled = useSettingsStore((s) => s.importCharactersEnabled)
   const [showModal, setShowModal] = useState(false)
 
   // 2D compile run state
@@ -162,63 +158,66 @@ export default function CompileTray() {
 
   if (!isCompileMode) return null
 
-  const ready   = !!character && !!movement
-  const ready2d = ready && !!symbol && !!charName.trim() && step !== 'copy' && step !== 'animate'
+  // Copy into the project only when there IS one and Direct Character Import
+  // is on. Otherwise compile runs straight off the pack file (never saved).
+  const willCopyToProject = !!activeProject?.path && importCharactersEnabled
 
-  // ── The 2D flow: copy char → open + import symbol → reload clipboard ──
+  const ready   = !!character && !!movement
+  const ready2d = ready && !!symbol && (!willCopyToProject || !!charName.trim()) &&
+    step !== 'copy' && step !== 'animate'
+
+  // ── The 2D flow ──────────────────────────────────────────────
+  // With a project AND Direct Character Import on: copy the character into the
+  // project first and work on that copy. Otherwise compile still runs — it just
+  // opens the pack's own .fla instead. That file is never saved (the job closes
+  // it with save=false), so the pack is left untouched either way.
   const runCompile2d = async () => {
-    setStep('copy'); setStepMsg('Copying character to project…')
+    setStep('copy')
     try {
-      if (!activeProject?.path) {
-        setStep('error'); setStepMsg('No active project — create or select one in the bottom bar.')
-        return
-      }
       if (!character.raw_path || !/\.fla$/i.test(character.raw_path)) {
         setStep('error'); setStepMsg('Selected character has no .fla source file.')
         return
       }
 
-      // 1) Copy the character .fla into {project}/Chars, under the chosen name
-      //    (sendToProject re-appends the .fla extension if it was dropped).
-      const sent = await window.api.sendToProject({
-        sourcePath:  character.raw_path,
-        projectPath: activeProject.path,
-        targetName:  charName.trim() || undefined,
-      })
-      if (!sent.success) { setStep('error'); setStepMsg(sent.error); return }
+      let charPath = character.raw_path
+      if (willCopyToProject) {
+        setStepMsg('Copying character to project…')
+        // sendToProject re-appends the .fla extension if it was dropped.
+        const sent = await window.api.sendToProject({
+          sourcePath:  character.raw_path,
+          projectPath: activeProject.path,
+          targetName:  charName.trim() || undefined,
+        })
+        if (!sent.success) { setStep('error'); setStepMsg(sent.error); return }
+        charPath = sent.data
+      }
 
-      // 2+3+4) One bridge job: open char, import symbol (user answers the
-      // conflict dialog with "Don't replace"), re-copy to clipboard.
       const st = await window.api.animateStatus().catch(() => ({ connected: false }))
       if (!st.connected) {
         setStep('error'); setStepMsg('Animate not connected — open the ZeusPack Bridge panel in Animate.')
         return
       }
+      // 2+3+4) One bridge job: open char, import symbol (user answers the
+      // conflict dialog with "Don't replace"), re-copy to clipboard, close.
       setStep('animate')
-      setStepMsg(autoResolveConflict
-        ? 'In Animate: importing symbol… (conflict dialog auto-answered)'
-        : 'In Animate: importing symbol… (answer "Don\'t replace" if asked)')
+      setStepMsg('In Animate: importing symbol… (answer "Don\'t replace" if asked)')
       const res = await window.api.animateRun({
         action: 'compile-2d',
-        params: { charPath: sent.data, movementPath: movement.raw_path, symbol },
-        timeoutMs: 300000,          // the conflict dialog waits on the user
-        autoDialog: autoResolveConflict,
+        params: { charPath, movementPath: movement.raw_path, symbol },
+        timeoutMs: 300000,   // the conflict dialog waits on the user
       }).catch((e) => ({ success: false, error: e.message }))
 
       if (!res.success) { setStep('error'); setStepMsg(res.error || res.message || 'Compile failed.'); return }
       setStep('done')
       const closedN = res.data?.closed?.length || 0
-      const dlgN    = res.dialogsAnswered || 0
-      if (autoResolveConflict && !dlgN && res.dialogCandidates) {
-        // Auto-answer never fired — log what Animate actually had on screen so
-        // the real dialog can be identified.
-        console.log('[Compile2D] auto-answer missed. Animate windows:', res.dialogCandidates)
-      }
       setStepMsg(res.data?.recopied
         ? `Clipboard ready — press Ctrl+V in your Animate file.` +
-          `${dlgN ? ` Auto-answered ${dlgN} conflict dialog${dlgN > 1 ? 's' : ''}.` : ''}` +
           `${closedN ? ' Working files closed (not saved).' : ''}`
         : (res.message || 'Done.'))
+
+      // Dismiss the tray once the run is done — the work now continues in
+      // Animate (Ctrl+V). Short delay so the success line is readable first.
+      setTimeout(() => exitCompileMode(), 2000)
     } catch (e) {
       setStep('error'); setStepMsg(e.message)
     }
@@ -252,7 +251,7 @@ export default function CompileTray() {
           <Slot label="Character" Icon={User}           asset={character} onClear={clearCharacter} />
 
           {/* 2D: name for the copy placed in {project}/Chars */}
-          {is2D && character && (
+          {is2D && character && willCopyToProject && (
             <div>
               <p className="text-[9px] uppercase tracking-wider text-c-text-4 mb-1">Save as</p>
               <input
@@ -274,6 +273,14 @@ export default function CompileTray() {
 
           {/* 2D: pick the movement symbol to bring across */}
           {is2D && <SymbolPicker movement={movement} symbol={symbol} onSelect={setSymbol} />}
+
+          {/* Make the no-project path explicit — the pack file is opened but
+              never saved, so nothing in the library is modified. */}
+          {is2D && character && !willCopyToProject && (
+            <p className="text-[9px] text-c-text-4 leading-snug">
+              No project copy — opens the pack file directly and closes it without saving.
+            </p>
+          )}
         </div>
 
         {/* Compile button */}
@@ -282,9 +289,11 @@ export default function CompileTray() {
             onClick={() => (is2D ? runCompile2d() : setShowModal(true))}
             disabled={is2D ? !ready2d : !ready}
             title={is2D
-              ? (ready2d ? 'Copy character to project, import symbol, load clipboard'
+              ? (ready2d ? (willCopyToProject
+                    ? 'Copy character to project, import symbol, load clipboard'
+                    : 'Open the pack character, import symbol, load clipboard')
                 : !ready ? 'Pick a Character and a Movement first'
-                : !charName.trim() ? 'Enter a file name for the character copy'
+                : (willCopyToProject && !charName.trim()) ? 'Enter a file name for the character copy'
                 : 'Pick a symbol first')
               : (ready ? 'Import character, then append movement' : 'Pick a Character and a Movement first')}
             className={`w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold

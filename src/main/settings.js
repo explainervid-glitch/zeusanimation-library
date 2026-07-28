@@ -13,6 +13,8 @@ const DEFAULT_SETTINGS = {
   assetPaths: [
     { label: '2D', path: 'W:\\2D PACK ZEUSANIMATION\\FULLPACK_Data\\StreamingAssets' },
     { label: '3D', path: 'W:\\3D PACK ZEUSANIMATION\\FULLPACK_Data\\StreamingAssets' },
+    { label: '2D Lagu Anak', path: 'W:\\YOUTUBE ANAK\\Packs' },
+    { label: '-', path: '' },
   ],
   activePathIndex: 0,
   templatePaths: DEFAULT_TEMPLATES.map(t => ({ id: t.id, path: t.path })),

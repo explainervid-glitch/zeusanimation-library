@@ -39,6 +39,7 @@ const mockApi = {
   // Add
   getStyleNames:       ()            => Promise.resolve([]),
   addCategory:         (payload)     => Promise.resolve({ success: false, error: 'Browser mode' }),
+  addStyle:            (payload)     => Promise.resolve({ success: false, error: 'Browser mode' }),
   deleteCategory:      (payload)     => Promise.resolve({ success: false, error: 'Browser mode' }),
   createAsset:         (payload)     => Promise.resolve({ success: false, error: 'Browser mode' }),
   createProject:       (payload)     => Promise.resolve({ success: false, error: 'Browser mode' }),

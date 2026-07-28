@@ -14,7 +14,6 @@ import { createServer } from 'http'
 import { app, ipcMain } from 'electron'
 import { randomUUID } from 'crypto'
 import { readFlaLibrary } from './flaLibrary.js'
-import { startDialogAutoAnswer } from './dialogAuto.js'
 
 const HOST = '127.0.0.1'
 const PORT = 8770
@@ -127,24 +126,12 @@ export function stopAnimateBridge() {
 // ─── IPC (renderer ↔ bridge) ──────────────────────────────────
 export function registerAnimateIpc() {
   ipcMain.handle('animate-status', async () => ({ success: true, ...animateStatus() }))
-  ipcMain.handle('animate-run', async (_e, { action, params = {}, timeoutMs, autoDialog } = {}) => {
+  ipcMain.handle('animate-run', async (_e, { action, params = {}, timeoutMs } = {}) => {
     if (!action) return { success: false, error: 'Missing action' }
-    // While this job runs, optionally watch for Animate's native "Resolve
-    // Library Conflict" modal and answer it with the default ("Don't replace").
-    // JSFL is blocked behind that dialog, so it can only be answered from here.
-    const watcher = autoDialog ? startDialogAutoAnswer() : null
     try {
       const result = await enqueueAnimateJob(action, params, timeoutMs)
-      const w = watcher ? watcher.stop() : { answered: 0, lastCandidates: '' }
-      return {
-        success: result.ok, ...result,
-        dialogsAnswered: w.answered,
-        // Surfaced only when auto-answer never fired — names the windows
-        // Animate actually had on screen, so we can identify the real dialog.
-        dialogCandidates: w.answered ? '' : w.lastCandidates,
-      }
+      return { success: result.ok, ...result }
     } catch (err) {
-      watcher?.stop()
       return { success: false, error: err.message }
     }
   })

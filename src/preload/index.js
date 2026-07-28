@@ -21,6 +21,7 @@ const api = {
   saveStyleHints:      (payload)     => ipcRenderer.invoke('set-style-hints', payload),
   generateStyleGuide:  (payload)     => ipcRenderer.invoke('generate-style-guide', payload),
   addCategory:         (payload)     => ipcRenderer.invoke('add-category', payload),
+  addStyle:            (payload)     => ipcRenderer.invoke('add-style', payload),
   deleteCategory:      (payload)     => ipcRenderer.invoke('delete-category', payload),
   createAsset:         (payload)     => ipcRenderer.invoke('create-asset', payload),
   createProject:       (payload)     => ipcRenderer.invoke('create-project', payload),

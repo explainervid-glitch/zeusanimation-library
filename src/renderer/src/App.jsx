@@ -76,8 +76,10 @@ export default function App() {
   const char2dImportEnabled     = useSettingsStore((s) => s.char2dImportEnabled)
   const isCompileMode           = useCompileStore((s) => s.isCompileMode)
   useEffect(() => {
+    // Mirror Toolbar's canCompile: 2D compile doesn't require a project or
+    // Direct Character Import — it falls back to opening the pack file.
     const ok = (activePackIndex === 1 && blenderImportEnabled) ||
-      (activePackIndex === 0 && importCharactersEnabled && blenderImportEnabled && char2dImportEnabled)
+      (activePackIndex === 0 && char2dImportEnabled)
     if (isCompileMode && !ok) {
       useCompileStore.getState().exitCompileMode()
     }
