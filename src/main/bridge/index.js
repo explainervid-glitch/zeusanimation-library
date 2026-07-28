@@ -20,7 +20,7 @@ const PORT = 8765
 
 // Commands the bridge may dispatch. Scope: read + write assets.
 // Deliberately excluded:
-//   send-to-project / create-project / delete-project-file — touch the user's
+//   copy-asset-to / delete-project-file — touch the user's
 //     project folders, outside the library itself
 //   select-folder / select-file — open a modal dialog, would hang a headless call
 //   save-settings — app configuration, not asset data

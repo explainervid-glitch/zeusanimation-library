@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
 import { X, Combine, Loader, Check, AlertCircle, RefreshCw, Monitor } from 'lucide-react'
-import useProjectStore from '../../store/useProjectStore'
 import useSettingsStore from '../../store/useSettingsStore'
 import useCompileStore from '../../store/useCompileStore'
 
@@ -18,7 +17,6 @@ function basename(p) {
 // 4) import the Character (append or link per the Import method setting), then
 // append the Movement — both into the Temporary scene.
 export default function CompileModal({ character, movement, onClose }) {
-  const activeProject     = useProjectStore((s) => s.activeProject)
   const blenderImportMode = useSettingsStore((s) => s.blenderImportMode)
   const exitCompileMode   = useCompileStore((s) => s.exitCompileMode)
   const isLink = blenderImportMode === 'link'
@@ -51,14 +49,17 @@ export default function CompileModal({ character, movement, onClose }) {
         setPrepError('Both the Character and Movement need a .blend source file.')
         setStage('error'); return
       }
-      if (!activeProject?.path) {
-        setPrepError('No active project — create or select one in the bottom bar first.')
+      // Destination is chosen per run — there's no "active project" anymore.
+      const picked = await window.api.selectFolder().catch(() => ({ success: false }))
+      if (cancelled) return
+      if (!picked?.success || !picked.data) {
+        setPrepError('No destination folder chosen.')
         setStage('error'); return
       }
-      const r = await window.api.sendToProject({ sourcePath: character.raw_path, projectPath: activeProject.path })
+      const r = await window.api.copyAssetTo({ sourcePath: character.raw_path, destDir: picked.data })
       if (cancelled) return
       if (!r.success) {
-        setPrepError(r.error || 'Failed to copy the character into the project.')
+        setPrepError(r.error || 'Failed to copy the character.')
         setStage('error'); return
       }
       setProjectCharPath(r.data)
@@ -66,7 +67,7 @@ export default function CompileModal({ character, movement, onClose }) {
       setStage('ready')
     })()
     return () => { cancelled = true }
-  }, [character, movement, activeProject])
+  }, [character, movement])
 
   // ── Step 2: scan Blender ──────────────────────────────────────
   const scanBlenders = async () => {

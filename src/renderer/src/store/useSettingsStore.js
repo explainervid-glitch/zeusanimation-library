@@ -1,7 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-const MAX_PATHS = 5
 
 // Label & filename template — hardcoded, tidak bisa diubah user
 export const TEMPLATE_DEFS = [
@@ -53,7 +52,8 @@ const useSettingsStore = create(
       toggleChar2dImportEnabled: ()  => set(s => ({ char2dImportEnabled: !s.char2dImportEnabled })),
 
 
-      assetPaths:      [{ label: 'Pack 1', path: '' }],
+      // Asset paths are hardcoded in src/shared/PathConfig.js — read-only here.
+      assetPaths:      [],
       activePathIndex: 0,
       templatePaths: TEMPLATE_DEFS.map(t => ({ id: t.id, path: '' })),
       taggerUrl:      'http://192.168.1.27:8000',
@@ -84,7 +84,7 @@ const useSettingsStore = create(
               return { id: t.id, path: saved?.path || '' }
             })
             set({
-              assetPaths:      d.assetPaths      ?? [{ label: 'Pack 1', path: '' }],
+              assetPaths:      d.assetPaths      ?? [],
               activePathIndex: d.activePathIndex ?? 0,
               templatePaths:   mergedTemplates,
               taggerUrl:       d.taggerUrl       ?? 'http://192.168.1.27:8000',
@@ -102,36 +102,6 @@ const useSettingsStore = create(
   closeSettings: () => set({ isOpen: false, saved: false }),
 
   // ─── ASSET PATHS ──────────────────────────────────────────────
-  addPath: () => {
-    const { assetPaths } = get()
-    if (assetPaths.length >= MAX_PATHS) return
-    set({ assetPaths: [...assetPaths, { label: `Pack ${assetPaths.length + 1}`, path: '' }] })
-  },
-
-  removePath: (index) => {
-    const { assetPaths, activePathIndex } = get()
-    if (assetPaths.length <= 1) return
-    const newPaths  = assetPaths.filter((_, i) => i !== index)
-    const newActive = activePathIndex >= newPaths.length ? newPaths.length - 1
-      : activePathIndex === index ? 0
-      : activePathIndex > index  ? activePathIndex - 1
-      : activePathIndex
-    set({ assetPaths: newPaths, activePathIndex: newActive })
-  },
-
-  updatePathValue: (index, path) => {
-    const { assetPaths } = get()
-    set({ assetPaths: assetPaths.map((p, i) => i === index ? { ...p, path } : p) })
-  },
-
-  browsePath: async (index) => {
-    const result = await window.api.selectFolder()
-    if (result.success) {
-      const { assetPaths } = get()
-      set({ assetPaths: assetPaths.map((p, i) => i === index ? { ...p, path: result.data } : p) })
-    }
-  },
-
   // ─── TAGGER ───────────────────────────────────────────────────
   updateTaggerUrl:      (url) => set({ taggerUrl: url }),
   updateRagUrl:         (url) => set({ ragUrl: url }),
@@ -153,10 +123,10 @@ const useSettingsStore = create(
 
   // ─── SAVE ─────────────────────────────────────────────────────
   saveSettings: async () => {
-    const { assetPaths, activePathIndex, templatePaths, taggerUrl, ragUrl, llmUrl } = get()
+    const { activePathIndex, templatePaths, taggerUrl, ragUrl, llmUrl } = get()
     set({ loading: true })
     try {
-      const result = await window.api.saveSettings({ assetPaths, activePathIndex, templatePaths, taggerUrl, ragUrl, llmUrl })
+      const result = await window.api.saveSettings({ activePathIndex, templatePaths, taggerUrl, ragUrl, llmUrl })
       if (result.success) {
         set({ loading: false, saved: true })
         setTimeout(() => set({ saved: false }), 2000)

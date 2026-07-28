@@ -17,12 +17,12 @@ function basename(filePath) {
 }
 
 // Import a Character asset into a running Blender instance.
-// Flow (identical for both methods): 1) copy asset into {project}/Chars (skips
+// Flow (identical for both methods): 1) copy asset into a chosen folder (skips
 // if already there — preserves any edits on the project copy)  2) scan for a
 // running Blender  3) list collections FROM THE PROJECT COPY (not the library
 // path)  4) append OR link (per `mode`) the chosen collection into Blender's
 // Temporary scene.
-export default function BlenderImportModal({ asset, projectPath, mode = 'append', onClose }) {
+export default function BlenderImportModal({ asset, mode = 'append', onClose }) {
   const isAppend = mode !== 'link'
   const Verb     = isAppend ? 'Append' : 'Link'
 
@@ -44,7 +44,9 @@ export default function BlenderImportModal({ asset, projectPath, mode = 'append'
   const [done,        setDone]        = useState(false)
   const [error,       setError]       = useState(null)
 
-  // ── Step 1: copy the asset into {project}/Chars ───────────────
+  // ── Step 1: copy the asset into a folder the user picks ───────
+  // There is no "active project" anymore — the destination is chosen here, and
+  // Blender then reads collections from THAT copy (never the library original).
   useEffect(() => {
     let cancelled = false
     ;(async () => {
@@ -53,15 +55,17 @@ export default function BlenderImportModal({ asset, projectPath, mode = 'append'
         setStage('error')
         return
       }
-      if (!projectPath) {
-        setPrepError('No active project — create or select one in the bottom bar first.')
+      const picked = await window.api.selectFolder().catch(() => ({ success: false }))
+      if (cancelled) return
+      if (!picked?.success || !picked.data) {
+        setPrepError('No destination folder chosen.')
         setStage('error')
         return
       }
-      const result = await window.api.sendToProject({ sourcePath: asset.raw_path, projectPath })
+      const result = await window.api.copyAssetTo({ sourcePath: asset.raw_path, destDir: picked.data })
       if (cancelled) return
       if (!result.success) {
-        setPrepError(result.error || 'Failed to copy asset into the project.')
+        setPrepError(result.error || 'Failed to copy the asset.')
         setStage('error')
         return
       }
@@ -70,7 +74,7 @@ export default function BlenderImportModal({ asset, projectPath, mode = 'append'
       setStage('ready')
     })()
     return () => { cancelled = true }
-  }, [asset.raw_path, projectPath])
+  }, [asset.raw_path])
 
   // ── Step 2: scan all Blender ports ─────────────────────────────
   const scanBlenders = async () => {

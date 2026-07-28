@@ -2,8 +2,8 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { X, FolderOpen, Save, Check, RefreshCw, Plus, Trash2, File, Loader, Database, Sun, Moon, Sliders, Sparkles } from 'lucide-react'
 import useSettingsStore, { TEMPLATE_DEFS } from '../../store/useSettingsStore'
 import useAssetStore from '../../store/useAssetStore'
+import { ASSET_PACKS, usablePacks } from '../../../../shared/PathConfig.js'
 
-const MAX_PATHS = 5
 
 // Small pill toggle: shows one of two labels, knob slides to the active side.
 function MiniToggle({ on, onToggle, onLabel = 'On', offLabel = 'Off' }) {
@@ -23,7 +23,6 @@ function MiniToggle({ on, onToggle, onLabel = 'On', offLabel = 'Off' }) {
 export default function SettingsModal() {
   const {
     isOpen, closeSettings,
-    assetPaths, addPath, removePath, updatePathValue, browsePath,
     templatePaths, updateTemplatePath, browseTemplatePath,
     taggerUrl, updateTaggerUrl,
     ragUrl, updateRagUrl,
@@ -272,100 +271,26 @@ export default function SettingsModal() {
             {/* ══════════ GENERAL TAB ══════════ */}
             {activeTab === 'general' && (
               <>
-                {/* ── Asset Paths ── */}
-                <div className="space-y-4 pb-4 border-b border-c-border">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-semibold text-c-text uppercase tracking-wider">
-                      Asset Paths
-                    </label>
-                    <button
-                      onClick={addPath}
-                      disabled={assetPaths.length >= MAX_PATHS}
-                      className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium border transition-all
-                        ${assetPaths.length >= MAX_PATHS
-                          ? 'opacity-30 cursor-not-allowed border-c-border text-c-text-4'
-                          : 'border-c-border-2 text-c-text-3 hover:bg-c-hover hover:text-c-text'
-                        }`}
-                    >
-                      <Plus size={11} />
-                      Add
-                      <span className="text-c-text-4 ml-0.5">({assetPaths.length}/{MAX_PATHS})</span>
-                    </button>
-                  </div>
-
-                  <p className="text-[11px] text-c-text-3">
-                    Main folder. Use the toolbar dropdown to switch packs.
-                  </p>
-
-                  <div className="bg-c-raised border border-c-border rounded-lg px-3 py-3 space-y-3">
-                    {assetPaths.map((item, index) => {
-                      const isLast = index === assetPaths.length - 1
-                      return (
-                        <div
-                          key={index}
-                          className={`flex flex-col gap-1.5 ${!isLast ? 'pb-3 border-b border-c-border/50' : ''}`}
-                        >
-                          <div className="flex items-center gap-2">
-                            <span className="text-[11px] font-semibold text-c-text-2 w-14 flex-shrink-0">
-                              {item.label || `Pack ${index + 1}`}
-                            </span>
-                            <span className="text-c-text-4 text-[10px] flex-1 truncate font-mono">
-                              {item.path || <span className="text-c-text-4">Not set</span>}
-                            </span>
-                            <button
-                              onClick={() => removePath(index)}
-                              disabled={assetPaths.length <= 1}
-                              className={`flex-shrink-0 p-1 rounded transition-all
-                                ${assetPaths.length <= 1
-                                  ? 'opacity-20 cursor-not-allowed text-c-text-4'
-                                  : 'text-c-text-2 hover:text-c-error hover:bg-c-error-bg/20'
-                                }`}
-                            >
-                              <Trash2 size={11} />
-                            </button>
-                          </div>
-
-                          <div className="flex gap-1.5">
-                            <input
-                              type="text"
-                              value={item.path}
-                              onChange={(e) => updatePathValue(index, e.target.value)}
-                              placeholder="W:\path\to\StreamingAssets"
-                              className="flex-1 bg-c-base border border-c-border rounded px-2 py-1.5 text-[11px] text-c-text placeholder-c-text-4 outline-none focus:border-c-accent transition-colors font-mono"
-                            />
-                            <button
-                              onClick={() => browsePath(index)}
-                              className="flex items-center gap-1 px-2 py-1.5 rounded text-[11px] font-medium bg-c-hover border border-c-border-2 text-c-text-2 hover:bg-c-border hover:text-c-text transition-all flex-shrink-0"
-                            >
-                              <FolderOpen size={11} />
-                              Browse
-                            </button>
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-
-                {/* ── Appearance ── */}
-                <div className="pb-4 border-b border-c-border">
-                  <label className="text-xs font-semibold text-c-text uppercase tracking-wider block mb-2">
-                    Appearance
+                {/* ── Asset Paths (read-only) ── */}
+                <div className="space-y-2 pb-4 border-b border-c-border">
+                  <label className="text-xs font-semibold text-c-text uppercase tracking-wider block">
+                    Asset Paths
                   </label>
-                  <button
-                    onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
-                    className="flex items-center gap-2 text-[11px] text-c-text-3 hover:text-c-text transition-colors"
-                    title={theme === 'dark' ? 'Switch to light' : 'Switch to dark'}
-                  >
-                    <span className="relative inline-block w-8 h-4 rounded-full bg-c-raised border border-c-border-2 transition-colors">
-                      <span
-                        className={`absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-c-accent transition-all duration-200
-                          ${theme === 'dark' ? 'left-0.5' : 'left-4'}`}
-                      />
-                    </span>
-                    {theme === 'dark' ? <Moon size={12} /> : <Sun size={12} />}
-                    <span className="capitalize">{theme}</span>
-                  </button>
+                  <p className="text-[11px] text-c-text-3">
+                    Configured in <code className="font-mono text-[10px] bg-c-raised px-1 py-0.5 rounded border border-c-border">src/shared/PathConfig.js</code> — not a user preference, so it stays identical for everyone.
+                  </p>
+                  <div className="bg-c-raised border border-c-border rounded-lg divide-y divide-c-text-4">
+                    {ASSET_PACKS.map((p) => (
+                      <div key={p.index} className="flex items-center gap-2 px-3 py-2">
+                        <span className="text-[10px] font-mono text-c-text-4 w-4 flex-shrink-0">{p.index}</span>
+                        <span className="text-[11px] font-medium text-c-text w-24 flex-shrink-0 truncate">{p.label}</span>
+                        <span className={`text-[10px] font-mono truncate flex-1 ${p.path ? 'text-c-text-3' : 'text-c-text-4 italic'}`}
+                          title={p.path || 'no path — hidden from the pack dropdown'}>
+                          {p.path || 'not set'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
 
                 {/* ── Direct Character Import ─────────────────────────
@@ -452,7 +377,7 @@ export default function SettingsModal() {
                       return (
                         <div
                           key={def.id}
-                          className={`flex flex-col gap-1.5 ${!isLast ? 'pb-3 border-b border-c-border/50' : ''}`}
+                          className={`flex flex-col gap-1.5 ${!isLast ? 'pb-3 border-b border-c-text-4' : ''}`}
                         >
                           <div className="flex items-center gap-2">
                             <span className="text-[11px] font-semibold text-c-text-2 flex-1">
@@ -730,19 +655,19 @@ export default function SettingsModal() {
                   </p>
 
                   {/* Pack selector — edit hints for either pack without switching */}
-                  {assetPaths.length > 1 && (
+                  {usablePacks().length > 1 && (
                     <div className="flex items-center gap-1 bg-c-raised border border-c-border rounded-lg p-0.5 w-fit">
-                      {assetPaths.map((p, i) => (
+                      {usablePacks().map((p) => (
                         <button
-                          key={i}
-                          onClick={() => setHintPackIndex(i)}
+                          key={p.index}
+                          onClick={() => setHintPackIndex(p.index)}
                           className={`px-3 py-1 rounded-md text-[11px] font-medium transition-all
-                            ${hintPackIndex === i
+                            ${hintPackIndex === p.index
                               ? 'bg-c-accent text-c-on-accent'
                               : 'text-c-text-3 hover:text-c-text'
                             }`}
                         >
-                          {p.label || `Pack ${i + 1}`}
+                          {p.label}
                         </button>
                       ))}
                     </div>

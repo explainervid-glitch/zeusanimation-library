@@ -42,8 +42,8 @@ const mockApi = {
   addStyle:            (payload)     => Promise.resolve({ success: false, error: 'Browser mode' }),
   deleteCategory:      (payload)     => Promise.resolve({ success: false, error: 'Browser mode' }),
   createAsset:         (payload)     => Promise.resolve({ success: false, error: 'Browser mode' }),
-  createProject:       (payload)     => Promise.resolve({ success: false, error: 'Browser mode' }),
-  sendToProject:       (payload)     => Promise.resolve({ success: false, error: 'Browser mode' }),
+  copyAssetTo:         (payload)     => Promise.resolve({ success: false, error: 'Browser mode' }),
+  importAsset:         (payload)     => Promise.resolve({ success: false, error: 'Browser mode' }),
   deleteProjectFile:   (filePath)    => Promise.resolve({ success: false, error: 'Browser mode' }),
   openPath:            (path)        => Promise.resolve({ success: false, error: 'Browser mode' }),
 

@@ -1,103 +1,49 @@
-import { useState } from 'react'
-import { FolderGit2, FolderOpen, X, FolderPlus } from 'lucide-react'
-import useProjectStore from '../store/useProjectStore'
-import AddProjectModal from './Toolbar/AddProjectModal'
+import { Combine } from 'lucide-react'
+import useAssetStore from '../store/useAssetStore'
+import useSettingsStore from '../store/useSettingsStore'
+import useCompileStore from '../store/useCompileStore'
 
-// Derive the folder name from a full path (Windows or POSIX separators).
-function baseName(p) {
-  return p ? p.split(/[\\/]/).filter(Boolean).pop() : ''
-}
-
-// Persistent status bar: active project on the left, "Add Project" in the
-// center, project actions on the right.
+// Persistent status bar: current pack + counts on the left, mode actions on
+// the right. (The old "active project" selector lived here and is gone —
+// destinations are now chosen per-import.)
 export default function BottomBar() {
-  const { activeProject, setActiveProject, clearActiveProject } = useProjectStore()
-  const [showProjectModal, setShowProjectModal] = useState(false)
+  const activePackIndex      = useAssetStore((s) => s.activePackIndex)
+  const blenderImportEnabled = useSettingsStore((s) => s.blenderImportEnabled)
+  const char2dImportEnabled  = useSettingsStore((s) => s.char2dImportEnabled)
+  const isCompileMode        = useCompileStore((s) => s.isCompileMode)
+  const toggleCompileMode    = useCompileStore((s) => s.toggleCompileMode)
 
-  const handleSelect = async () => {
-    const result = await window.api.selectFolder()
-    if (result?.success) {
-      setActiveProject({ name: baseName(result.data), path: result.data })
-    }
-  }
-
-  const handleOpen = () => {
-    if (activeProject?.path) window.api.openPath(activeProject.path)
-  }
+  // 3D compile needs the Blender import mode on. 2D (Animate) is available for
+  // the whole pack — it works without Direct Character Import, just skipping
+  // the copy step. "2D Character" remains an explicit opt-out.
+  const canCompile = (activePackIndex === 1 && blenderImportEnabled) ||
+    (activePackIndex === 0 && char2dImportEnabled)
 
   return (
-    <>
-      <footer className="h-12 flex items-center gap-3 px-3 flex-shrink-0
-        select-none bg-c-surface border-t border-c-border text-[11px]">
+    <footer className="h-12 flex items-center gap-3 px-4 flex-shrink-0
+      select-none bg-c-surface border-t border-c-border text-[11px]">
 
-        {/* Left — active project */}
-        <div className="flex items-center gap-2 min-w-0 flex-1">
-          <FolderGit2 size={13} className="text-c-accent flex-shrink-0" />
-          {activeProject ? (
-            <>
-              <span className="text-c-text-4 flex-shrink-0">Project:</span>
-              <button
-                onClick={handleOpen}
-                title={`Open ${activeProject.path}`}
-                className="flex items-center gap-1 min-w-0 text-c-text font-medium
-                  hover:text-c-accent transition-colors"
-              >
-                <span className="truncate">{activeProject.name}</span>
-                <FolderOpen size={11} className="flex-shrink-0 opacity-60" />
-              </button>
-            </>
-          ) : (
-            <span className="text-c-text-3 truncate">No active project</span>
-          )}
-        </div>
+      {/* Left — reserved; spacer keeps the actions right-aligned */}
+      <div className="flex-1 min-w-0" />
 
-        {/* Right — project actions (Add Project sits next to Change) */}
-        <div className="flex items-center gap-3 flex-shrink-0">
-          {activeProject ? (
-            <button
-              onClick={handleSelect}
-              className="text-c-text hover:text-c-text transition-colors flex-shrink-0"
-              title="Switch to another existing project folder"
-            >
-              Change Project
-            </button>
-          ) : (
-            <button
-              onClick={handleSelect}
-              className="flex items-center px-3 py-1.5 rounded-lg text-xs font-medium
-                bg-c-raised border border-c-border-2 text-c-text-2
-                hover:bg-c-hover hover:text-c-text transition-all flex-shrink-0"
-              title="Pick an existing project folder"
-            >
-              Select Project
-            </button>
-          )}
-
-          {!activeProject && (
-            <button
-              onClick={() => setShowProjectModal(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
-                bg-c-accent text-c-on-accent hover:bg-c-accent-h transition-all"
-              title="Create a new project folder + structure"
-            >
-              <FolderPlus size={13} />
-              Add Project
-            </button>
-          )}
-
-          {activeProject && (
-            <button
-              onClick={clearActiveProject}
-              className="text-c-text-4 hover:text-c-text transition-colors flex-shrink-0"
-              title="Clear active project"
-            >
-              <X size={13} />
-            </button>
-          )}
-        </div>
-      </footer>
-
-      <AddProjectModal isOpen={showProjectModal} onClose={() => setShowProjectModal(false)} />
-    </>
+      {/* Right — mode actions */}
+      <div className="flex items-center gap-2 flex-shrink-0">
+        {canCompile && (
+          <button
+            onClick={toggleCompileMode}
+            title={isCompileMode ? 'Exit Compile mode' : 'Compile mode — pick a Character + a Movement'}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
+              border transition-all
+              ${isCompileMode
+                ? 'bg-c-accent/15 border-c-accent text-c-accent'
+                : 'bg-c-raised text-c-text-2 border-c-border-2 hover:bg-c-hover hover:text-c-text'
+              }`}
+          >
+            <Combine size={13} />
+            Compile
+          </button>
+        )}
+      </div>
+    </footer>
   )
 }

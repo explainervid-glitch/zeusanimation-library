@@ -2,8 +2,6 @@ import { useState, useEffect, useRef } from 'react'
 import { X, User, PersonStanding, Combine, ArrowRight, Loader, AlertCircle, Clipboard } from 'lucide-react'
 import useCompileStore from '../../store/useCompileStore'
 import useAssetStore from '../../store/useAssetStore'
-import useProjectStore from '../../store/useProjectStore'
-import useSettingsStore from '../../store/useSettingsStore'
 import CompileModal from './CompileModal'
 import FlaLibraryTree, { SELECTABLE } from '../shared/FlaLibraryTree'
 
@@ -128,8 +126,6 @@ function SymbolPicker({ movement, symbol, onSelect }) {
 export default function CompileTray() {
   const { isCompileMode, character, movement, exitCompileMode, clearCharacter, clearMovement } = useCompileStore()
   const activePackIndex     = useAssetStore((s) => s.activePackIndex)
-  const activeProject       = useProjectStore((s) => s.activeProject)
-  const importCharactersEnabled = useSettingsStore((s) => s.importCharactersEnabled)
   const [showModal, setShowModal] = useState(false)
 
   // 2D compile run state
@@ -137,8 +133,13 @@ export default function CompileTray() {
   const [step, setStep]       = useState('idle')   // idle | copy | animate | done | error
   const [stepMsg, setStepMsg] = useState('')
 
-  // Name the character copy lands under in {project}/Chars. Defaults to the
-  // source file name and is pre-selected, so typing replaces it outright.
+  // Per-run choice: save the character as a renamed copy, or work straight off
+  // the pack file. Off by default — the common case is compiling without
+  // leaving a copy behind; turn it on when you want a saved character file.
+  const [saveAsCopy, setSaveAsCopy] = useState(false)
+
+  // Name the copy is written under. Defaults to the source file name and is
+  // pre-selected, so typing replaces it outright.
   const [charName, setCharName] = useState('')
   const charNameRef = useRef(null)
 
@@ -158,9 +159,9 @@ export default function CompileTray() {
 
   if (!isCompileMode) return null
 
-  // Copy into the project only when there IS one and Direct Character Import
-  // is on. Otherwise compile runs straight off the pack file (never saved).
-  const willCopyToProject = !!activeProject?.path && importCharactersEnabled
+  // ON  → pick a folder and copy the character there under `charName`.
+  // OFF → open the pack file directly (closed afterwards without saving).
+  const willCopyToProject = saveAsCopy
 
   const ready   = !!character && !!movement
   const ready2d = ready && !!symbol && (!willCopyToProject || !!charName.trim()) &&
@@ -181,12 +182,17 @@ export default function CompileTray() {
 
       let charPath = character.raw_path
       if (willCopyToProject) {
-        setStepMsg('Copying character to project…')
-        // sendToProject re-appends the .fla extension if it was dropped.
-        const sent = await window.api.sendToProject({
-          sourcePath:  character.raw_path,
-          projectPath: activeProject.path,
-          targetName:  charName.trim() || undefined,
+        setStepMsg('Choose a destination folder…')
+        const picked = await window.api.selectFolder().catch(() => ({ success: false }))
+        if (!picked?.success || !picked.data) {
+          setStep('error'); setStepMsg('No destination folder chosen.'); return
+        }
+        setStepMsg('Copying character…')
+        // copyAssetTo re-appends the .fla extension if it was dropped.
+        const sent = await window.api.copyAssetTo({
+          sourcePath: character.raw_path,
+          destDir:    picked.data,
+          targetName: charName.trim() || undefined,
         })
         if (!sent.success) { setStep('error'); setStepMsg(sent.error); return }
         charPath = sent.data
@@ -250,7 +256,30 @@ export default function CompileTray() {
         <div className="px-3.5 py-3 space-y-2.5">
           <Slot label="Character" Icon={User}           asset={character} onClear={clearCharacter} />
 
-          {/* 2D: name for the copy placed in {project}/Chars */}
+          {/* 2D: save the character as a renamed copy, or use the pack file */}
+          {is2D && character && (
+            <button
+              onClick={() => setSaveAsCopy((v) => !v)}
+              className="w-full flex items-center justify-between gap-2 group"
+              title={saveAsCopy
+                ? 'Copies the character to a folder you choose, under the name below'
+                : 'Opens the pack file directly and closes it without saving'}
+            >
+              <span className="text-[10px] font-medium text-c-text-2 group-hover:text-c-text transition-colors">
+                Save as character file
+              </span>
+              <span className="flex items-center gap-1.5 flex-shrink-0">
+                <span className={`text-[10px] font-medium ${saveAsCopy ? 'text-c-accent' : 'text-c-text-4'}`}>
+                  {saveAsCopy ? 'On' : 'Off'}
+                </span>
+                <span className="relative inline-block w-8 h-4 rounded-full bg-c-raised border border-c-border-2">
+                  <span className={`absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-c-accent transition-all duration-200
+                    ${saveAsCopy ? 'left-4' : 'left-0.5'}`} />
+                </span>
+              </span>
+            </button>
+          )}
+
           {is2D && character && willCopyToProject && (
             <div>
               <p className="text-[9px] uppercase tracking-wider text-c-text-4 mb-1">Save as</p>
@@ -274,11 +303,11 @@ export default function CompileTray() {
           {/* 2D: pick the movement symbol to bring across */}
           {is2D && <SymbolPicker movement={movement} symbol={symbol} onSelect={setSymbol} />}
 
-          {/* Make the no-project path explicit — the pack file is opened but
-              never saved, so nothing in the library is modified. */}
+          {/* Off = the pack file is opened but never saved, so nothing in the
+              library is modified. Say so explicitly. */}
           {is2D && character && !willCopyToProject && (
             <p className="text-[9px] text-c-text-4 leading-snug">
-              No project copy — opens the pack file directly and closes it without saving.
+              Opens the pack file directly, then closes it without saving.
             </p>
           )}
         </div>

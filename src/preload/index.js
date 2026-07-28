@@ -24,8 +24,8 @@ const api = {
   addStyle:            (payload)     => ipcRenderer.invoke('add-style', payload),
   deleteCategory:      (payload)     => ipcRenderer.invoke('delete-category', payload),
   createAsset:         (payload)     => ipcRenderer.invoke('create-asset', payload),
-  createProject:       (payload)     => ipcRenderer.invoke('create-project', payload),
-  sendToProject:       (payload)     => ipcRenderer.invoke('send-to-project', payload),
+  copyAssetTo:         (payload)     => ipcRenderer.invoke('copy-asset-to', payload),
+  importAsset:         (payload)     => ipcRenderer.invoke('import-asset', payload),
   deleteProjectFile:   (filePath)    => ipcRenderer.invoke('delete-project-file', filePath),
   openPath:            (path)        => ipcRenderer.invoke('open-path', path),
 

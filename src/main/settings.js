@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { join } from 'path'
 import { existsSync, readFileSync, writeFileSync } from 'fs'
+import { ASSET_PACKS, pathAt } from '../shared/PathConfig.js'
 
 const DEFAULT_TEMPLATES = [
   { id: 'anim_2d', label: '2D Animation',  filename: 'tmp_2d_animation.fla',    path: '' },
@@ -9,13 +10,9 @@ const DEFAULT_TEMPLATES = [
   { id: 'bg_3d',   label: '3D Background', filename: 'tmp_3d_background.blend', path: '' },
 ]
 
+// NOTE: asset paths are NOT settings. They live in shared/PathConfig.js and are
+// never written to settings.json — only which pack is selected is persisted.
 const DEFAULT_SETTINGS = {
-  assetPaths: [
-    { label: '2D', path: 'W:\\2D PACK ZEUSANIMATION\\FULLPACK_Data\\StreamingAssets' },
-    { label: '3D', path: 'W:\\3D PACK ZEUSANIMATION\\FULLPACK_Data\\StreamingAssets' },
-    { label: '2D Lagu Anak', path: 'W:\\YOUTUBE ANAK\\Packs' },
-    { label: '-', path: '' },
-  ],
   activePathIndex: 0,
   templatePaths: DEFAULT_TEMPLATES.map(t => ({ id: t.id, path: t.path })),
   taggerUrl:      'http://192.168.1.27:8000',
@@ -30,15 +27,13 @@ function getSettingsPath() {
 
 export function readSettings() {
   const path = getSettingsPath()
-  if (!existsSync(path)) return { ...DEFAULT_SETTINGS }
+  if (!existsSync(path)) return { ...DEFAULT_SETTINGS, assetPaths: ASSET_PACKS }
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf-8'))
 
-    // Migrasi format lama (single assetPath string)
-    if (parsed.assetPath && !parsed.assetPaths) {
-      parsed.assetPaths = [{ label: '2D', path: parsed.assetPath }]
-      delete parsed.assetPath
-    }
+    // Legacy keys — paths now come from PathConfig, so discard any stored copy.
+    delete parsed.assetPath
+    delete parsed.assetPaths
 
     // Merge templatePaths
     const savedTemplates = parsed.templatePaths || []
@@ -51,24 +46,27 @@ export function readSettings() {
       ...DEFAULT_SETTINGS,
       ...parsed,
       templatePaths: mergedTemplates,
+      // Read-only view for consumers that want labels; comes from PathConfig,
+      // not from disk, so editing settings.json can't change it.
+      assetPaths: ASSET_PACKS,
     }
   } catch {
-    return { ...DEFAULT_SETTINGS }
+    return { ...DEFAULT_SETTINGS, assetPaths: ASSET_PACKS }
   }
 }
 
 export function writeSettings(settings) {
   const current = readSettings()
   const merged  = { ...current, ...settings }
-  if (merged.assetPaths) merged.assetPaths = merged.assetPaths.slice(0, 5)
+  // assetPaths is hardcoded config, never a stored preference. Drop it before
+  // writing (and drop any copy an older build left in the file).
+  delete merged.assetPaths
   writeFileSync(getSettingsPath(), JSON.stringify(merged, null, 2), 'utf-8')
-  return merged
+  return { ...merged, assetPaths: ASSET_PACKS }
 }
 
 export function getActiveAssetPath() {
-  const s   = readSettings()
-  const idx = s.activePathIndex ?? 0
-  return s.assetPaths?.[idx]?.path ?? ''
+  return pathAt(readSettings().activePathIndex ?? 0)
 }
 
 export function getTemplatePath(templateId) {

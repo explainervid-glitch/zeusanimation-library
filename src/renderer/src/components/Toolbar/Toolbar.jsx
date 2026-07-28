@@ -1,10 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Plus, Settings, ChevronDown, Check, Package, Search, X, Astroid, RefreshCw, Sparkles, BotMessageSquare, Columns2, FilePlus, MoreVertical, Combine, Layers } from 'lucide-react'
+import { Plus, Settings, ChevronDown, Check, Package, Search, X, Astroid, RefreshCw, Sparkles, BotMessageSquare, Columns2, FilePlus, MoreVertical, Layers } from 'lucide-react'
 import useAssetStore    from '../../store/useAssetStore'
 import useSettingsStore from '../../store/useSettingsStore'
 import useBatchStore    from '../../store/useBatchStore'
 import useLayoutStore   from '../../store/useLayoutStore'
-import useCompileStore  from '../../store/useCompileStore'
 import useAISidebarStore from '../../store/useAISidebarStore'
 import SettingsModal    from './SettingsModal'
 import AddModal         from './AddModal'
@@ -12,19 +11,8 @@ import AddStyleModal    from './AddStyleModal'
 import BatchTaggerModal from './BatchTaggerModal'
 import WindowControls   from './WindowControls'
 import icon from '../../assets/icon.png'
-
-// ⚠ HARDCODED pack list — the toolbar dropdown shows ONLY what's listed here,
-// regardless of how many Asset Paths exist in Settings. To expose another pack:
-//   1. uncomment / add its line below, and
-//   2. make sure that same slot has a path in Settings ▸ Asset Paths
-//      (index must match the position in `assetPaths`).
-const PACK_LIST = [
-  { label: '2D', index: 0 },
-  { label: '3D', index: 1 },
-  { label: '2D Lagu Anak', index: 2 },
-  { label: '-', index: 3 },
-  // { label: 'Pack 5', index: 4 },
-]
+// Pack list lives in one place — see src/shared/PathConfig.js
+import { usablePacks } from '../../../../shared/PathConfig.js'
 
 const TYPE_LABEL = {
   background:  'Background',
@@ -45,7 +33,8 @@ function PackDropdown() {
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
-  const activePack = PACK_LIST[activePackIndex] ?? PACK_LIST[0]
+  const packList   = usablePacks()
+  const activePack = packList.find(p => p.index === activePackIndex) ?? packList[0]
   const isBusy     = scanning || treeLoading
 
   return (
@@ -62,7 +51,7 @@ function PackDropdown() {
           ${isBusy ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
       >
         <Package size={13} className="text-c-accent flex-shrink-0" />
-        <span className="max-w-[140px] truncate">{activePack.label}</span>
+        <span className="max-w-[140px] truncate">{activePack?.label ?? 'Pack'}</span>
         <ChevronDown size={11} className={`flex-shrink-0 transition-transform duration-150 ${open ? 'rotate-180' : ''}`} />
       </button>
 
@@ -71,7 +60,7 @@ function PackDropdown() {
           bg-c-surface border border-c-border rounded-xl shadow-xl
           min-w-[180px] overflow-hidden py-1"
         >
-          {PACK_LIST.map((pack) => (
+          {packList.map((pack) => (
             <button
               key={pack.index}
               onClick={() => { setOpen(false); if (pack.index !== activePackIndex) switchPack(pack.index) }}
@@ -449,17 +438,7 @@ export default function Toolbar() {
   const { openSettings, blenderImportEnabled, importCharactersEnabled, char2dImportEnabled } = useSettingsStore()
   const { isBatchMode, selectedIds, enterBatchMode, exitBatchMode, openModal } = useBatchStore()
   const { splitOpen, toggleSplit } = useLayoutStore()
-  const { isCompileMode, toggleCompileMode } = useCompileStore()
 
-  // Compile availability per pack (Settings ▸ Direct Character Import):
-  //   3D pack: Compile mode toggle on (append/link into Blender)
-  //   2D pack: master on + Compile mode + "2D Character" on (Animate flow)
-  // 3D compile needs the Blender import mode on. 2D (Animate) is available for
-  // the whole pack — it works without a project folder and without Direct
-  // Character Import, it just skips the copy step and opens the pack file
-  // read-only instead. "2D Character" remains an explicit opt-out.
-  const canCompile = (activePackIndex === 1 && blenderImportEnabled) ||
-    (activePackIndex === 0 && char2dImportEnabled)
   const [showAddModal, setShowAddModal]   = useState(false)
   const [showAddStyle, setShowAddStyle]   = useState(false)
   const [refreshing, setRefreshing]       = useState(false)
@@ -528,23 +507,6 @@ export default function Toolbar() {
                 Start Tagging ({selectedIds.size})
               </button>
             </>
-          )}
-
-          {/* Compile toggle — 3D pack + Import to Blender only */}
-          {canCompile && (
-            <button
-              onClick={toggleCompileMode}
-              title={isCompileMode ? 'Exit Compile mode' : 'Compile mode — pick a Character + a Movement'}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium
-                border transition-all
-                ${isCompileMode
-                  ? 'bg-c-accent/15 border-c-accent text-c-accent'
-                  : 'bg-c-raised text-c-text-2 border-c-border-2 hover:bg-c-hover hover:text-c-text'
-                }`}
-            >
-              <Combine size={13} />
-              Compile
-            </button>
           )}
 
           <AddDropdown

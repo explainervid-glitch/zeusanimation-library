@@ -146,7 +146,8 @@ export default function App() {
         {splitOpen && <Panel />}
       </div>
 
-      {/* Bottom status bar — active project */}
+
+      {/* Status bar — pack/category on the left, Compile toggle on the right */}
       <BottomBar />
 
       {/* Compile tray (3D pack) */}

@@ -10,14 +10,16 @@ import {
   getDbMtime, reloadFromDisk
 } from '../db/index.js'
 import { readSettings, writeSettings, getActiveAssetPath, getTemplatePath } from '../settings.js'
+import { packAt, pathAt } from '../../shared/PathConfig.js'
 import { join, basename, dirname, extname } from 'path'
 
 // Track DB mtime untuk deteksi perubahan remote
 let lastDbMtime = 0
 
+// Pack paths are hardcoded config (shared/PathConfig.js), not user settings —
+// only the selected index comes from settings.
 function getActivePath(settings) {
-  const idx = settings.activePathIndex ?? 0
-  return settings.assetPaths?.[idx]?.path ?? ''
+  return pathAt(settings.activePathIndex ?? 0)
 }
 
 // Scrub LLM output for display: drop leftover chat-template tokens (Gemma's
@@ -245,8 +247,7 @@ export async function registerIpcHandlers() {
   // ─── SWITCH PACK ─────────────────────────────────────────────
   ipcMain.handle('switch-pack', async (_e, packIndex) => {
     try {
-      const settings = readSettings()
-      const pack     = settings.assetPaths?.[packIndex]
+      const pack = packAt(packIndex)
       if (!pack?.path) return { success: false, error: `Pack ${packIndex} has no path` }
       writeSettings({ activePathIndex: packIndex })
       await switchDb(pack.path)
@@ -446,108 +447,76 @@ export async function registerIpcHandlers() {
   // ─── CREATE PROJECT ──────────────────────────────────────────
   // Scaffolds a new project folder + its standard sub-folder tree.
   // Aborts if a folder with the same name already exists at parentPath.
-  ipcMain.handle('create-project', async (_e, { parentPath, projectName } = {}) => {
-    // Standard project sub-folder tree (relative to the project root).
-    // recursive mkdir on each leaf creates all intermediate folders too.
-    const PROJECT_FOLDER_TREE = [
-      'Bahan/Aset Klien',
-      'Bahan/Aset Visual',
-      'Chars',
-      'File Animator/File Animate',
-      'File Animator/File Blender',
-      'File Editing/SFX',
-      'File Storyboard/File Animate/File Animate Blender',
-      'File Storyboard/File Animate/Portrait Version/Revisions/Rev 1',
-      'File Storyboard/File Animate/Portrait Version/Revisions/Rev 2',
-      'File Storyboard/File Animate/Portrait Version/Revisions/Rev 3',
-      'File Storyboard/File Animate/Revisions/Rev 1',
-      'File Storyboard/File Animate/Revisions/Rev 2',
-      'File Storyboard/File Animate/Revisions/Rev 3',
-      'File Storyboard/File Animate/Square Version/Revisions/Rev 1',
-      'File Storyboard/File Animate/Square Version/Revisions/Rev 2',
-      'File Storyboard/File Animate/Square Version/Revisions/Rev 3',
-      'File Storyboard/File Blender/Rendered Image',
-      'Font',
-      'VO',
-    ]
-
-    try {
-      const parent = (parentPath || '').trim()
-      const name   = (projectName || '').trim()
-
-      if (!parent)  return { success: false, error: 'Please choose where to create the project.' }
-      if (!name)    return { success: false, error: 'Please enter a project name.' }
-      // Reject characters Windows/most filesystems disallow in folder names.
-      if (/[\\/:*?"<>|]/.test(name)) {
-        return { success: false, error: 'Project name contains invalid characters ( \\ / : * ? " < > | ).' }
-      }
-      if (!existsSync(parent)) {
-        return { success: false, error: 'The selected location no longer exists.' }
-      }
-
-      const projectPath = join(parent, name)
-
-      // Duplicate check — abort without touching anything.
-      if (existsSync(projectPath)) {
-        return { success: false, exists: true, error: `A folder named "${name}" already exists in this location.` }
-      }
-
-      // Create the tree. If it fails partway, roll back the folder we just
-      // started so disk stays clean and a retry isn't blocked by a stray dir.
-      try {
-        for (const rel of PROJECT_FOLDER_TREE) {
-          mkdirSync(join(projectPath, rel), { recursive: true })
-        }
-      } catch (mkErr) {
-        try { rmSync(projectPath, { recursive: true, force: true }) } catch { /* best effort */ }
-        return { success: false, error: `Failed to create project folders: ${mkErr.message}` }
-      }
-
-      return { success: true, data: projectPath }
-    } catch (err) {
-      return { success: false, error: err.message }
-    }
-  })
 
   // ─── SEND TO PROJECT ─────────────────────────────────────────
   // Copies a character asset into {projectPath}/Chars and returns the new path.
   // If the file already exists in the project, it is NOT overwritten (so any
   // edits made inside the project are preserved) — the existing copy is opened.
-  ipcMain.handle('send-to-project', async (_e, { sourcePath, projectPath, targetName } = {}) => {
+  // ─── IMPORT ASSET (native Save As) ───────────────────────────
+  // One step, no in-app modal: the OS dialog picks the folder AND the file
+  // name, then we copy there and hand back the new path so the caller can
+  // open THAT copy (never the pack original). The dialog handles its own
+  // overwrite confirmation, so an existing file is a deliberate replace.
+  ipcMain.handle('import-asset', async (_e, { sourcePath } = {}) => {
     try {
       if (!sourcePath || !existsSync(sourcePath)) {
         return { success: false, error: 'Source asset file not found.' }
       }
-      if (!projectPath || !existsSync(projectPath)) {
-        return { success: false, error: 'Active project folder not found. Create or select a project first.' }
+      const ext = extname(sourcePath)
+      const res = await dialog.showSaveDialog({
+        title: 'Import asset — choose a folder and name',
+        defaultPath: basename(sourcePath),
+        buttonLabel: 'Import',
+        filters: ext
+          ? [{ name: `${ext.slice(1).toUpperCase()} file`, extensions: [ext.slice(1)] },
+             { name: 'All files', extensions: ['*'] }]
+          : [{ name: 'All files', extensions: ['*'] }],
+      })
+      if (res.canceled || !res.filePath) return { success: false, canceled: true }
+
+      let destPath = res.filePath
+      // Re-append the source extension if the user removed it.
+      if (ext && !extname(destPath)) destPath += ext
+
+      mkdirSync(dirname(destPath), { recursive: true })
+      copyFileSync(sourcePath, destPath)
+      return { success: true, data: destPath }
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  // ─── COPY ASSET TO A CHOSEN DIRECTORY ────────────────────────
+  // Replaces the old send-to-project flow. There is no "active project"
+  // anymore: the caller picks the destination folder explicitly and may
+  // rename the file, so nothing is implied about folder layout.
+  ipcMain.handle('copy-asset-to', async (_e, { sourcePath, destDir, targetName } = {}) => {
+    try {
+      if (!sourcePath || !existsSync(sourcePath)) {
+        return { success: false, error: 'Source asset file not found.' }
       }
+      if (!destDir) return { success: false, error: 'No destination folder chosen.' }
+      if (!existsSync(destDir)) mkdirSync(destDir, { recursive: true })
 
-      const charsDir = join(projectPath, 'Chars')
-      if (!existsSync(charsDir)) mkdirSync(charsDir, { recursive: true })
-
-      // Destination filename: custom name if provided, else the source name.
-      // basename() strips any path parts (no traversal); invalid chars rejected;
-      // the source extension is re-appended if the custom name dropped it.
+      // basename() strips any path parts (no traversal); invalid chars are
+      // rejected; the source extension is re-appended if the name dropped it.
       let fileName = basename(sourcePath)
       if (targetName && targetName.trim()) {
         let cleaned = basename(targetName.trim())
-        if (/[\\/:*?"<>|]/.test(cleaned)) {
-          return { success: false, error: 'File name contains invalid characters ( \\ / : * ? " < > | ).' }
+        if (/[\/:*?"<>|]/.test(cleaned)) {
+          return { success: false, error: 'File name contains invalid characters ( \ / : * ? " < > | ).' }
         }
         const srcExt = extname(sourcePath)
         if (srcExt && !extname(cleaned)) cleaned += srcExt
         fileName = cleaned
       }
 
-      const destPath = join(charsDir, fileName)
-
-      let copied = false
-      if (!existsSync(destPath)) {
-        copyFileSync(sourcePath, destPath)
-        copied = true
+      const destPath = join(destDir, fileName)
+      if (existsSync(destPath)) {
+        return { success: false, error: `"${fileName}" already exists in that folder. Choose another name.` }
       }
-
-      return { success: true, data: destPath, copied }
+      copyFileSync(sourcePath, destPath)
+      return { success: true, data: destPath, copied: true }
     } catch (err) {
       return { success: false, error: err.message }
     }
@@ -586,7 +555,7 @@ export async function registerIpcHandlers() {
     try {
       const settings = readSettings()
       const path = (packIndex != null)
-        ? (settings.assetPaths?.[packIndex]?.path ?? '')
+        ? pathAt(packIndex)
         : getActivePath(settings)
       if (!path) {
         return { success: false, error: 'Asset path belum diset' }
@@ -605,7 +574,7 @@ export async function registerIpcHandlers() {
     try {
       const settings = readSettings()
       const path = (packIndex != null)
-        ? (settings.assetPaths?.[packIndex]?.path ?? '')
+        ? pathAt(packIndex)
         : getActivePath(settings)
       if (!path) return { success: false, error: 'Asset path belum diset' }
       writeStyleHints(hints || {}, path)
@@ -622,7 +591,7 @@ export async function registerIpcHandlers() {
     const settings = readSettings()
     const { taggerUrl = 'http://192.168.1.27:8000' } = settings
     const packRoot = (packIndex != null)
-      ? (settings.assetPaths?.[packIndex]?.path ?? '')
+      ? pathAt(packIndex)
       : getActivePath(settings)
     if (!packRoot) return { success: false, error: 'Asset path belum diset' }
 
