@@ -70,6 +70,7 @@ import { electronApp, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { registerIpcHandlers } from './ipc/assets.js'
 import { installCommandRecorder, startBridge, stopBridge } from './bridge/index.js'
+import { startAnimateBridge, stopAnimateBridge, registerAnimateIpc } from './animateBridge/index.js'
 
 app.disableHardwareAcceleration()
 app.commandLine.appendSwitch('no-sandbox')
@@ -185,6 +186,14 @@ app.whenReady().then(async () => {
     console.error('[Main] Bridge failed to start:', err)
   }
 
+  // 3b. Adobe Animate bridge (loopback server the CEP panel polls)
+  try {
+    registerAnimateIpc()
+    startAnimateBridge()
+  } catch (err) {
+    console.error('[Main] Animate bridge failed to start:', err)
+  }
+
   // 4. Buat main window — splash otomatis tutup saat ready-to-show
   createWindow(splash)
 
@@ -193,7 +202,7 @@ app.whenReady().then(async () => {
   })
 })
 
-app.on('will-quit', stopBridge)
+app.on('will-quit', () => { stopBridge(); stopAnimateBridge() })
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()

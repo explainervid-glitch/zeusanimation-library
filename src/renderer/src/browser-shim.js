@@ -72,6 +72,9 @@ const mockApi = {
   ragPing:             ()            => Promise.resolve({ success: false }),
   llmPing:             ()            => Promise.resolve({ success: false }),
   queueStatus:         ()            => Promise.resolve({ success: true, llm: null, rag: null }),
+  animateStatus:       ()            => Promise.resolve({ success: true, connected: false }),
+  animateRun:          ()            => Promise.resolve({ success: false, error: 'not in electron' }),
+  readFlaLibrary:      ()            => Promise.resolve({ success: false, error: 'not in electron' }),
   taggerGenerateVideo: (payload)     => Promise.resolve({ success: false, error: 'Browser mode' }),
   taggerGenerate:      (payload)     => Promise.resolve({ success: false, error: 'Browser mode' }),
 

@@ -1,9 +1,24 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { X, FolderOpen, Save, Check, RefreshCw, Plus, Trash2, File, Loader, Database, Sun, Moon, Link2, Sliders, Sparkles } from 'lucide-react'
+import { X, FolderOpen, Save, Check, RefreshCw, Plus, Trash2, File, Loader, Database, Sun, Moon, Sliders, Sparkles } from 'lucide-react'
 import useSettingsStore, { TEMPLATE_DEFS } from '../../store/useSettingsStore'
 import useAssetStore from '../../store/useAssetStore'
 
 const MAX_PATHS = 5
+
+// Small pill toggle: shows one of two labels, knob slides to the active side.
+function MiniToggle({ on, onToggle, onLabel = 'On', offLabel = 'Off' }) {
+  return (
+    <button onClick={onToggle} className="flex items-center gap-2 flex-shrink-0" role="switch" aria-checked={on}>
+      <span className={`text-[10px] font-medium ${on ? 'text-c-accent' : 'text-c-text-4'}`}>
+        {on ? onLabel : offLabel}
+      </span>
+      <span className="relative inline-block w-8 h-4 rounded-full bg-c-raised border border-c-border-2">
+        <span className={`absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-c-accent transition-all duration-200
+          ${on ? 'left-4' : 'left-0.5'}`} />
+      </span>
+    </button>
+  )
+}
 
 export default function SettingsModal() {
   const {
@@ -18,6 +33,8 @@ export default function SettingsModal() {
     importCharactersEnabled, toggleImportCharactersEnabled,
     blenderImportEnabled, toggleBlenderImportEnabled,
     blenderImportMode, setBlenderImportMode,
+    char2dImportEnabled, toggleChar2dImportEnabled,
+    autoResolveConflict, toggleAutoResolveConflict,
   } = useSettingsStore()
 
   const { rescan, scanning, activePackIndex } = useAssetStore()
@@ -27,6 +44,8 @@ export default function SettingsModal() {
   const [pingStatus, setPingStatus] = useState('idle')
   const [ragPingStatus, setRagPingStatus] = useState('idle')
   const [llmPingStatus, setLlmPingStatus] = useState('idle')
+  const [animateStatus, setAnimateStatus] = useState('idle') // idle | checking | online | offline
+  const [animateMsg, setAnimateMsg]       = useState('')
   const [embedStatus, setEmbedStatus] = useState('idle') // idle | running | done | error
   const [embedProgress, setEmbedProgress] = useState(null)  // { batch, totalBatches }
   const [embedCount, setEmbedCount] = useState(null)
@@ -57,6 +76,22 @@ export default function SettingsModal() {
     setLlmPingStatus('checking')
     const result = await window.api.llmPing().catch(() => ({ success: false }))
     setLlmPingStatus(result.success ? 'online' : 'offline')
+  }, [])
+
+  // Adobe Animate bridge: is the CEP panel connected, and can it round-trip a
+  // job? Asks the panel to read the active document as a live end-to-end test.
+  const checkAnimate = useCallback(async () => {
+    setAnimateStatus('checking')
+    setAnimateMsg('')
+    const st = await window.api.animateStatus().catch(() => ({ connected: false }))
+    if (!st.connected) {
+      setAnimateStatus('offline')
+      setAnimateMsg('Panel not connected — open ZeusPack Bridge in Animate (Window ▸ Extensions).')
+      return
+    }
+    const res = await window.api.animateRun({ action: 'active-doc' }).catch((e) => ({ success: false, error: e.message }))
+    setAnimateStatus(res.success ? 'online' : 'offline')
+    setAnimateMsg(res.success ? (res.message || 'Connected') : (res.error || res.message || 'No response'))
   }, [])
 
   const loadHints = useCallback(async (packIndex) => {
@@ -334,72 +369,83 @@ export default function SettingsModal() {
                   </button>
                 </div>
 
-                {/* ── Character Import ── */}
-                <div className="pb-4 border-b border-c-border">
-                  {/* Heading + master toggle on one row */}
-                  <div className="flex items-center justify-between mb-2">
+                {/* ── Direct Character Import ─────────────────────────
+                    Hierarchy (per mockup):
+                      Direct Character Import              On / Off
+                        └ Send to Project  /  Compile and copy to scene
+                            └ (if Compile)  2D Character  On/Off
+                                            3D Character  Append/Link  */}
+                <div className="pb-4 border-b border-c-border space-y-3">
+
+                  {/* Level 1 — master toggle */}
+                  <div className="flex items-center justify-between">
                     <label className="text-xs font-semibold text-c-text uppercase tracking-wider">
-                      Direct Import
+                      Direct Character Import
                     </label>
-                    <button
-                      onClick={toggleImportCharactersEnabled}
-                      title={importCharactersEnabled ? 'Disable Import Characters' : 'Enable Import Characters'}
-                      className="flex-shrink-0"
-                    >
-                      <span className="relative inline-block w-8 h-4 rounded-full bg-c-raised border border-c-border-2 transition-colors">
-                        <span
-                          className={`absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-c-accent transition-all duration-200
-                            ${importCharactersEnabled ? 'left-4' : 'left-0.5'}`}
-                        />
-                      </span>
-                    </button>
+                    <MiniToggle on={importCharactersEnabled} onToggle={toggleImportCharactersEnabled} />
                   </div>
 
                   {importCharactersEnabled && (
-                    <div className="mt-2 pl-1 border-l border-c-border-2 space-y-2">
-                      {/* Import to Blender on/off */}
-                      <button
-                        onClick={toggleBlenderImportEnabled}
-                        className="flex items-center gap-2 text-[11px] text-c-text-3 hover:text-c-text transition-colors pl-1"
-                        title={blenderImportEnabled ? 'Disable import to Blender' : 'Enable import to Blender'}
-                      >
-                        <span className="relative inline-block w-8 h-4 rounded-full bg-c-raised border border-c-border-2 transition-colors">
-                          <span
-                            className={`absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-c-accent transition-all duration-200
-                              ${blenderImportEnabled ? 'left-4' : 'left-0.5'}`}
-                          />
-                        </span>
-                        <Link2 size={12} />
-                        <span>{blenderImportEnabled ? 'Import to Blender' : 'Send to Project only'}</span>
-                      </button>
+                    <div className="pl-3 border-l-2 border-c-border-2 space-y-3">
 
-                      {/* Append vs link method */}
+                      {/* Level 2 — mode: Send to Project ⟷ Compile and copy to scene */}
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-[11px] text-c-text-2">
+                          {blenderImportEnabled ? 'Compile and copy to scene' : 'Send to Project'}
+                        </span>
+                        <MiniToggle
+                          on={blenderImportEnabled}
+                          onToggle={toggleBlenderImportEnabled}
+                          offLabel="Send"
+                          onLabel="Compile"
+                        />
+                      </div>
+
+                      {/* Level 3 — per-pack options, only when Compile is on */}
                       {blenderImportEnabled && (
-                        <button
-                          onClick={() => setBlenderImportMode(blenderImportMode === 'append' ? 'link' : 'append')}
-                          className="flex items-center gap-2 text-[11px] text-c-text-3 hover:text-c-text transition-colors pl-1"
-                          title="Switch import method"
-                        >
-                          <span className="relative inline-block w-8 h-4 rounded-full bg-c-raised border border-c-border-2 transition-colors">
-                            <span
-                              className={`absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-c-accent transition-all duration-200
-                                ${blenderImportMode === 'link' ? 'left-4' : 'left-0.5'}`}
+                        <div className="pl-3 border-l-2 border-c-border-2 space-y-2.5">
+                          <p className="text-[9px] uppercase tracking-wider text-c-text-4">If Compile is on</p>
+
+                          {/* 2D Character — On / Off */}
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="text-[11px] font-medium text-c-text">2D Character</span>
+                            <MiniToggle on={char2dImportEnabled} onToggle={toggleChar2dImportEnabled} />
+                          </div>
+
+                          {/* 3D Character — Append / Link */}
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="text-[11px] font-medium text-c-text">3D Character</span>
+                            <MiniToggle
+                              on={blenderImportMode === 'link'}
+                              onToggle={() => setBlenderImportMode(blenderImportMode === 'append' ? 'link' : 'append')}
+                              offLabel="Append"
+                              onLabel="Link"
                             />
-                          </span>
-                          <span>Method: <span className="text-c-text font-medium capitalize">{blenderImportMode}</span></span>
-                        </button>
+                          </div>
+
+                          {/* 2D only — auto-answer Animate's conflict dialog */}
+                          {char2dImportEnabled && (
+                            <div className="pt-1 border-t border-c-border/60">
+                              <div className="flex items-center justify-between gap-3">
+                                <span className="text-[11px] font-medium text-c-text">Auto “Don’t replace”</span>
+                                <MiniToggle on={autoResolveConflict} onToggle={toggleAutoResolveConflict} />
+                              </div>
+                              <p className="text-[10px] text-c-text-4 mt-1 leading-relaxed">
+                                Answers Animate’s “Resolve Library Conflict” dialog for you during 2D compile. Windows only.
+                              </p>
+                            </div>
+                          )}
+                        </div>
                       )}
                     </div>
                   )}
 
-                  <p className="text-[10px] text-c-text-4 mt-1.5 leading-relaxed">
+                  <p className="text-[10px] text-c-text-4 leading-relaxed">
                     {!importCharactersEnabled
                       ? 'Off: no Import button; clicking a character card opens the asset.'
                       : !blenderImportEnabled
-                        ? 'Character cards show an Import button and open only via it — Import copies into the project.'
-                        : blenderImportMode === 'append'
-                          ? 'Import copies a character into the project, then appends its collection into Blender.'
-                          : 'Import copies a character into the project, then links its collection into Blender.'}
+                        ? 'Send to Project: Import copies the character into the project folder.'
+                        : `Compile: copies into the project, then ${blenderImportMode === 'link' ? 'links' : 'appends'} 3D into Blender / imports 2D into Animate.`}
                   </p>
                 </div>
 
@@ -561,6 +607,48 @@ export default function SettingsModal() {
                         <span className="text-[10px] text-red-400 font-medium">Server Offline</span>
                         <span className="text-[10px] text-c-text-4 ml-1">— Make sure llm_server.py is running at </span>
                         <span className="text-[10px] text-c-text-4 font-mono">{llmUrl}</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {/* ── Adobe Animate Bridge ── */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-c-text">Adobe Animate Bridge</span>
+                    <button
+                      onClick={checkAnimate}
+                      disabled={animateStatus === 'checking'}
+                      className="flex items-center gap-1.5 px-2 py-1 rounded-lg border border-c-border-2 bg-c-raised text-[10px] text-c-text-3 hover:bg-c-hover hover:text-c-text transition-all disabled:opacity-40"
+                      title="Ask the Animate panel to read the active document"
+                    >
+                      <RefreshCw size={11} className={animateStatus === 'checking' ? 'animate-spin' : ''} />
+                      Test connection
+                    </button>
+                  </div>
+
+                  <div className="flex items-start gap-1.5">
+                    {animateStatus === 'idle' && (
+                      <span className="text-[10px] text-c-text-4">— Not checked yet. Open the ZeusPack Bridge panel in Animate, then test.</span>
+                    )}
+                    {animateStatus === 'checking' && (
+                      <>
+                        <Loader size={10} className="text-yellow-400 animate-spin flex-shrink-0 mt-0.5" />
+                        <span className="text-[10px] text-yellow-400">Talking to Animate…</span>
+                      </>
+                    )}
+                    {animateStatus === 'online' && (
+                      <>
+                        <span className="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0 mt-1" />
+                        <span className="text-[10px] text-green-400 font-medium">Connected</span>
+                        <span className="text-[10px] text-c-text-4 ml-1">{animateMsg}</span>
+                      </>
+                    )}
+                    {animateStatus === 'offline' && (
+                      <>
+                        <span className="w-1.5 h-1.5 rounded-full bg-red-400 flex-shrink-0 mt-1" />
+                        <span className="text-[10px] text-red-400 font-medium flex-shrink-0">Not connected</span>
+                        <span className="text-[10px] text-c-text-4 ml-1">{animateMsg}</span>
                       </>
                     )}
                   </div>

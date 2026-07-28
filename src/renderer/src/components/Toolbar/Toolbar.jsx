@@ -427,13 +427,16 @@ function MenuDropdown({ splitOpen, onToggleSplit, onSync, syncing, synced, syncD
 // ─── TOOLBAR ──────────────────────────────────────────────────
 export default function Toolbar() {
   const { scanning, selectedCategory, assets, checkDbUpdated, activePackIndex } = useAssetStore()
-  const { openSettings, blenderImportEnabled } = useSettingsStore()
+  const { openSettings, blenderImportEnabled, importCharactersEnabled, char2dImportEnabled } = useSettingsStore()
   const { isBatchMode, selectedIds, enterBatchMode, exitBatchMode, openModal } = useBatchStore()
   const { splitOpen, toggleSplit } = useLayoutStore()
   const { isCompileMode, toggleCompileMode } = useCompileStore()
 
-  // "Compile" is exclusive to the 3D pack, and only when Import to Blender is on.
-  const canCompile = activePackIndex === 1 && blenderImportEnabled
+  // Compile availability per pack (Settings ▸ Direct Character Import):
+  //   3D pack: Compile mode toggle on (append/link into Blender)
+  //   2D pack: master on + Compile mode + "2D Character" on (Animate flow)
+  const canCompile = (activePackIndex === 1 && blenderImportEnabled) ||
+    (activePackIndex === 0 && importCharactersEnabled && blenderImportEnabled && char2dImportEnabled)
   const [showAddModal, setShowAddModal]   = useState(false)
   const [refreshing, setRefreshing]       = useState(false)
   const [refreshed, setRefreshed]         = useState(false)

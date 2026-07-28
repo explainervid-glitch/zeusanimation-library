@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
-import { FileX, Pencil, Link, Check, ArrowRightFromLine, Loader, Import } from 'lucide-react'
+import { FileX, Pencil, Link, Check, ArrowRightFromLine, Loader, Import, Clapperboard } from 'lucide-react'
 import { usePanelStore } from '../../store/PanelStoreContext'
 import useProjectStore from '../../store/useProjectStore'
 import useAssetStore from '../../store/useAssetStore'
@@ -9,6 +9,7 @@ import LottieOverlay from '../LottieOverlay'
 import AssetEditModal from './AssetEditModal'
 import BlenderAppendModal from './BlenderAppendModal'
 import BlenderImportModal from './BlenderImportModal'
+import AnimateImportModal from './AnimateImportModal'
 
 const TYPE_RATIO = {
   background: [285, 161],
@@ -74,6 +75,11 @@ function isBlendFile(path) {
   return path?.toLowerCase().endsWith('.blend') ?? false
 }
 
+// Adobe Animate source — the "Import symbol to Animate" button targets these.
+function isFlaFile(path) {
+  return path?.toLowerCase().endsWith('.fla') ?? false
+}
+
 export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBatchMode, isSelected, onToggleSelect, processingStatus, ragScore = null, isHighlighted = false }) {
   const openAsset             = usePanelStore((s) => s.openAsset)
   const reloadCurrentCategory = usePanelStore((s) => s.reloadCurrentCategory)
@@ -93,6 +99,7 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
   const [linkOpen, setLinkOpen]           = useState(false)
   const [copied, setCopied]               = useState(false)
   const [sending, setSending]             = useState(false)
+  const [animateModalOpen, setAnimateModalOpen] = useState(false)  // Import-to-Animate picker
   const [renaming, setRenaming]           = useState(false)
   const [renameValue, setRenameValue]     = useState('')
   const [renameAnchor, setRenameAnchor]   = useState(null)   // button DOMRect
@@ -158,7 +165,10 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
     await reloadCurrentCategory()
   }, [reloadCurrentCategory])
 
-  const showAppend = isBlendFile(asset.raw_path) && type === 'animation'
+  const showAppend        = isBlendFile(asset.raw_path) && type === 'animation'
+  // Animate counterpart: a movement .fla → import its symbol into the active
+  // Adobe Animate document (via the ZeusPack bridge / CEP panel).
+  const showAnimateImport = isFlaFile(asset.raw_path) && type === 'animation'
 
   // Single "Import" button for Character cards. The two flows underneath stay
   // completely separate — this just decides which one runs, based on the
@@ -366,7 +376,7 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
           )}
 
           {/* Action buttons - Right side */}
-          {!isBatchMode && !isCompileMode && !renaming && (showAppend || showImport) && (
+          {!isBatchMode && !isCompileMode && !renaming && (showAppend || showAnimateImport || showImport) && (
             <div className={`
               absolute top-1.5 right-1.5 z-10 flex gap-1
               transition-all duration-150
@@ -383,6 +393,19 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
                   title="Append to Blender"
                 >
                   <ArrowRightFromLine size={11} />
+                </button>
+              )}
+
+              {/* Import symbol to Adobe Animate — for .fla movements */}
+              {showAnimateImport && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); setAnimateModalOpen(true) }}
+                  className="p-1.5 rounded-md bg-black/60 backdrop-blur-sm
+                    text-white/70 hover:text-white hover:bg-black/80
+                    transition-all duration-150"
+                  title="Import symbol to active Adobe Animate document"
+                >
+                  <Clapperboard size={11} />
                 </button>
               )}
 
@@ -439,6 +462,14 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
         <BlenderAppendModal
           asset={asset}
           onClose={() => setAppendOpen(false)}
+        />
+      )}
+
+      {/* Animate Import Modal — browse the .fla library, pick a symbol */}
+      {animateModalOpen && (
+        <AnimateImportModal
+          asset={asset}
+          onClose={() => setAnimateModalOpen(false)}
         />
       )}
 

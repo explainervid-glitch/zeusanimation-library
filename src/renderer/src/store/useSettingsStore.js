@@ -46,6 +46,20 @@ const useSettingsStore = create(
       setBlenderImportMode:    (mode) => set({ blenderImportMode: mode }),
       toggleBlenderImportMode: ()     => set(s => ({ blenderImportMode: s.blenderImportMode === 'append' ? 'link' : 'append' })),
 
+      // 2D Character path (Adobe Animate) on/off — the mockup's "2D Character
+      // On/Off" under Compile. Phase 2: UI/state only.
+      char2dImportEnabled: true,
+      setChar2dImportEnabled:    (v) => set({ char2dImportEnabled: v }),
+      toggleChar2dImportEnabled: ()  => set(s => ({ char2dImportEnabled: !s.char2dImportEnabled })),
+
+      // Auto-answer Animate's native "Resolve Library Conflict" modal with its
+      // default ("Don't replace existing items"). JSFL is blocked behind that
+      // dialog, so ZeusPack answers it via Win32 while a compile job runs.
+      // Windows-only; turn off to click it yourself.
+      autoResolveConflict: true,
+      setAutoResolveConflict:    (v) => set({ autoResolveConflict: v }),
+      toggleAutoResolveConflict: ()  => set(s => ({ autoResolveConflict: !s.autoResolveConflict })),
+
       assetPaths:      [{ label: 'Pack 1', path: '' }],
       activePathIndex: 0,
       templatePaths: TEMPLATE_DEFS.map(t => ({ id: t.id, path: '' })),

@@ -68,15 +68,20 @@ export default function App() {
   const { theme } = useSettingsStore()
   const splitOpen = useLayoutStore((s) => s.splitOpen)
 
-  // Compile is 3D-pack + Import-to-Blender only; leave the mode if either drops.
-  const activePackIndex      = useAssetStore((s) => s.activePackIndex)
-  const blenderImportEnabled = useSettingsStore((s) => s.blenderImportEnabled)
-  const isCompileMode        = useCompileStore((s) => s.isCompileMode)
+  // Leave Compile mode when its preconditions drop.
+  //   3D pack: Compile toggle on. 2D pack: master + Compile + 2D Character on.
+  const activePackIndex         = useAssetStore((s) => s.activePackIndex)
+  const blenderImportEnabled    = useSettingsStore((s) => s.blenderImportEnabled)
+  const importCharactersEnabled = useSettingsStore((s) => s.importCharactersEnabled)
+  const char2dImportEnabled     = useSettingsStore((s) => s.char2dImportEnabled)
+  const isCompileMode           = useCompileStore((s) => s.isCompileMode)
   useEffect(() => {
-    if (isCompileMode && !(activePackIndex === 1 && blenderImportEnabled)) {
+    const ok = (activePackIndex === 1 && blenderImportEnabled) ||
+      (activePackIndex === 0 && importCharactersEnabled && blenderImportEnabled && char2dImportEnabled)
+    if (isCompileMode && !ok) {
       useCompileStore.getState().exitCompileMode()
     }
-  }, [isCompileMode, activePackIndex, blenderImportEnabled])
+  }, [isCompileMode, activePackIndex, blenderImportEnabled, importCharactersEnabled, char2dImportEnabled])
 
   useEffect(() => {
     // Capture the saved view BEFORE anything mutates the store.
