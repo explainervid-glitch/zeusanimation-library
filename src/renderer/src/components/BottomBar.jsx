@@ -1,4 +1,4 @@
-import { Combine } from 'lucide-react'
+import { Combine, Sun, Moon } from 'lucide-react'
 import useAssetStore from '../store/useAssetStore'
 import useSettingsStore from '../store/useSettingsStore'
 import useCompileStore from '../store/useCompileStore'
@@ -10,6 +10,8 @@ export default function BottomBar() {
   const activePackIndex      = useAssetStore((s) => s.activePackIndex)
   const blenderImportEnabled = useSettingsStore((s) => s.blenderImportEnabled)
   const char2dImportEnabled  = useSettingsStore((s) => s.char2dImportEnabled)
+  const theme                = useSettingsStore((s) => s.theme)
+  const setTheme             = useSettingsStore((s) => s.setTheme)
   const isCompileMode        = useCompileStore((s) => s.isCompileMode)
   const toggleCompileMode    = useCompileStore((s) => s.toggleCompileMode)
 
@@ -23,8 +25,17 @@ export default function BottomBar() {
     <footer className="h-12 flex items-center gap-3 px-4 flex-shrink-0
       select-none bg-c-surface border-t border-c-border text-[11px]">
 
-      {/* Left — reserved; spacer keeps the actions right-aligned */}
-      <div className="flex-1 min-w-0" />
+      {/* Left — appearance: icon shows the CURRENT mode, click to switch */}
+      <div className="flex items-center gap-2 flex-1 min-w-0">
+        <button
+          onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          title={theme === 'dark' ? 'Switch to light' : 'Switch to dark'}
+          className="flex items-center justify-center w-7 h-7 rounded-md
+            text-c-text-3 hover:text-c-text hover:bg-c-raised transition-colors"
+        >
+          {theme === 'dark' ? <Moon size={14} /> : <Sun size={14} />}
+        </button>
+      </div>
 
       {/* Right — mode actions */}
       <div className="flex items-center gap-2 flex-shrink-0">

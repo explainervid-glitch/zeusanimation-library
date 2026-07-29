@@ -148,8 +148,6 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
   // Settings toggles AND whether the file can be imported into Blender (.blend).
   const showImport   = type === 'character' && importCharactersEnabled
   const canImport    = blenderImportEnabled && isBlendFile(asset.raw_path)
-  // When Import Characters is on, character cards are import-only (no open-on-click).
-  const importOnly   = type === 'character' && importCharactersEnabled
 
   // Compile mode: character + animation cards are pickable into the tray slots.
   const isCompilePickable = isCompileMode && (type === 'character' || type === 'animation')
@@ -188,7 +186,10 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
         ref={cardRef}
         onClick={() => {
           if (isCompileMode) { if (isCompilePickable) pickForCompile(asset, type); return }
-          if (isBatchMode || importOnly) return   // import-only: open only via the Import button
+          if (isBatchMode) return
+          // Clicking always opens the file — the Import button is an extra action,
+          // not a replacement for opening (it used to suppress open-on-click).
+
           openAsset(asset.raw_path)
         }}
         onMouseEnter={() => setIsHovered(true)}

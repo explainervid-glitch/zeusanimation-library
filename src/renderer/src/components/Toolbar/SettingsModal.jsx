@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { X, FolderOpen, Save, Check, RefreshCw, Plus, Trash2, File, Loader, Database, Sun, Moon, Sliders, Sparkles } from 'lucide-react'
+import { X, Save, Check, RefreshCw, File, Loader, Database, Sliders, Sparkles } from 'lucide-react'
 import useSettingsStore, { TEMPLATE_DEFS } from '../../store/useSettingsStore'
 import useAssetStore from '../../store/useAssetStore'
 import { ASSET_PACKS, usablePacks } from '../../../../shared/PathConfig.js'
@@ -28,7 +28,6 @@ export default function SettingsModal() {
     ragUrl, updateRagUrl,
     llmUrl, updateLlmUrl,
     loading, saved, saveSettings,
-    theme, setTheme,
     importCharactersEnabled, toggleImportCharactersEnabled,
     blenderImportEnabled, toggleBlenderImportEnabled,
     blenderImportMode, setBlenderImportMode,
@@ -296,7 +295,7 @@ export default function SettingsModal() {
                 {/* ── Direct Character Import ─────────────────────────
                     Hierarchy (per mockup):
                       Direct Character Import              On / Off
-                        └ Send to Project  /  Compile and copy to scene
+                        └ Compile                          On / Off
                             └ (if Compile)  2D Character  On/Off
                                             3D Character  Append/Link  */}
                 <div className="pb-4 border-b border-c-border space-y-3">
@@ -312,16 +311,12 @@ export default function SettingsModal() {
                   {importCharactersEnabled && (
                     <div className="pl-3 border-l-2 border-c-border-2 space-y-3">
 
-                      {/* Level 2 — mode: Send to Project ⟷ Compile and copy to scene */}
+                      {/* Level 2 — Compile on/off */}
                       <div className="flex items-center justify-between gap-3">
-                        <span className="text-[11px] text-c-text-2">
-                          {blenderImportEnabled ? 'Compile and copy to scene' : 'Send to Project'}
-                        </span>
+                        <span className="text-[11px] text-c-text-2">Compile</span>
                         <MiniToggle
                           on={blenderImportEnabled}
                           onToggle={toggleBlenderImportEnabled}
-                          offLabel="Send"
-                          onLabel="Compile"
                         />
                       </div>
 
@@ -356,8 +351,8 @@ export default function SettingsModal() {
                     {!importCharactersEnabled
                       ? 'Off: no Import button; clicking a character card opens the asset.'
                       : !blenderImportEnabled
-                        ? 'Send to Project: Import copies the character into the project folder.'
-                        : `Compile: copies into the project, then ${blenderImportMode === 'link' ? 'links' : 'appends'} 3D into Blender / imports 2D into Animate.`}
+                        ? 'Import copies the character to a folder you choose, then opens it.'
+                        : `Compile: ${blenderImportMode === 'link' ? 'links' : 'appends'} 3D into Blender / imports 2D symbols into Animate.`}
                   </p>
                 </div>
 
