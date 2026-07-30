@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ExtensionManifest Version="5.0" ExtensionBundleId="com.zeus.zeuspackaebridge" ExtensionBundleVersion="1.0.0"
+    ExtensionBundleName="ZeusPack AE Bridge" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+    <ExtensionList>
+        <Extension Id="com.zeus.zeuspackaebridge.panel" Version="1.0.0" />
+    </ExtensionList>
+    <ExecutionEnvironment>
+        <HostList>
+            <!-- AEFT = Adobe After Effects.
+                 [15.0,99.9] covers After Effects CC 2018 (15.x, CEP 8/9) through
+                 2024+. CEP 9 is the oldest runtime we require. -->
+            <Host Name="AEFT" Version="[15.0,99.9]" />
+        </HostList>
+        <LocaleList>
+            <Locale Code="All" />
+        </LocaleList>
+        <RequiredRuntimeList>
+            <RequiredRuntime Name="CSXS" Version="9.0" />
+        </RequiredRuntimeList>
+    </ExecutionEnvironment>
+    <DispatchInfoList>
+        <Extension Id="com.zeus.zeuspackaebridge.panel">
+            <DispatchInfo>
+                <Resources>
+                    <MainPath>./index.html</MainPath>
+                    <ScriptPath>./jsx/host.jsx</ScriptPath>
+                </Resources>
+                <Lifecycle>
+                    <AutoVisible>true</AutoVisible>
+                </Lifecycle>
+                <UI>
+                    <Type>Panel</Type>
+                    <Menu>ZeusPack AE Bridge</Menu>
+                    <Geometry>
+                        <!-- Collapsed height only: one status row. The panel
+                             grows itself (resizeContent) when the log opens. -->
+                        <Size>
+                            <Height>40</Height>
+                            <Width>240</Width>
+                        </Size>
+                        <MinSize>
+                            <Height>32</Height>
+                            <Width>150</Width>
+                        </MinSize>
+                        <MaxSize>
+                            <Height>600</Height>
+                            <Width>800</Width>
+                        </MaxSize>
+                    </Geometry>
+                </UI>
+            </DispatchInfo>
+        </Extension>
+    </DispatchInfoList>
+</ExtensionManifest>

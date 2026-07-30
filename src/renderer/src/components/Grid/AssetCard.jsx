@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
-import { FileX, Pencil, Link, Check, ArrowRightFromLine, Loader, Import, Clapperboard } from 'lucide-react'
+import { FileX, Pencil, Link, Check, ArrowRightFromLine, Loader, Import, Clapperboard, Film } from 'lucide-react'
 import { usePanelStore } from '../../store/PanelStoreContext'
 import useAssetStore from '../../store/useAssetStore'
 import useSettingsStore from '../../store/useSettingsStore'
@@ -79,6 +79,11 @@ function isFlaFile(path) {
   return path?.toLowerCase().endsWith('.fla') ?? false
 }
 
+// Adobe After Effects source — the "Import to After Effects" button targets these.
+function isAepFile(path) {
+  return path?.toLowerCase().endsWith('.aep') ?? false
+}
+
 export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBatchMode, isSelected, onToggleSelect, processingStatus, ragScore = null, isHighlighted = false }) {
   const openAsset             = usePanelStore((s) => s.openAsset)
   const reloadCurrentCategory = usePanelStore((s) => s.reloadCurrentCategory)
@@ -98,6 +103,8 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
   const [importing, setImporting]         = useState(false)
   const [copied, setCopied]               = useState(false)
   const [animateModalOpen, setAnimateModalOpen] = useState(false)  // Import-to-Animate picker
+  const [aeImporting, setAeImporting]     = useState(false)  // Import-to-AfterEffects in flight
+  const [aeDone, setAeDone]               = useState(false)  // transient success tick
   const videoRef   = useRef(null)
   const cardRef    = useRef(null)
 
@@ -142,6 +149,9 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
   // Animate counterpart: a movement .fla → import its symbol into the active
   // Adobe Animate document (via the ZeusPack bridge / CEP panel).
   const showAnimateImport = isFlaFile(asset.raw_path) && type === 'animation'
+  // After Effects counterpart: an .aep asset → import its composition(s) into
+  // the running After Effects project (via the ZeusPack AE bridge / CEP panel).
+  const showAeImport      = isAepFile(asset.raw_path)
 
   // Single "Import" button for Character cards. The two flows underneath stay
   // completely separate — this just decides which one runs, based on the
@@ -179,6 +189,32 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
       setImporting(false)
     }
   }, [canImport, asset.raw_path, openAsset])
+
+  // Import the .aep into the running After Effects project via the bridge.
+  // No comp picker yet — this imports the whole project (all comps land in a
+  // folder) so we can smoke-test the CEP panel round-trip end to end.
+  const handleAeImportClick = useCallback(async (e) => {
+    e.stopPropagation()
+    if (!asset.raw_path) return
+    setAeImporting(true)
+    try {
+      const res = await window.api.aeRun({
+        action:  'import-aep',
+        params:  { aepPath: asset.raw_path },
+        timeoutMs: 60000,
+      })
+      if (res?.success) {
+        setAeDone(true)
+        setTimeout(() => setAeDone(false), 1800)
+      } else {
+        useAssetStore.getState().setError(res?.error || res?.message || 'Import to After Effects failed.')
+      }
+    } catch (err) {
+      useAssetStore.getState().setError(err.message)
+    } finally {
+      setAeImporting(false)
+    }
+  }, [asset.raw_path])
 
   return (
     <>
@@ -311,7 +347,7 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
           )}
 
           {/* Action buttons - Right side */}
-          {!isBatchMode && !isCompileMode && (showAppend || showAnimateImport || showImport) && (
+          {!isBatchMode && !isCompileMode && (showAppend || showAnimateImport || showAeImport || showImport) && (
             <div className={`
               absolute top-1.5 right-1.5 z-10 flex gap-1
               transition-all duration-150
@@ -341,6 +377,26 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
                   title="Import symbol to active Adobe Animate document"
                 >
                   <Clapperboard size={11} />
+                </button>
+              )}
+
+              {/* Import to After Effects — for .aep assets. Runs the bridge job
+                  that imports the composition(s) into the active AE project. */}
+              {showAeImport && (
+                <button
+                  onClick={handleAeImportClick}
+                  disabled={aeImporting}
+                  className={`p-1.5 rounded-md backdrop-blur-sm transition-all duration-150
+                    disabled:opacity-40 disabled:cursor-not-allowed
+                    ${aeDone
+                      ? 'bg-green-500/80 text-white'
+                      : 'bg-black/60 text-white/70 hover:text-white hover:bg-black/80'
+                    }`}
+                  title="Import composition into active After Effects project"
+                >
+                  {aeImporting ? <Loader size={11} className="animate-spin" />
+                    : aeDone   ? <Check size={11} />
+                    :            <Film size={11} />}
                 </button>
               )}
 

@@ -249,7 +249,7 @@ function scanFolderAssets(folderPath, categoryIdMap, categoryNormMap, styleTypeI
       assetMap[nameLower].mp4       = join(folderPath, file)
     if (['.gif', '.jpeg', '.jpg', '.png', '.webp', '.bmp'].includes(extLower))
       assetMap[nameLower].thumbnail = join(folderPath, file)
-    if (['.blend', '.fla'].includes(extLower))
+    if (['.blend', '.fla', '.aep'].includes(extLower))
       assetMap[nameLower].raw       = join(folderPath, file)
     if (extLower === '.json')
       assetMap[nameLower].json      = join(folderPath, file)

@@ -287,6 +287,72 @@ export async function registerIpcHandlers() {
     }
   })
 
+  // ─── CREATE PROJECT FOLDER HIERARCHY ─────────────────────────
+  // Just makes the standard project sub-folder tree under parentPath/projectName.
+  // No "active project" concept — it only scaffolds folders on disk.
+  ipcMain.handle('create-project', async (_e, { parentPath, projectName } = {}) => {
+    // Standard project sub-folder tree (relative to the project root).
+    // recursive mkdir on each leaf creates all intermediate folders too.
+    const PROJECT_FOLDER_TREE = [
+      'Bahan/Aset Klien',
+      'Bahan/Aset Visual',
+      'Chars',
+      'File Animator/File Animate',
+      'File Animator/File Blender',
+      'File Editing/SFX',
+      'File Storyboard/File Animate/File Animate Blender',
+      'File Storyboard/File Animate/Portrait Version/Revisions/Rev 1',
+      'File Storyboard/File Animate/Portrait Version/Revisions/Rev 2',
+      'File Storyboard/File Animate/Portrait Version/Revisions/Rev 3',
+      'File Storyboard/File Animate/Revisions/Rev 1',
+      'File Storyboard/File Animate/Revisions/Rev 2',
+      'File Storyboard/File Animate/Revisions/Rev 3',
+      'File Storyboard/File Animate/Square Version/Revisions/Rev 1',
+      'File Storyboard/File Animate/Square Version/Revisions/Rev 2',
+      'File Storyboard/File Animate/Square Version/Revisions/Rev 3',
+      'File Storyboard/File Blender/Rendered Image',
+      'Font',
+      'VO',
+    ]
+
+    try {
+      const parent = (parentPath || '').trim()
+      const name   = (projectName || '').trim()
+
+      if (!parent)  return { success: false, error: 'Please choose where to create the project.' }
+      if (!name)    return { success: false, error: 'Please enter a project name.' }
+      // Reject characters Windows/most filesystems disallow in folder names.
+      if (/[\\/:*?"<>|]/.test(name)) {
+        return { success: false, error: 'Project name contains invalid characters ( \\ / : * ? " < > | ).' }
+      }
+      if (!existsSync(parent)) {
+        return { success: false, error: 'The selected location no longer exists.' }
+      }
+
+      const projectPath = join(parent, name)
+
+      // Duplicate check — abort without touching anything.
+      if (existsSync(projectPath)) {
+        return { success: false, exists: true, error: `A folder named "${name}" already exists in this location.` }
+      }
+
+      // Create the tree. If it fails partway, roll back the folder we just
+      // started so disk stays clean and a retry isn't blocked by a stray dir.
+      try {
+        for (const rel of PROJECT_FOLDER_TREE) {
+          mkdirSync(join(projectPath, rel), { recursive: true })
+        }
+      } catch (mkErr) {
+        try { rmSync(projectPath, { recursive: true, force: true }) } catch { /* best effort */ }
+        return { success: false, error: `Failed to create project folders: ${mkErr.message}` }
+      }
+
+      return { success: true, data: projectPath }
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  })
+
   // ─── ADD ASSET ───────────────────────────────────────────────
   ipcMain.handle('add-asset', async (_e, templatePath) => {
     try {

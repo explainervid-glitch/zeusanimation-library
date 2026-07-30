@@ -1,7 +1,9 @@
-import { Combine, Sun, Moon } from 'lucide-react'
+import { useState } from 'react'
+import { Combine, Sun, Moon, FolderPlus } from 'lucide-react'
 import useAssetStore from '../store/useAssetStore'
 import useSettingsStore from '../store/useSettingsStore'
 import useCompileStore from '../store/useCompileStore'
+import NewProjectModal from './NewProjectModal'
 
 // Persistent status bar: current pack + counts on the left, mode actions on
 // the right. (The old "active project" selector lived here and is gone —
@@ -14,6 +16,7 @@ export default function BottomBar() {
   const setTheme             = useSettingsStore((s) => s.setTheme)
   const isCompileMode        = useCompileStore((s) => s.isCompileMode)
   const toggleCompileMode    = useCompileStore((s) => s.toggleCompileMode)
+  const [newProjectOpen, setNewProjectOpen] = useState(false)
 
   // 3D compile needs the Blender import mode on. 2D (Animate) is available for
   // the whole pack — it works without Direct Character Import, just skipping
@@ -25,7 +28,7 @@ export default function BottomBar() {
     <footer className="h-12 flex items-center gap-3 px-4 flex-shrink-0
       select-none bg-c-surface border-t border-c-border text-[11px]">
 
-      {/* Left — appearance: icon shows the CURRENT mode, click to switch */}
+      {/* Left — appearance + new project */}
       <div className="flex items-center gap-2 flex-1 min-w-0">
         <button
           onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
@@ -35,7 +38,19 @@ export default function BottomBar() {
         >
           {theme === 'dark' ? <Moon size={14} /> : <Sun size={14} />}
         </button>
+
+        <button
+          onClick={() => setNewProjectOpen(true)}
+          title="Create a new project folder hierarchy"
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium
+            bg-c-raised text-c-text-2 border border-c-border-2 hover:bg-c-hover hover:text-c-text transition-colors"
+        >
+          <FolderPlus size={13} />
+          New Project
+        </button>
       </div>
+
+      {newProjectOpen && <NewProjectModal onClose={() => setNewProjectOpen(false)} />}
 
       {/* Right — mode actions */}
       <div className="flex items-center gap-2 flex-shrink-0">

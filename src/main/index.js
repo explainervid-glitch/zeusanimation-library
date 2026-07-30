@@ -71,6 +71,7 @@ import icon from '../../resources/icon.png?asset'
 import { registerIpcHandlers } from './ipc/assets.js'
 import { installCommandRecorder, startBridge, stopBridge } from './bridge/index.js'
 import { startAnimateBridge, stopAnimateBridge, registerAnimateIpc } from './animateBridge/index.js'
+import { startAfterEffectsBridge, stopAfterEffectsBridge, registerAfterEffectsIpc } from './afterEffectsBridge/index.js'
 
 app.disableHardwareAcceleration()
 app.commandLine.appendSwitch('no-sandbox')
@@ -194,6 +195,14 @@ app.whenReady().then(async () => {
     console.error('[Main] Animate bridge failed to start:', err)
   }
 
+  // 3c. Adobe After Effects bridge (loopback server the CEP panel polls)
+  try {
+    registerAfterEffectsIpc()
+    startAfterEffectsBridge()
+  } catch (err) {
+    console.error('[Main] After Effects bridge failed to start:', err)
+  }
+
   // 4. Buat main window — splash otomatis tutup saat ready-to-show
   createWindow(splash)
 
@@ -202,7 +211,7 @@ app.whenReady().then(async () => {
   })
 })
 
-app.on('will-quit', () => { stopBridge(); stopAnimateBridge() })
+app.on('will-quit', () => { stopBridge(); stopAnimateBridge(); stopAfterEffectsBridge() })
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
