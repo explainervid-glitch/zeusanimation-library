@@ -116,7 +116,7 @@ export default function NewProjectModal({ onClose }) {
                 ref={nameRef}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Lagu Anak — Episode 12"
+                placeholder="e.g. 0000.MyProject"
                 className="w-full px-3 py-2 rounded-lg text-xs bg-c-base border border-c-border
                   text-c-text placeholder-c-text-4 focus:outline-none focus:border-c-accent transition-colors"
               />

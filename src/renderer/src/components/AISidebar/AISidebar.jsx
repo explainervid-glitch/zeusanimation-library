@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 import useAISidebarStore from '../../store/useAISidebarStore'
 import useAssetStore from '../../store/useAssetStore'
+import PegtopLoader from '../shared/PegtopLoader'
 
 const MIN_WIDTH  = 260
 const MAX_WIDTH  = 560
@@ -223,8 +224,8 @@ function SceneRow({ scene, index, onNavigate }) {
 function StoryboardView({ scenes, storyLoading, storyError, onNavigate }) {
   if (storyLoading) {
     return (
-      <div className="flex flex-col items-center justify-center h-32 gap-2">
-        <Loader2 size={18} className="animate-spin text-c-accent" />
+      <div className="flex flex-col items-center justify-center h-full min-h-[220px] gap-2">
+        <PegtopLoader size={56} />
         <p className="text-[10px] text-c-text-3">Breaking down the script into scenes…</p>
       </div>
     )
@@ -440,8 +441,8 @@ function AIPanelContent({ onDragStart }) {
         )}
 
         {mode === 'search' && isLoading && (
-          <div className="flex flex-col items-center justify-center h-32 gap-2">
-            <Loader2 size={18} className="animate-spin text-c-accent" />
+          <div className="flex flex-col items-center justify-center h-full min-h-[220px] gap-2">
+            <PegtopLoader size={56} />
             <p className="text-[10px] text-c-text-3">Searching...</p>
           </div>
         )}
