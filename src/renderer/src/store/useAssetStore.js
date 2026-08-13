@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { categoryScope } from '../../../shared/indexFlow.js'
 
 const useAssetStore = create((set, get) => ({
   tree: [],
@@ -186,7 +187,7 @@ const useAssetStore = create((set, get) => ({
       isSearchMode: false,
     })
     try {
-      const result = await window.api.getAssetsByCategory(category.id)
+      const result = await window.api.getAssetsByCategory(categoryScope(category))
       if (result.success) {
         set({ assets: result.data, assetsLoading: false })
       } else {
@@ -309,7 +310,7 @@ const useAssetStore = create((set, get) => ({
     const { selectedCategory } = get()
     try {
       const result = await window.api.checkDbUpdated({
-        categoryId: selectedCategory?.id ?? null,
+        categoryId: categoryScope(selectedCategory),
       })
       if (!result.updated) return false
 
@@ -354,7 +355,7 @@ const useAssetStore = create((set, get) => ({
     const { selectedCategory } = get()
     if (!selectedCategory) return
     try {
-      const result = await window.api.getAssetsByCategory(selectedCategory.id)
+      const result = await window.api.getAssetsByCategory(categoryScope(selectedCategory))
       if (result.success) set({ assets: result.data })
     } catch {}
   },

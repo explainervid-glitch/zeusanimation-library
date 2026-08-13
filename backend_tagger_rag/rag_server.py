@@ -117,11 +117,20 @@ class RagAssetPayload(BaseModel):
 class RagBulkPayload(BaseModel):
     assets: List[RagAssetPayload]
 
+class RagScopeEntry(BaseModel):
+    style_id:   int
+    asset_type: str
+
 class RagSearchPayload(BaseModel):
     query:    str
     style_id: int
     pack_id:  Optional[str] = None   # scope results to one pack (avoids cross-pack mixing)
     limit:    Optional[int] = 10
+    # Index Flow: which (style, type) pairs this search may draw from. The app
+    # builds it from the pack's indexflow.json, letting a style borrow another
+    # style's Backgrounds/Inspiration without duplicating files.
+    # Absent  → fall back to style_id alone (old clients keep working).
+    scope:    Optional[List[RagScopeEntry]] = None
 
 class RagDeletePackPayload(BaseModel):
     pack_id: str
@@ -399,16 +408,32 @@ async def queue_status():
     return {"success": True, **rag_queue.stats()}
 
 
-def _do_search(query: str, style_id: int, pack_id, limit: int) -> list:
+def _do_search(query: str, style_id: int, pack_id, limit: int, scope=None) -> list:
     """The actual (blocking) embed + Qdrant query — runs in the queue's worker."""
     # Embed query — uses BGE's query-instruction prefix (see _embed_query)
     query_vec = _embed_query(query)
 
-    # Scope by style_id, plus pack_id when provided so results never mix across
-    # packs (both packs reuse the same style_id numbers).
-    must = [FieldCondition(key="style_id", match=MatchValue(value=style_id))]
+    # pack_id always applies: both packs reuse the same style_id numbers, so
+    # without it results would mix across packs.
+    must = []
     if pack_id:
         must.append(FieldCondition(key="pack_id", match=MatchValue(value=pack_id)))
+
+    if scope:
+        # An Index Flow scope is a set of (style_id, asset_type) PAIRS, which a
+        # flat MatchAny can't express — {1,2} x {background,character} would let
+        # style 2's characters through when only its backgrounds were shared.
+        # `should` over per-pair `must` groups keeps the pairing exact.
+        must.append(Filter(should=[
+            Filter(must=[
+                FieldCondition(key="style_id",   match=MatchValue(value=e.style_id)),
+                FieldCondition(key="asset_type", match=MatchValue(value=e.asset_type)),
+            ])
+            for e in scope
+        ]))
+    else:
+        must.append(FieldCondition(key="style_id", match=MatchValue(value=style_id)))
+
     search_filter = Filter(must=must)
 
     try:
@@ -438,6 +463,7 @@ def _do_search(query: str, style_id: int, pack_id, limit: int) -> list:
             "asset_id":      hit.payload.get("asset_id"),
             "json_path":     hit.payload.get("json_path"),
             "style_type_id": hit.payload.get("style_type_id"),
+            "style_id":      hit.payload.get("style_id"),
             "asset_type":    hit.payload.get("asset_type"),
             "category":      hit.payload.get("category"),
             "score":         round(hit.score, 4),
@@ -458,7 +484,8 @@ async def rag_search(payload: RagSearchPayload):
 
     try:
         results = await rag_queue.run(
-            _do_search, payload.query.strip(), payload.style_id, payload.pack_id, payload.limit
+            _do_search, payload.query.strip(), payload.style_id, payload.pack_id,
+            payload.limit, payload.scope
         )
         return {"success": True, "results": results, "queue": rag_queue.stats()}
     except HTTPException:

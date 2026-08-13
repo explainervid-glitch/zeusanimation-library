@@ -24,6 +24,14 @@
                 <Resources>
                     <MainPath>./index.html</MainPath>
                     <ScriptPath>./jsx/host.jsx</ScriptPath>
+                    <!-- The preset browser previews .mp4/.png files sitting next
+                         to each .ffx, loaded as file:// URLs. CEF blocks those
+                         from a file-origin page unless access is granted here —
+                         without it the preview box just renders empty. -->
+                    <CEFCommandLine>
+                        <Parameter>--allow-file-access</Parameter>
+                        <Parameter>--allow-file-access-from-files</Parameter>
+                    </CEFCommandLine>
                 </Resources>
                 <Lifecycle>
                     <AutoVisible>true</AutoVisible>

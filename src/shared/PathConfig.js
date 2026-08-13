@@ -18,8 +18,8 @@
 export const ASSET_PACKS = [
   { index: 0, label: '2D',            path: 'W:\\2D PACK ZEUSANIMATION\\FULLPACK_Data\\StreamingAssets' },
   { index: 1, label: '3D',            path: 'W:\\3D PACK ZEUSANIMATION\\FULLPACK_Data\\StreamingAssets' },
-  { index: 2, label: '2D Lagu Anak',  path: 'W:\\YOUTUBE ANAK\\Packs' },
-  { index: 3, label: '-',             path: '' },
+  // { index: 2, label: '2D After Effects',  path: 'W:\\2D PACK ZEUSANIMATION\\Ae Packs' },
+  // { index: 3, label: '-',             path: '' },
 ]
 
 // Packs that actually have a path — what the dropdown should offer.

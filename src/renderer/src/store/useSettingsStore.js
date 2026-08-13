@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import useAssetStore from './useAssetStore'
 
 
 // Label & filename template — hardcoded, tidak bisa diubah user
@@ -8,6 +9,8 @@ export const TEMPLATE_DEFS = [
   { id: 'bg_2d',   label: '2D Background', filename: 'tmp_2d_background.fla'  },
   { id: 'anim_3d', label: '3D Animation',  filename: 'tmp_3d_animation.blend' },
   { id: 'bg_3d',   label: '3D Background', filename: 'tmp_3d_background.blend'},
+  // Own category, listed last — see DEFAULT_TEMPLATES in main/settings.js.
+  { id: 'ae',      label: 'Ae',            filename: 'tmp_aftereffects.aep'   },
 ]
 
 const useSettingsStore = create(
@@ -51,6 +54,30 @@ const useSettingsStore = create(
       setChar2dImportEnabled:    (v) => set({ char2dImportEnabled: v }),
       toggleChar2dImportEnabled: ()  => set(s => ({ char2dImportEnabled: !s.char2dImportEnabled })),
 
+      // Index Flow — style-to-style search/browse links. Default ON; a pack
+      // with no indexflow.json has an empty graph, which resolves to the
+      // original per-style behaviour, so this costs nothing until wired.
+      //
+      // Unlike the toggles above, this one is NOT renderer-only: main gates
+      // every read path on it, so it has to reach settings.json immediately
+      // rather than waiting for the Save button. Flipping it also recompiles
+      // (or deletes) indexflow.db and returns a fresh tree.
+      indexFlowEnabled: true,
+      setIndexFlowEnabled: async (v) => {
+        set({ indexFlowEnabled: v })
+        try {
+          const res = await window.api.setIndexFlowEnabled(v)
+          // Main hands back the re-merged tree, so the sidebar switches over
+          // without a second round trip or a rescan.
+          if (res?.success && res.tree) useAssetStore.setState({ tree: res.tree })
+          return res
+        } catch (err) {
+          console.error('setIndexFlowEnabled error:', err)
+          set({ indexFlowEnabled: !v })   // roll back — main is the source of truth
+          return { success: false, error: err.message }
+        }
+      },
+
 
       // Asset paths are hardcoded in src/shared/PathConfig.js — read-only here.
       assetPaths:      [],
@@ -90,6 +117,11 @@ const useSettingsStore = create(
               taggerUrl:       d.taggerUrl       ?? 'http://192.168.1.27:8000',
               ragUrl:          d.ragUrl          ?? 'http://192.168.1.27:8001',
               llmUrl:          d.llmUrl          ?? 'http://192.168.1.27:8002',
+              // settings.json wins: main gates the feature on this value, so a
+              // stale localStorage copy must not disagree with it. Compared
+              // against false, not true — only an explicit opt-out disables it,
+              // a missing key follows the ON default.
+              indexFlowEnabled: d.indexFlowEnabled !== false,
               loading: false,
             })
           }

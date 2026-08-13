@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { X, Save, Check, RefreshCw, File, Loader, Database, Sliders, Sparkles } from 'lucide-react'
+import { X, Save, Check, RefreshCw, File, Loader, Database, Sliders, Sparkles, Workflow } from 'lucide-react'
+import IndexFlowEditor from './IndexFlowEditor'
 import useSettingsStore, { TEMPLATE_DEFS } from '../../store/useSettingsStore'
 import useAssetStore from '../../store/useAssetStore'
 import { ASSET_PACKS, usablePacks } from '../../../../shared/PathConfig.js'
@@ -32,6 +33,7 @@ export default function SettingsModal() {
     blenderImportEnabled, toggleBlenderImportEnabled,
     blenderImportMode, setBlenderImportMode,
     char2dImportEnabled, toggleChar2dImportEnabled,
+    indexFlowEnabled, setIndexFlowEnabled,
   } = useSettingsStore()
 
   const { rescan, scanning, activePackIndex } = useAssetStore()
@@ -219,6 +221,7 @@ export default function SettingsModal() {
 
   const TABS = [
     { id: 'general', label: 'General', icon: Sliders },
+    { id: 'flow',    label: 'Index Flow', icon: Workflow },
     { id: 'tagger',  label: 'Tagger',  icon: Sparkles },
   ]
 
@@ -290,6 +293,33 @@ export default function SettingsModal() {
                       </div>
                     ))}
                   </div>
+                </div>
+
+                {/* ── Index Flow ─────────────────────────────────── */}
+                <div className="pb-4 border-b border-c-border space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <label className="text-xs font-semibold text-c-text uppercase tracking-wider">
+                      Index Flow
+                    </label>
+                    <MiniToggle
+                      on={indexFlowEnabled}
+                      onToggle={() => setIndexFlowEnabled(!indexFlowEnabled)}
+                    />
+                  </div>
+                  <p className="text-[11px] text-c-text-3 leading-relaxed">
+                    Lets a style borrow another style&apos;s libraries in the tree, search and RAG —
+                    wire it up in the <strong className="text-c-text-2">Index Flow</strong> tab.
+                    While off, the sidebar and search behave exactly as they did before the feature
+                    existed.
+                  </p>
+                  <p className="text-[10px] text-c-text-4 leading-relaxed">
+                    Turning it on compiles{' '}
+                    <code className="font-mono text-[10px] bg-c-raised px-1 py-0.5 rounded border border-c-border">indexflow.db</code>{' '}
+                    into the pack on each rescan.{' '}
+                    <code className="font-mono text-[10px] bg-c-raised px-1 py-0.5 rounded border border-c-border">_zeuspack.db</code>{' '}
+                    is never modified, so the old tree stays readable by any other build. Turning it
+                    off deletes the compiled file again.
+                  </p>
                 </div>
 
                 {/* ── Direct Character Import ─────────────────────────
@@ -562,6 +592,9 @@ export default function SettingsModal() {
                 </div>
               </>
             )}
+
+            {/* ══════════ INDEX FLOW TAB ══════════ */}
+            {activeTab === 'flow' && <IndexFlowEditor />}
 
             {/* ══════════ TAGGER TAB ══════════ */}
             {activeTab === 'tagger' && (

@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState, useCallback } from 'react'
-import { FileX, Pencil, Link, Check, ArrowRightFromLine, Loader, Import, Clapperboard, Film } from 'lucide-react'
+import { FileX, Pencil, Link, Link2, Check, ArrowRightFromLine, Loader, Import, Clapperboard, Film } from 'lucide-react'
 import { usePanelStore } from '../../store/PanelStoreContext'
 import useAssetStore from '../../store/useAssetStore'
 import useSettingsStore from '../../store/useSettingsStore'
@@ -87,6 +87,8 @@ function isAepFile(path) {
 export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBatchMode, isSelected, onToggleSelect, processingStatus, ragScore = null, isHighlighted = false }) {
   const openAsset             = usePanelStore((s) => s.openAsset)
   const reloadCurrentCategory = usePanelStore((s) => s.reloadCurrentCategory)
+  const selectedStyleId       = usePanelStore((s) => s.selectedStyleId)
+  const tree                  = useAssetStore((s) => s.tree)
   const importCharactersEnabled = useSettingsStore((s) => s.importCharactersEnabled)
   const blenderImportEnabled  = useSettingsStore((s) => s.blenderImportEnabled)
   const blenderImportMode     = useSettingsStore((s) => s.blenderImportMode)
@@ -116,6 +118,17 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
       cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }
   }, [isHighlighted])
+
+  // Index Flow: this asset physically lives in another style's folder and only
+  // shows up here because of a link. Worth saying so — otherwise an off-style
+  // asset in the grid reads as a scanner bug, and Import/Compile would silently
+  // act on a file outside the style you think you're in.
+  const borrowedFrom = asset.borrowed_from_style_id
+  const isBorrowed   = borrowedFrom != null && selectedStyleId != null
+    && borrowedFrom !== selectedStyleId
+  const borrowedName = isBorrowed
+    ? (tree.find((s) => s.id === borrowedFrom)?.name ?? `Style ${borrowedFrom}`)
+    : null
 
   const [rw, rh]   = TYPE_RATIO[type] || DEFAULT_RATIO
   const paddingTop  = `${(rh / rw) * 100}%`
@@ -308,6 +321,21 @@ export default function AssetCard({ asset: initialAsset, type, styleTypeId, isBa
             className="z-30 bg-black/40 backdrop-blur-sm"
           />
 
+
+          {/* Borrowed-from badge — sits bottom-left so it never fights the
+              hover action buttons at the top of the card. */}
+          {isBorrowed && (
+            <div
+              className={`absolute bottom-1.5 left-1.5 z-10 flex items-center gap-1
+                px-1.5 py-0.5 rounded-md bg-black/60 backdrop-blur-sm
+                text-[8px] font-medium text-white/80 max-w-[85%]
+                transition-opacity duration-100 ${isHovered ? 'opacity-80' : 'opacity-60'}`}
+              title={`Linked from ${borrowedName}, the file lives in that style's folder`}
+            >
+              <Link2 size={9} className="flex-shrink-0" />
+              <span className="truncate">{borrowedName}</span>
+            </div>
+          )}
 
           {/* Action buttons - Left side */}
           {!isBatchMode && !isCompileMode && (

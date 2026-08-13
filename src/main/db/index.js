@@ -9,7 +9,9 @@ let db     = null
 let dbPath = null
 
 // ── sql.js WASM ───────────────────────────────────────────────
-async function ensureSql() {
+// Exported so indexFlowDb.js can build its own separate database file without
+// loading a second copy of the WASM.
+export async function ensureSql() {
   if (SQL) return SQL
   const wasmProd = join(process.resourcesPath, 'sql-wasm.wasm')
   const wasmDev  = join(process.cwd(), 'resources', 'sql-wasm.wasm')
@@ -208,21 +210,33 @@ export function updateAssetFts(assetId, styleTypeId, meta = {}) {
 }
 
 export function searchAssetsFts(styleTypeId, query, limit = 200) {
-  // Split query ke term-term, semua term harus match (AND)
+  return searchAssetsFtsMulti([styleTypeId], query, limit)
+}
+
+// Same search over several style_types at once — an Index Flow graph can point
+// a style's search at other styles' libraries (see shared/indexFlow.js), so the
+// scope is a set rather than a single id.
+//
+// `borrowed_from_style_id` comes back on every row: it lets the grid badge an
+// asset that came from another style, which otherwise looks like a bug.
+export function searchAssetsFtsMulti(styleTypeIds, query, limit = 200) {
+  const ids   = [...new Set((styleTypeIds || []).filter((n) => Number.isInteger(n)))]
   const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
-  if (!terms.length) return []
+  if (!ids.length || !terms.length) return []
 
   // Build WHERE clause: satu LIKE per term
   const conditions = terms.map(() => "LOWER(s.search_text) LIKE ?").join(' AND ')
-  const params     = [styleTypeId, ...terms.map(t => `%${t}%`), limit]
+  const scope      = ids.map(() => '?').join(',')
+  const params     = [...ids, ...terms.map(t => `%${t}%`), limit]
 
   // Exclude '⚠ Uncategorized' — junk assets shouldn't surface in search
   return queryAll(`
-    SELECT a.*
+    SELECT a.*, st.style_id as borrowed_from_style_id
     FROM assets_search s
-    JOIN assets a      ON a.id = s.asset_id
-    JOIN categories c  ON c.id = a.category_id
-    WHERE s.style_type_id = ? AND c.name != '⚠ Uncategorized' AND ${conditions}
+    JOIN assets a      ON a.id  = s.asset_id
+    JOIN categories c  ON c.id  = a.category_id
+    JOIN style_types st ON st.id = s.style_type_id
+    WHERE s.style_type_id IN (${scope}) AND c.name != '⚠ Uncategorized' AND ${conditions}
     ORDER BY a.name
     LIMIT ?
   `, params)
@@ -279,18 +293,43 @@ export function getFullTree() {
 }
 
 export function getAssetsByCategory(categoryId) {
-  return queryAll('SELECT * FROM assets WHERE category_id = ? ORDER BY name', [categoryId])
+  return getAssetsByCategories([categoryId])
+}
+
+// An Index Flow link merges categories of the same NAME across styles, so one
+// row in the sidebar can stand for several category ids.
+export function getAssetsByCategories(categoryIds) {
+  const ids = [...new Set((categoryIds || []).map(Number).filter(Number.isInteger))]
+  if (!ids.length) return []
+  const scope = ids.map(() => '?').join(',')
+  return queryAll(`
+    SELECT a.*, st.style_id as borrowed_from_style_id
+    FROM assets a
+    JOIN categories c   ON c.id = a.category_id
+    JOIN style_types st ON st.id = c.style_type_id
+    WHERE a.category_id IN (${scope})
+    ORDER BY a.name
+  `, ids)
 }
 
 // All assets across every category of one style_type (e.g. all of a style's
 // Movement assets), excluding the junk '⚠ Uncategorized' bucket.
 export function getAssetsByStyleType(styleTypeId) {
+  return getAssetsByStyleTypes([styleTypeId])
+}
+
+export function getAssetsByStyleTypes(styleTypeIds) {
+  const ids = [...new Set((styleTypeIds || []).map(Number).filter(Number.isInteger))]
+  if (!ids.length) return []
+  const scope = ids.map(() => '?').join(',')
   return queryAll(`
-    SELECT a.* FROM assets a
-    JOIN categories c ON c.id = a.category_id
-    WHERE c.style_type_id = ? AND c.name != '⚠ Uncategorized'
+    SELECT a.*, st.style_id as borrowed_from_style_id
+    FROM assets a
+    JOIN categories c   ON c.id = a.category_id
+    JOIN style_types st ON st.id = c.style_type_id
+    WHERE c.style_type_id IN (${scope}) AND c.name != '⚠ Uncategorized'
     ORDER BY a.name
-  `, [styleTypeId])
+  `, ids)
 }
 
 export function hasData() {

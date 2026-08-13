@@ -4,17 +4,26 @@ import { scanAssets, writeStyleName, writeStyleHints, readStyleNames } from '../
 import {
   getDb, switchDb, reinitDb,
   getFullTree, getAssetsByCategory, getAssetsByStyleType,
+  getAssetsByCategories, getAssetsByStyleTypes,
   hasData, saveDb, insertCategory, insertAsset,
   insertStyle, insertStyleType,
-  insertAssetFts, updateAssetFts, searchAssetsFts,
+  insertAssetFts, updateAssetFts, searchAssetsFts, searchAssetsFtsMulti,
   getDbMtime, reloadFromDisk
 } from '../db/index.js'
+import {
+  readIndexFlowRaw, writeIndexFlow, expandStyleTypeIds, ragScopeForStyle,
+  applyFlowToTree, isIndexFlowEnabled, indexFlowMtime,
+} from '../indexFlow.js'
+import { buildIndexFlowDb, removeIndexFlowDb, indexFlowDbStatus } from '../indexFlowDb.js'
 import { readSettings, writeSettings, getActiveAssetPath, getTemplatePath } from '../settings.js'
 import { packAt, pathAt } from '../../shared/PathConfig.js'
 import { join, basename, dirname, extname } from 'path'
 
 // Track DB mtime untuk deteksi perubahan remote
 let lastDbMtime = 0
+// Same idea for indexflow.json — it is a sidecar, so a teammate rewiring the
+// graph never changes the DB's mtime and would otherwise go unnoticed here.
+let lastFlowMtime = 0
 
 // Pack paths are hardcoded config (shared/PathConfig.js), not user settings —
 // only the selected index comes from settings.
@@ -179,27 +188,35 @@ export async function registerIpcHandlers() {
   } else {
     console.warn('[IPC] No active pack path configured — starting without a DB')
   }
-  lastDbMtime = getDbMtime()  // Initialize on startup (0 if no DB loaded)
+  lastDbMtime   = getDbMtime()  // Initialize on startup (0 if no DB loaded)
+  lastFlowMtime = indexFlowMtime(getActivePath(readSettings()))
 
   // ─── GET ASSET TREE ──────────────────────────────────────────
   ipcMain.handle('get-asset-tree', async () => {
     try {
-      if (hasData()) return { success: true, data: getFullTree(), fromCache: true }
       const settings   = readSettings()
       const activePath = getActivePath(settings)
+      // Index Flow merges borrowed categories into the tree so browsing shows
+      // the same coverage that search does.
+      if (hasData()) {
+        return { success: true, data: applyFlowToTree(activePath, getFullTree()), fromCache: true }
+      }
       if (!activePath) return { success: true, data: [], fromCache: false }
       const stats = await scanAssets(activePath)
       saveDb()
-      return { success: true, data: getFullTree(), fromCache: false, stats }
+      return { success: true, data: applyFlowToTree(activePath, getFullTree()), fromCache: false, stats }
     } catch (err) {
       return { success: false, error: err.message }
     }
   })
 
   // ─── GET ASSETS BY CATEGORY ──────────────────────────────────
+  // Accepts a single id or, for a merged (borrowed) sidebar row, the list of
+  // category ids that row stands for.
   ipcMain.handle('get-assets-by-category', async (_e, categoryId) => {
     try {
-      return { success: true, data: getAssetsByCategory(categoryId) }
+      const ids = Array.isArray(categoryId) ? categoryId : [categoryId]
+      return { success: true, data: getAssetsByCategories(ids) }
     } catch (err) {
       return { success: false, error: err.message }
     }
@@ -208,7 +225,9 @@ export async function registerIpcHandlers() {
   // ─── GET ASSETS BY STYLE TYPE (all categories of a type) ─────
   ipcMain.handle('get-assets-by-style-type', async (_e, styleTypeId) => {
     try {
-      return { success: true, data: getAssetsByStyleType(styleTypeId) }
+      const activePath = getActivePath(readSettings())
+      const db         = await getDb(activePath)
+      return { success: true, data: getAssetsByStyleTypes(expandStyleTypeIds(db, activePath, styleTypeId)) }
     } catch (err) {
       return { success: false, error: err.message }
     }
@@ -232,13 +251,24 @@ export async function registerIpcHandlers() {
       const stats = await scanAssets(activePath, onLog)
       saveDb()
 
+      // Compile the graph against the ids this scan just produced. Kept out of
+      // _zeuspack.db so the old tree stays byte-identical to what any other
+      // build of the app expects. No-op when the feature is off.
+      try {
+        const built = await buildIndexFlowDb(activePath, await getDb(activePath))
+        if (built) onLog(`Index Flow: indexflow.db compiled — ${built.links} link, ${built.rows} kategori`)
+      } catch (e) {
+        // A bad graph must never fail a rescan — the scan itself is fine.
+        onLog(`Index Flow: gagal compile indexflow.db — ${e.message}`)
+      }
+
       // NOTE: RAG bulk indexing no longer auto-triggers after rescan.
       // It's now a separate, explicit action — see the 'rag-index-bulk'
       // handler below, wired to the "Re-embed Assets" button in the UI.
       // This keeps rescan fast and avoids re-embedding the entire pack
       // every time the user just wants to refresh the asset tree.
 
-      return { success: true, data: getFullTree(), stats }
+      return { success: true, data: applyFlowToTree(activePath, getFullTree()), stats }
     } catch (err) {
       return { success: false, error: err.message }
     }
@@ -251,7 +281,13 @@ export async function registerIpcHandlers() {
       if (!pack?.path) return { success: false, error: `Pack ${packIndex} has no path` }
       writeSettings({ activePathIndex: packIndex })
       await switchDb(pack.path)
-      const tree    = getFullTree()
+
+      // Each pack carries its own indexflow.json — rebaseline both watermarks
+      // so the next poll compares against the new pack, not the old one.
+      lastDbMtime   = getDbMtime()
+      lastFlowMtime = indexFlowMtime(pack.path)
+
+      const tree = applyFlowToTree(pack.path, getFullTree())
       return { success: true, data: tree, packIndex, isEmpty: tree.length === 0 }
     } catch (err) {
       return { success: false, error: err.message }
@@ -270,7 +306,7 @@ export async function registerIpcHandlers() {
       db.run('UPDATE styles SET display_name = ?, description = ? WHERE id = ?',
         [name, description, styleId])
       saveDb()
-      return { success: true, data: getFullTree() }
+      return { success: true, data: applyFlowToTree(activePath, getFullTree()) }
     } catch (err) {
       return { success: false, error: err.message }
     }
@@ -787,7 +823,7 @@ export async function registerIpcHandlers() {
       saveDb()
 
       console.log(`[IPC] Style ${styleId} created — ${created.map(c => c.prefix).join(', ')}`)
-      return { success: true, data: { styleId, suffix, created }, tree: getFullTree() }
+      return { success: true, data: { styleId, suffix, created }, tree: applyFlowToTree(activePath, getFullTree()) }
     } catch (err) {
       return { success: false, error: err.message }
     }
@@ -1017,8 +1053,13 @@ export async function registerIpcHandlers() {
         properties: ['openFile'],
         title: 'Pilih file template',
         filters: filters || [
-          { name: 'Template Files', extensions: ['fla', 'blend'] },
-          { name: 'All Files', extensions: ['*'] },
+          // aep belongs here too — without it the After Effects template
+          // simply cannot be picked from the browse dialog.
+          { name: 'Template Files',   extensions: ['fla', 'blend', 'aep'] },
+          { name: 'Adobe Animate',    extensions: ['fla'] },
+          { name: 'Blender',          extensions: ['blend'] },
+          { name: 'After Effects',    extensions: ['aep'] },
+          { name: 'All Files',        extensions: ['*'] },
         ],
       })
       if (result.canceled || result.filePaths.length === 0) {
@@ -1045,6 +1086,7 @@ export async function registerIpcHandlers() {
     categoryName,
     fileName,
     detail,
+    templateId: templateOverride,   // e.g. 'ae' — otherwise inferred below
   }) => {
     try {
       const settings   = readSettings()
@@ -1058,12 +1100,17 @@ export async function registerIpcHandlers() {
       // inspiration → bg template (2D atau 3D tergantung pack)
       // background  → bg template
       // image / movement → animation template
-      let templateId
-      if (assetType === 'background' || assetType === 'inspiration') {
-        templateId = is3D ? 'bg_3d' : 'bg_2d'
-      } else {
-        // image, movement
-        templateId = is3D ? 'anim_3d' : 'anim_2d'
+      // An explicit templateId wins — that's how the After Effects (.aep)
+      // template gets picked, since it isn't implied by pack + asset type the
+      // way the Animate/Blender ones are.
+      let templateId = templateOverride
+      if (!templateId) {
+        if (assetType === 'background' || assetType === 'inspiration') {
+          templateId = is3D ? 'bg_3d' : 'bg_2d'
+        } else {
+          // image, movement
+          templateId = is3D ? 'anim_3d' : 'anim_2d'
+        }
       }
 
       const templatePath = settings.templatePaths?.find(t => t.id === templateId)?.path
@@ -1267,8 +1314,99 @@ export async function registerIpcHandlers() {
     try {
       const trimmed = (query || '').trim()
       if (!trimmed) return { success: true, data: [] }
-      const rows = searchAssetsFts(styleTypeId, trimmed)
+
+      // Index Flow may widen (Add) or redirect (Replace) the search scope.
+      const activePath = getActivePath(readSettings())
+      const db         = await getDb(activePath)
+      const scope      = expandStyleTypeIds(db, activePath, styleTypeId)
+
+      const rows = searchAssetsFtsMulti(scope, trimmed)
       return { success: true, data: rows }
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  // ─── INDEX FLOW ──────────────────────────────────────────────
+  // The node graph that lets a style borrow another style's libraries at
+  // search time. Stored per pack in indexflow.json (see main/indexFlow.js).
+  ipcMain.handle('get-index-flow', async () => {
+    try {
+      const activePath = getActivePath(readSettings())
+      const db         = await getDb(activePath)
+
+      // The editor needs the styles to draw as nodes, and which types each one
+      // actually has on disk — a style with no inspiration folder shouldn't
+      // offer an Inspiration socket.
+      const stmt = db.prepare(`
+        SELECT s.id, COALESCE(s.display_name, 'Style ' || s.id) as name,
+               st.type
+        FROM styles s
+        LEFT JOIN style_types st ON st.style_id = s.id
+        ORDER BY s.id
+      `)
+      const byId = new Map()
+      while (stmt.step()) {
+        const r = stmt.getAsObject()
+        if (!byId.has(r.id)) byId.set(r.id, { id: r.id, name: r.name, types: [] })
+        if (r.type) byId.get(r.id).types.push(r.type)
+      }
+      stmt.free()
+
+      // readIndexFlowRaw, not readIndexFlow: the editor must show and save the
+      // wiring even while the feature toggle is off.
+      return {
+        success:  true,
+        flow:     readIndexFlowRaw(activePath),
+        styles:   [...byId.values()],
+        enabled:  isIndexFlowEnabled(),
+        compiled: await indexFlowDbStatus(activePath, db),
+      }
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  ipcMain.handle('save-index-flow', async (_e, flow) => {
+    try {
+      const activePath = getActivePath(readSettings())
+      const saved      = writeIndexFlow(activePath, flow)
+      const db         = await getDb(activePath)
+
+      // This machine already has the new graph — move its watermark forward so
+      // the poll doesn't immediately report the write back to us as a change.
+      lastFlowMtime = indexFlowMtime(activePath)
+
+      // Recompile immediately — otherwise indexflow.db would only catch up on
+      // the next rescan and would sit there disagreeing with indexflow.json.
+      const compiled = await buildIndexFlowDb(activePath, db)
+
+      return { success: true, flow: saved, compiled: await indexFlowDbStatus(activePath, db), built: compiled }
+    } catch (err) {
+      return { success: false, error: err.message }
+    }
+  })
+
+  // Feature toggle. Lives in settings.json (not just the renderer store)
+  // because main gates every read path on it.
+  ipcMain.handle('set-index-flow-enabled', async (_e, enabled) => {
+    try {
+      writeSettings({ indexFlowEnabled: !!enabled })
+      const activePath = getActivePath(readSettings())
+      if (!activePath) return { success: true, enabled: !!enabled }
+
+      const db = await getDb(activePath)
+      // Switching off removes the compiled file, so the pack is left exactly as
+      // it was before the feature was ever enabled.
+      if (enabled) await buildIndexFlowDb(activePath, db)
+      else         removeIndexFlowDb(activePath)
+
+      return {
+        success:  true,
+        enabled:  !!enabled,
+        tree:     applyFlowToTree(activePath, getFullTree()),
+        compiled: await indexFlowDbStatus(activePath, db),
+      }
     } catch (err) {
       return { success: false, error: err.message }
     }
@@ -1544,20 +1682,38 @@ export async function registerIpcHandlers() {
   // Deteksi jika DB di-update oleh PC lain (NAS/network)
   ipcMain.handle('check-db-updated', async (_e, { categoryId } = {}) => {
     try {
-      const currentMtime = getDbMtime()
-      const updated = currentMtime > lastDbMtime
+      const activePath = getActivePath(readSettings())
 
-      if (updated) {
+      const currentMtime = getDbMtime()
+      const dbChanged    = currentMtime > lastDbMtime
+
+      // indexflow.json is a sidecar on the shared pack, so a teammate rewiring
+      // the graph changes THIS file and not the DB. Compared with !== rather
+      // than >: restoring an older copy of the file moves the mtime backwards
+      // but is still a change worth picking up.
+      const currentFlowMtime = indexFlowMtime(activePath)
+      const flowChanged      = currentFlowMtime !== lastFlowMtime
+
+      if (dbChanged) {
         console.log(`[IPC] DB update detected: mtime ${lastDbMtime} → ${currentMtime}`)
         reloadFromDisk()
         lastDbMtime = currentMtime
       }
+      if (flowChanged) {
+        console.log(`[IPC] Index Flow change detected: mtime ${lastFlowMtime} → ${currentFlowMtime}`)
+        lastFlowMtime = currentFlowMtime
+        // No reloadFromDisk() here — the database itself has not moved, only
+        // the graph layered on top of it at read time.
+      }
 
-      // Return status dan optionally data jika diminta
+      const updated = dbChanged || flowChanged
+
       return {
         updated,
-        tree: updated ? getFullTree() : null,
-        assets: updated && categoryId ? getAssetsByCategory(categoryId) : null,
+        tree: updated ? applyFlowToTree(activePath, getFullTree()) : null,
+        assets: updated && categoryId
+          ? getAssetsByCategories(Array.isArray(categoryId) ? categoryId : [categoryId])
+          : null,
       }
     } catch (err) {
       console.error('[IPC] check-db-updated error:', err)
@@ -1572,10 +1728,16 @@ export async function registerIpcHandlers() {
       const settings   = readSettings()
       const activePath = getActivePath(settings)
 
+      // Index Flow turns "search style N" into a list of (style, type) pairs —
+      // e.g. Style 2 keeps its own Characters but reads Style 1's Backgrounds.
+      // `style_id` is still sent so an un-upgraded rag_server.py keeps working
+      // (it just ignores `scope` and searches the style alone).
+      const scope = ragScopeForStyle(activePath, styleId)
+
       const res  = await fetch(`${ragUrl}/rag-search`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ query, style_id: styleId, pack_id: activePath, limit }),
+        body:    JSON.stringify({ query, style_id: styleId, scope, pack_id: activePath, limit }),
         // Longer than the raw search time: the request may wait in the server's
         // queue behind other teammates before it runs.
         signal:  AbortSignal.timeout(45000),
@@ -1594,8 +1756,10 @@ export async function registerIpcHandlers() {
 
       const placeholders = paths.map(() => '?').join(',')
       const stmt = db.prepare(`
-        SELECT a.* FROM assets a
-        JOIN categories c ON c.id = a.category_id
+        SELECT a.*, st.style_id as borrowed_from_style_id
+        FROM assets a
+        JOIN categories c   ON c.id  = a.category_id
+        JOIN style_types st ON st.id = c.style_type_id
         WHERE a.json_path IN (${placeholders}) AND c.name != '⚠ Uncategorized'
       `)
       stmt.bind(paths)

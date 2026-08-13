@@ -4,17 +4,57 @@
 <meta charset="utf-8" />
 <title>ZeusPack AE Bridge</title>
 <style>
+  /* Inter, bundled in fonts/. These declarations are what actually load it —
+     naming "Inter" in a font stack without them only works if the font happens
+     to be installed system-wide, which it previously wasn't. CEF loads woff2
+     over file:// thanks to the manifest's file-access flags.
+     `swap` rather than `block` so text is never invisible if a file is missing. */
+  @font-face {
+    font-family:"Inter"; src:url("./fonts/Inter-Regular.woff2") format("woff2");
+    font-weight:400; font-style:normal; font-display:swap;
+  }
+  @font-face {
+    font-family:"Inter"; src:url("./fonts/Inter-Medium.woff2") format("woff2");
+    font-weight:500; font-style:normal; font-display:swap;
+  }
+  @font-face {
+    font-family:"Inter"; src:url("./fonts/Inter-SemiBold.woff2") format("woff2");
+    font-weight:600; font-style:normal; font-display:swap;
+  }
+
   :root {
     --bg:#1e1e1e; --panel:#252526; --border:#3a3a3a;
     --text:#e6e6e6; --muted:#9a9a9a; --accent:#6c8cff;
     --ok:#3fb950; --err:#f85149;
+    /* Card width and thumbnail height, driven by the size slider. The pair is
+       always kept at the preview comp's aspect ratio (see panel.js), so a
+       rendered preview fills the tile with nothing cropped. */
+    --card-w:96px; --thumb-h:54px;
+    --cats-w:84px;              /* category rail, dragged by its right edge */
   }
+
+  /* The grid's scrollbar is subtracted from the track area, so a fat default
+     one costs a whole column in a 240px docked panel. */
+  .list::-webkit-scrollbar { width:6px; }
+  .list::-webkit-scrollbar-track { background:transparent; }
+  .list::-webkit-scrollbar-thumb { background:#3f3f46; border-radius:99px; }
+  .list::-webkit-scrollbar-thumb:hover { background:#52525b; }
   * { box-sizing:border-box; }
   html,body { margin:0; height:100%; overflow:hidden; }
   body {
     background:var(--bg); color:var(--text);
-    font:11px/1.4 "Inter", -apple-system, Segoe UI, sans-serif;
+    /* Inter is bundled (see @font-face above), so it renders identically on
+       every machine; Segoe UI is the Windows fallback if a file is missing. */
+    font:11px/1.4 "Inter", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
     display:flex; flex-direction:column; padding:5px 7px; gap:5px;
+    /* No text selection by default — dragging across the card grid otherwise
+       paints preset names blue, which reads as a broken drag-and-drop. */
+    -webkit-user-select:none; user-select:none; cursor:default;
+  }
+
+  /* …except the text you actually need to copy out of the panel. */
+  .path, .state, .log {
+    -webkit-user-select:text; user-select:text; cursor:text;
   }
 
   /* One compact status row: dot + state + actions. flex:0 0 auto so the row
@@ -40,12 +80,193 @@
   .log {
     display:none; flex:1; min-height:70px; overflow:auto;
     background:#151515; border:1px solid var(--border); border-radius:5px;
-    padding:5px 6px; font-family:Consolas, monospace; font-size:10px;
+    padding:5px 6px; font-size:10px;
+    font-family:Consolas, monospace;   /* the log stays mono — Inter isn't */
     color:var(--muted); white-space:pre-wrap; word-break:break-word;
   }
   .log.open { display:block; }
   .log .ok  { color:var(--ok); }
   .log .err { color:var(--err); }
+
+  /* ── Preset browser — hidden until the wand button is toggled ── */
+  .presets { display:none; flex:1; min-height:0; flex-direction:column; gap:5px; }
+  .presets.open { display:flex; }
+
+  .row { display:flex; align-items:center; gap:5px; flex:0 0 auto; }
+  .path {
+    flex:1; min-width:0; height:22px; padding:0 3px;
+    background:#151515; border:1px solid var(--border); border-radius:5px;
+    color:var(--text); font:inherit; font-size:10px; cursor:pointer;
+  }
+  .path:hover { border-color:var(--accent); }
+  .path option { background:var(--panel); color:var(--text); }
+  .path option:disabled { color:#5a5a5a; }
+
+  /* New-category input row — collapsed unless the folder+ button opens it */
+  .addcat { display:none; }
+  .addcat.open { display:flex; }
+  .txt {
+    flex:1; min-width:0; height:22px; padding:0 6px;
+    background:#151515; border:1px solid var(--border); border-radius:5px;
+    color:var(--text); font:inherit; font-size:10px; outline:none;
+    -webkit-user-select:text; user-select:text;
+  }
+  .txt:focus { border-color:var(--accent); }
+  .txt::-webkit-input-placeholder { color:#5a5a5a; }
+
+  /* Card grid — same shape as the ZeusPack app's asset grid: thumbnail on top,
+     name beneath, accent border when selected. auto-fill so a narrow docked
+     panel gets 2 columns and a wide floating one gets as many as fit. */
+  .list {
+    flex:1; min-width:0; min-height:60px; overflow-y:auto; overflow-x:hidden;
+    background:#151515; border:1px solid var(--border); border-radius:5px;
+    padding:4px;
+    display:grid;
+    /* Fixed track width, NOT minmax(...,1fr): a stretching track makes the real
+       card width unknowable up front, and the thumbnail height has to be a
+       definite px value to keep the tile at the preview's exact ratio.
+       auto-fit, not auto-fill: auto-fill keeps generating empty tracks past the
+       last card, which still take up space. Packed to the start so the leftover
+       collects on the right instead of being split into a wide margin on both
+       sides of the first card. */
+    grid-template-columns:repeat(auto-fit, var(--card-w));
+    justify-content:start;
+    /* grid-gap for CEP 9 (Chromium 61) — plain `gap` only lands in Chrome 66 */
+    grid-gap:3px; gap:3px;
+    /* min-content, NOT the default `auto`: the list is a flex child with a
+       definite height, and `auto` tracks soak up its spare height — the rows
+       get divided evenly and every card is crushed to ~44px with its thumbnail
+       clipped. Sizing rows to their content keeps cards intact and lets the
+       grid overflow into a scroll instead. */
+    grid-auto-rows:min-content;
+    align-content:start;
+  }
+  .list.msg { display:block; padding:10px; }
+
+  .card {
+    background:#1b1b1b; border:1px solid var(--border); border-radius:6px;
+    overflow:hidden; cursor:pointer; min-width:0;
+  }
+  .card:hover { border-color:#5a5a5a; }
+  .card.sel   { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
+
+  /* Definite px height, not a percentage-padding aspect box: percentage padding
+     contributes 0 to intrinsic sizing, so min-content rows came out short and
+     clipped the name underneath. panel.js keeps --thumb-h at
+     --card-w x (comp height / comp width). (inset:0 avoided — Chrome 87+.) */
+  .thumb { position:relative; width:100%; height:var(--thumb-h); background:#0e0e0e; }
+  .thumb > video, .thumb > img {
+    position:absolute; top:0; left:0; width:100%; height:100%;
+    object-fit:cover; display:block;
+  }
+  .thumb .ph {
+    position:absolute; top:0; left:0; right:0; bottom:0;
+    display:flex; align-items:center; justify-content:center;
+    color:#4a4a4a; font-size:15px; font-weight:600;
+  }
+  .thumb .ph.err { color:var(--err); font-size:9px; font-weight:400; text-align:center; padding:0 4px; }
+
+  .meta { padding:2px 4px 3px; }
+  .meta .nm {
+    display:block; font-size:10px; color:var(--text);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .card.sel .meta { background:var(--accent); }
+  .card.sel .meta .nm { color:#fff; }
+
+  .empty-list { color:#6a6a6a; font-size:10px; text-align:center; }
+
+  /* Corner badges on the thumbnail: which of the three sidecar files exist. */
+  .tags { position:absolute; right:3px; bottom:3px; display:flex; gap:2px; }
+  .tag {
+    font-size:8px; line-height:1; padding:2px 3px; border-radius:3px;
+    background:rgba(0,0,0,.7); color:#c8c8c8; font-weight:600; letter-spacing:.2px;
+  }
+  .tag.aep { color:#8fb0ff; }   /* composition */
+  .tag.ffx { color:#fbbf24; }   /* animation preset */
+
+  /* Right-click menu — plain div, since CEP's native menu API is panel-wide
+     and can't vary per card. */
+  .menu {
+    display:none; position:fixed; z-index:100; min-width:158px;
+    background:var(--panel); border:1px solid var(--border); border-radius:5px;
+    padding:3px; box-shadow:0 4px 16px rgba(0,0,0,.55);
+  }
+  .menu.open { display:block; }
+  .menu button {
+    display:block; width:100%; text-align:left; padding:4px 8px;
+    background:transparent; border:0; border-radius:3px; cursor:pointer;
+    color:var(--text); font:inherit; font-size:10px;
+  }
+  .menu button:hover:not(.off) { background:var(--accent); color:#fff; }
+  /* .off rather than [disabled]: a disabled button swallows pointer events, so
+     its title tooltip never shows — and the unavailable items are exactly the
+     ones whose tooltip explains why. */
+  .menu button.off { color:#5a5a5a; cursor:default; }
+  .menu .sep { height:1px; background:var(--border); margin:3px 2px; }
+
+  .btn {
+    height:22px; padding:0 9px; flex-shrink:0;
+    background:transparent; border:1px solid var(--border); border-radius:5px;
+    color:var(--muted); cursor:pointer; font-size:10px; font-weight:600;
+  }
+  .btn:hover:not(:disabled) { color:var(--text); border-color:var(--accent); }
+  .btn:disabled { opacity:.4; cursor:default; }
+  .btn.primary { color:var(--accent); border-color:var(--accent); }
+
+  /* Preview size — compact so it survives a 240px docked panel. */
+  .size {
+    -webkit-appearance:none; appearance:none;
+    width:64px; height:22px; flex-shrink:0;
+    background:transparent; cursor:pointer;
+  }
+  .size::-webkit-slider-runnable-track {
+    height:3px; border-radius:2px; background:var(--border);
+  }
+  .size::-webkit-slider-thumb {
+    -webkit-appearance:none; appearance:none;
+    width:9px; height:9px; margin-top:-3px; border-radius:50%;
+    background:var(--muted); border:0;
+  }
+  .size:hover::-webkit-slider-thumb { background:var(--accent); }
+
+  /* Category rail on the left, grid on the right — the ZeusPack layout.
+     No gap: the drag handle between them provides the separation. */
+  .gridwrap { display:flex; flex:1; min-height:0; }
+
+  /* Folder list — same shape as the ZeusPack sidebar's category rows. Width is
+     a variable so the handle can drive it; definite (not flexible) so the
+     grid's column maths stays predictable. */
+  .cats {
+    display:none; flex:0 0 var(--cats-w); min-width:0; overflow-y:auto;
+    background:#151515; border:1px solid var(--border); border-radius:5px;
+    padding:3px;
+  }
+  .cats.open { display:block; }
+
+  /* Drag handle on the rail's right edge. Wider than it looks so it's
+     actually grabbable — the visible line is only 1px. */
+  .catgrip { display:none; flex:0 0 7px; position:relative; cursor:col-resize; }
+  .catgrip.open { display:block; }
+  .catgrip::after {
+    content:""; position:absolute; top:0; bottom:0; left:3px; width:1px;
+    background:transparent;
+  }
+  .catgrip:hover::after, .catgrip.drag::after { background:var(--accent); }
+  .cats::-webkit-scrollbar { width:6px; }
+  .cats::-webkit-scrollbar-track { background:transparent; }
+  .cats::-webkit-scrollbar-thumb { background:#3f3f46; border-radius:99px; }
+
+  .cat {
+    display:flex; align-items:center; gap:6px;
+    padding:2px 6px; border-radius:4px; cursor:pointer;
+    color:var(--muted); font-size:10px;
+  }
+  .cat:hover { background:#1d1d1d; color:var(--text); }
+  .cat.sel  { background:var(--accent); color:#fff; }
+  .cat .cn  { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .cat .cc  { flex-shrink:0; font-size:9px; opacity:.65; }
+  .cat.sel .cc { opacity:.85; }
 </style>
 </head>
 <body>
@@ -59,6 +280,12 @@
            stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
     </button>
 
+    <!-- Toggle preset browser -->
+    <button class="ico" id="presetBtn" title="Browse .ffx presets">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+           stroke-linecap="round" stroke-linejoin="round"><path d="M15 4V2M15 16v-2M8 9h2M20 9h2M17.8 11.8 19 13M17.8 6.2 19 5M3 21l9-9M12.2 6.2 11 5"/></svg>
+    </button>
+
     <!-- Toggle log -->
     <button class="ico" id="logBtn" title="Show log">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
@@ -66,7 +293,47 @@
     </button>
   </div>
 
+  <!-- ── Preset browser ── -->
+  <div class="presets" id="presets">
+    <div class="row">
+      <select class="path" id="pathSelect" title=""></select>
+      <button class="ico" id="addCatBtn" title="New category">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><line x1="12" y1="10" x2="12" y2="16"/><line x1="9" y1="13" x2="15" y2="13"/></svg>
+      </button>
+      <button class="ico" id="refreshBtn" title="Rescan folder">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg>
+      </button>
+    </div>
+
+    <!-- Shared name input: new category, new asset. Hidden until asked for. -->
+    <div class="row addcat" id="promptRow">
+      <input type="text" class="txt" id="promptInput" placeholder="Category name…"
+             spellcheck="false" maxlength="60" />
+      <button class="btn" id="promptOk">Add</button>
+    </div>
+
+    <!-- Category rail + drag handle + grid, side by side -->
+    <div class="gridwrap">
+      <div class="cats" id="cats"></div>
+      <div class="catgrip" id="catGrip" title="Drag to resize"></div>
+      <div class="list msg" id="list">
+        <div class="empty-list">Loading…</div>
+      </div>
+    </div>
+
+    <div class="row">
+      <input type="range" class="size" id="sizeSlider" min="72" max="200" step="4"
+             title="Preview size" />
+      <button class="btn primary" id="applyBtn" disabled>Apply to selected layer</button>
+    </div>
+  </div>
+
   <div class="log" id="log"></div>
+
+  <!-- Card right-click menu; items are rebuilt per card -->
+  <div class="menu" id="menu"></div>
 
   <script src="./js/CSInterface.js"></script>
   <script src="./js/panel.js"></script>

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { X, Plus, Check, AlertCircle, Trash2, Loader } from 'lucide-react'
+import { X, Plus, Check, AlertCircle, Trash2, Loader, Link2 } from 'lucide-react'
 import useAssetStore from '../../store/useAssetStore'
 
 const TYPE_LABEL = {
@@ -113,7 +113,12 @@ export default function EditCategoryModal({ typeData, styleId, onClose }) {
   }
 
   const styleName  = styleNames[String(styleId)]?.name || `Style ${styleId}`
-  const categories = typeData.categories.filter(c => c.name !== '⚠ Uncategorized')
+
+  // Borrowed rows belong to whichever style lends them — deleting one from here
+  // would delete the lender's category and every asset under it, for every
+  // style that reads from it. Unwire the link in Settings ▸ Index Flow instead.
+  const categories = typeData.categories.filter(c => c.name !== '⚠ Uncategorized' && !c.borrowed)
+  const borrowed   = typeData.categories.filter(c => c.name !== '⚠ Uncategorized' && c.borrowed)
   const hasUncat   = typeData.categories.some(c => c.name === '⚠ Uncategorized')
 
   return (
@@ -204,6 +209,26 @@ export default function EditCategoryModal({ typeData, styleId, onClose }) {
               </div>
             )
           })}
+
+          {/* Linked categories (read-only — owned by the lending style) */}
+          {borrowed.length > 0 && (
+            <div className="mt-2 pt-2 border-t border-c-border space-y-0.5">
+              <p className="text-[9px] text-c-text-4 uppercase tracking-wider px-1 pb-0.5">
+                Linked from other styles
+              </p>
+              {borrowed.map(cat => (
+                <div key={cat.id} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg
+                  bg-c-raised/40 border border-dashed border-c-border">
+                  <Link2 size={10} className="text-c-text-4 flex-shrink-0" />
+                  <span className="flex-1 text-[11px] text-c-text-3 truncate">{cat.name}</span>
+                  <span className="text-[10px] text-c-text-4">linked</span>
+                </div>
+              ))}
+              <p className="text-[9px] text-c-text-4 px-1 pt-0.5 leading-relaxed">
+                Edit these in their own style, or remove the link in Preferences ▸ Index Flow.
+              </p>
+            </div>
+          )}
 
           {/* Uncategorized (read-only) */}
           {hasUncat && (

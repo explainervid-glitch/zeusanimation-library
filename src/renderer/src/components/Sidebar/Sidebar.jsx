@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import {
   ChevronDown, ChevronRight, ChevronLeft, Image,
-  Pencil, Check, X, PersonStanding, Users, PanelLeftClose, PanelLeftOpen, Lightbulb, Sparkles,
+  Pencil, Check, X, PersonStanding, Users, PanelLeftClose, PanelLeftOpen, Lightbulb, Sparkles, Link2,
 } from 'lucide-react'
 import useAssetStore from '../../store/useAssetStore'
 import useBatchStore from '../../store/useBatchStore'
@@ -14,13 +14,13 @@ const TYPE_ICON = {
   background: <Image          size={13} />,
   character:  <Users          size={13} />,
   animation:  <PersonStanding size={13} />,
-  inspiration: <Lightbulb       size={13} />,
+  inspiration: <Lightbulb       size={13} />,
 }
 const TYPE_LABEL = {
   background: 'Background',
   character:  'Character',
   animation:  'Movement',
-  inspiration: 'Inspiration',
+  inspiration: 'Inspiration',
 }
 
 // ─── CATEGORY ITEM ────────────────────────────────────────────
@@ -53,6 +53,15 @@ function CategoryItem({ category, styleId, type, styleTypeId, isUncategorized })
       <span className={`text-[11px] truncate font-normal ${isSelected ? 'font-medium' : ''}`}>
         {category.name}
       </span>
+
+      {/* Index Flow: this row exists only because another style lends it. */}
+      {category.borrowed && (
+        <Link2
+          size={10}
+          className={`flex-shrink-0 ${isSelected ? 'opacity-70' : 'text-c-text-4'}`}
+          aria-label="Linked from another style"
+        />
+      )}
     </button>
   )
 }

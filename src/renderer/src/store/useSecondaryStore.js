@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { categoryScope } from '../../../shared/indexFlow.js'
 
 // Independent pane state for the secondary (right) browse panel.
 //
@@ -34,7 +35,7 @@ const useSecondaryStore = create((set, get) => ({
     }
     set({ selectedCategory: category, assetsLoading: true, error: null })
     try {
-      const result = await window.api.getAssetsByCategory(category.id)
+      const result = await window.api.getAssetsByCategory(categoryScope(category))
       if (result.success) set({ assets: result.data, assetsLoading: false })
       else set({ assets: [], assetsLoading: false, error: result.error })
     } catch (err) {
@@ -46,7 +47,7 @@ const useSecondaryStore = create((set, get) => ({
     const { selectedCategory } = get()
     if (!selectedCategory) return
     try {
-      const result = await window.api.getAssetsByCategory(selectedCategory.id)
+      const result = await window.api.getAssetsByCategory(categoryScope(selectedCategory))
       if (result.success) set({ assets: result.data })
     } catch {}
   },

@@ -9,6 +9,12 @@ const api = {
   rescanAssets:        ()            => ipcRenderer.invoke('rescan-assets'),
   openAssetFile:       (path)        => ipcRenderer.invoke('open-asset-file', path),
   renameStyle:         (payload)     => ipcRenderer.invoke('rename-style', payload),
+
+  // Index Flow (style-to-style search wiring)
+  getIndexFlow:        ()            => ipcRenderer.invoke('get-index-flow'),
+  saveIndexFlow:       (flow)        => ipcRenderer.invoke('save-index-flow', flow),
+  setIndexFlowEnabled: (enabled)     => ipcRenderer.invoke('set-index-flow-enabled', enabled),
+
   switchPack:          (index)       => ipcRenderer.invoke('switch-pack', index),
 
   // Asset JSON edit

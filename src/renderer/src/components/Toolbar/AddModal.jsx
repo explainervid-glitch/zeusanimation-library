@@ -1,13 +1,22 @@
 import { useState, useEffect, useRef } from 'react'
 import { X, ChevronLeft, Check, AlertCircle } from 'lucide-react'
 import useAssetStore from '../../store/useAssetStore'
+import useSettingsStore from '../../store/useSettingsStore'
 
+// "Ae" is not a separate kind of asset — it is a Movement whose raw file is an
+// .aep instead of a .fla. It lands in the same folder, the same category list
+// and the same style_type; only the template it is copied from differs.
 const ASSET_TYPES = [
   { id: 'background',  label: 'Background'  },
   { id: 'image',       label: 'Character'   },
   { id: 'movement',    label: 'Movement'    },
   { id: 'inspiration', label: 'Inspiration' },
+  { id: 'movement_ae', label: 'Ae', assetType: 'movement', templateId: 'ae' },
 ]
+
+const typeDef = (id) => ASSET_TYPES.find(t => t.id === id)
+// The value create-asset expects — 'movement_ae' is a UI-only id.
+const toAssetType = (id) => typeDef(id)?.assetType ?? id
 
 // ─── SHARED: STYLE DROPDOWN ───────────────────────────────────
 function StyleDropdown({ styleNames, value, onChange }) {
@@ -33,24 +42,30 @@ function StyleDropdown({ styleNames, value, onChange }) {
 }
 
 // ─── SHARED: ASSET TYPE PILLS ─────────────────────────────────
-function AssetTypePills({ value, onChange }) {
+function AssetTypePills({ value, onChange, disabledIds = {} }) {
   return (
     <div>
       <label className="block text-xs font-medium text-c-text-2 mb-1.5">Asset Type</label>
       <div className="flex flex-wrap gap-2">
-        {ASSET_TYPES.map(t => (
-          <button
-            key={t.id}
-            onClick={() => onChange(t.id)}
-            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors
-              ${value === t.id
-                ? 'bg-c-accent text-c-on-accent'
-                : 'bg-c-raised border border-c-border-2 text-c-text hover:border-c-accent/50'
-              }`}
-          >
-            {t.label}
-          </button>
-        ))}
+        {ASSET_TYPES.map(t => {
+          const reason = disabledIds[t.id]
+          return (
+            <button
+              key={t.id}
+              onClick={() => !reason && onChange(t.id)}
+              disabled={!!reason}
+              title={reason || undefined}
+              className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors
+                ${value === t.id
+                  ? 'bg-c-accent text-c-on-accent'
+                  : 'bg-c-raised border border-c-border-2 text-c-text hover:border-c-accent/50'
+                }
+                ${reason ? 'opacity-40 cursor-not-allowed hover:border-c-border-2' : ''}`}
+            >
+              {t.label}
+            </button>
+          )
+        })}
       </div>
     </div>
   )
@@ -75,8 +90,17 @@ function AddAssetForm({ styleNames, defaultStyle, onClose }) {
   const [error,   setError]   = useState(null)
   const [success, setSuccess] = useState(false)
 
+  // The Ae pill is only usable once its template path is set — create-asset
+  // would otherwise fail on a missing template, which reads as a bug rather
+  // than as unfinished setup.
+  const aeTemplatePath = useSettingsStore((s) =>
+    s.templatePaths.find((t) => t.id === 'ae')?.path || '')
+  const disabledTypes = aeTemplatePath
+    ? {}
+    : { movement_ae: 'Set the "Ae" template in Preferences ▸ Template Files first' }
+
   // Type map untuk lookup di tree
-  const TYPE_TO_TREE = { background: 'background', image: 'character', movement: 'animation', inspiration: 'inspiration' }
+  const TYPE_TO_TREE = { background: 'background', image: 'character', movement: 'animation', movement_ae: 'animation', inspiration: 'inspiration' }
 
   // Load categories saat style atau type berubah
   useEffect(() => {
@@ -112,10 +136,11 @@ function AddAssetForm({ styleNames, defaultStyle, onClose }) {
     try {
       const result = await window.api.createAsset({
         styleSuffix:  selectedStyle,
-        assetType:    selectedType,
+        assetType:    toAssetType(selectedType),
         categoryName: selectedCat,
         fileName:     fileName.trim(),
         detail:       detail.trim(),
+        templateId:   typeDef(selectedType)?.templateId,
       })
       if (result.success) {
         setSuccess(true)
@@ -137,7 +162,11 @@ function AddAssetForm({ styleNames, defaultStyle, onClose }) {
     <div className="space-y-4">
 
       <StyleDropdown styleNames={styleNames} value={selectedStyle} onChange={v => { setSelectedStyle(v); setError(null) }} />
-      <AssetTypePills value={selectedType} onChange={v => { setSelectedType(v); setError(null) }} />
+      <AssetTypePills
+        value={selectedType}
+        onChange={v => { setSelectedType(v); setError(null) }}
+        disabledIds={disabledTypes}
+      />
 
       {/* Category */}
       <div>
