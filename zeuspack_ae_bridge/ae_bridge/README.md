@@ -95,8 +95,41 @@ Notes:
   hide presets you already had.
 - A folder on disk but missing from the manifest still gets listed if it holds
   presets — hiding found assets would be worse than an unexpected row.
-- Nested folders roll up: a preset in `Text/Kinetic` counts and filters under
-  `Text`.
+### Subcategories
+
+Folders inside a category become subcategories, shown indented in the rail:
+
+```
+(root)         1
+Backgrounds    0
+Text           5
+  Kinetic      3
+    Bold       1
+Transitions    1
+```
+
+- **Subcategories are discovered, not declared.** `categories.json` only gates
+  the top level — that is what keeps `Auto-Save` out — so anything inside a
+  declared category is already scanned. Only top-level categories go in the
+  manifest.
+- **Counts roll up.** `Text` shows 5 because that is what selecting it displays:
+  its own presets plus everything beneath it. Selecting `Text/Kinetic` narrows
+  to that subtree.
+- **`(root)` means loose files only**, not everything.
+- Dropping a card on any row, at any depth, moves the asset there.
+
+### Right-click the category rail
+
+| Item | Notes |
+|---|---|
+| New Folder… | Creates inside the row you clicked; at top level from empty rail space or *(root)* |
+| Rename… | Renames the folder on disk — only on a real folder, not *All presets* or *(root)* |
+| Reveal in Explorer | Opens that folder |
+
+Right-clicking a row selects it first, so the menu's wording matches what is
+highlighted. Renaming a top-level category also updates `categories.json`, and
+the current selection follows the folder — including when a subcategory of it
+was selected.
 
 ---
 
@@ -121,6 +154,11 @@ Notes:
 | Size slider | Thumbnail size, 72–200px |
 | Apply to selected layer | Applies the selected preset (or *Add to comp*) |
 
+**Drag a card onto a category row to move the asset there** — the `.ffx`/`.aep`
+and its preview all travel together. The `(root)` row is always listed, so an
+asset can be dragged back out of a category. *All presets* is a filter rather
+than a folder and never accepts a drop.
+
 Drag the **right edge of the category rail** to resize it. The grid is never
 squeezed below 96px, so dragging fully right stops rather than hiding it.
 
@@ -139,7 +177,9 @@ reading *Apply to selected layer* or *Add to comp*.
 | Export Image Preview | Writes `<name>.png` at 480×270, from the frame under the playhead |
 | Apply to selected layer | `.ffx` assets — applies the preset to the selected layer(s) |
 | Add to Comp | `.aep` assets — imports the main comp into the active comp |
+| Rename… | Renames the `.ffx`/`.aep` and its preview together |
 | Reveal in Explorer | Opens the containing folder |
+| Kontol | Opens the containing folder |
 
 Both exports are disabled until the preview comp exists. *Apply* and *Add to
 Comp* are mutually exclusive — only the one meaningful for that asset is shown.
@@ -154,8 +194,9 @@ directory ordering.
 |---|---|
 | Save Animation as Preset… | Saves the current AE selection into the selected category |
 | Add Asset… | New `<name>.aep` at 1920×1080 @ 30fps in the selected category |
-| New Category… | Creates the folder and records it in `categories.json` |
 | Reveal in Explorer | Opens the current preset folder |
+
+Folder creation and renaming live on the rail's own right-click menu.
 
 ---
 
@@ -234,6 +275,26 @@ works on every supported AE version, needs no template, and is exact about its
 output size. On an older AE it's the dependable option.
 
 ---
+
+## Updates
+
+The panel checks GitHub for a newer release on launch and shows an **Update**
+badge in the status bar when the newest tag is above the installed extension
+version. Clicking it opens the releases page and hides the badge until an even
+newer version appears.
+
+| Constant (`js/panel.js`) | Meaning |
+|---|---|
+| `UPDATE_REPO` | `explainervid-glitch/zeusanimation-library` |
+| `UPDATE_EVERY_MS` | 6h — unauthenticated GitHub allows 60 requests/hour |
+| `PANEL_VERSION` | Fallback if CEP won't report the installed version |
+
+For this to fire, a release must be **tagged with a version above
+`ExtensionBundleVersion` in `CSXS/manifest.xml`** (currently `1.0.0`). Tags may
+be written `1.2.0` or `v1.2.0`; only major.minor.patch is compared.
+
+The check is best-effort by design — no network, a rate-limited API, or a repo
+with no releases all end in silence rather than an error nobody can act on.
 
 ## Known limitations
 

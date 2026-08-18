@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<ExtensionManifest Version="5.0" ExtensionBundleId="com.zeus.zeuspackaebridge" ExtensionBundleVersion="1.0.0"
+<ExtensionManifest Version="5.0" ExtensionBundleId="com.zeus.zeuspackaebridge" ExtensionBundleVersion="1.0.1"
     ExtensionBundleName="ZeusPack AE Bridge" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
     <ExtensionList>
-        <Extension Id="com.zeus.zeuspackaebridge.panel" Version="1.0.0" />
+        <Extension Id="com.zeus.zeuspackaebridge.panel" Version="1.0.1" />
     </ExtensionList>
     <ExecutionEnvironment>
         <HostList>
@@ -40,11 +40,12 @@
                     <Type>Panel</Type>
                     <Menu>ZeusPack AE Bridge</Menu>
                     <Geometry>
-                        <!-- Collapsed height only: one status row. The panel
-                             grows itself (resizeContent) when the log opens. -->
+                        <!-- The preset browser opens by default, so the panel
+                             starts tall enough to show it. It still shrinks
+                             itself (resizeContent) if the browser is closed. -->
                         <Size>
-                            <Height>40</Height>
-                            <Width>240</Width>
+                            <Height>420</Height>
+                            <Width>320</Width>
                         </Size>
                         <MinSize>
                             <Height>32</Height>

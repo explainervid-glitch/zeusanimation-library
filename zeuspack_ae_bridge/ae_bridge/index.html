@@ -76,6 +76,18 @@
   .ico.on { color:var(--accent); border-color:var(--accent); }
   .ico svg { width:12px; height:12px; display:block; }
 
+  /* Labelled variant: icon + text. margin rather than flex `gap`, which only
+     landed in Chrome 84 — the manifest still claims CEP 9 support. */
+  .ico.lbl { width:auto; padding:0 6px; }
+  .ico.lbl svg { margin-right:4px; }
+  .ico.lbl span { font-size:10px; font-weight:600; line-height:1; white-space:nowrap; }
+
+  /* Update badge — accent-filled so it reads as a notice, not another toggle. */
+  .ico.upd {
+    background:var(--accent); border-color:var(--accent); color:#fff;
+  }
+  .ico.upd:hover { background:#5b7cf5; border-color:#5b7cf5; color:#fff; }
+
   /* Log — collapsed by default, only takes space when opened */
   .log {
     display:none; flex:1; min-height:70px; overflow:auto;
@@ -264,6 +276,9 @@
   }
   .cat:hover { background:#1d1d1d; color:var(--text); }
   .cat.sel  { background:var(--accent); color:#fff; }
+  /* Drop target while a card is being dragged over it. */
+  .cat.drop { background:color-mix(in srgb, var(--accent) 30%, transparent);
+              box-shadow:inset 0 0 0 1px var(--accent); color:var(--text); }
   .cat .cn  { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .cat .cc  { flex-shrink:0; font-size:9px; opacity:.65; }
   .cat.sel .cc { opacity:.85; }
@@ -280,16 +295,25 @@
            stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
     </button>
 
+    <!-- Update available — hidden until the GitHub check finds a newer tag -->
+    <button class="ico lbl upd" id="updateBtn" style="display:none">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+           stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><polyline points="7 10 12 15 17 10"/><line x1="4" y1="21" x2="20" y2="21"/></svg>
+      <span>Update</span>
+    </button>
+
     <!-- Toggle preset browser -->
-    <button class="ico" id="presetBtn" title="Browse .ffx presets">
+    <button class="ico lbl" id="presetBtn" title="Browse .ffx presets and .aep compositions">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
            stroke-linecap="round" stroke-linejoin="round"><path d="M15 4V2M15 16v-2M8 9h2M20 9h2M17.8 11.8 19 13M17.8 6.2 19 5M3 21l9-9M12.2 6.2 11 5"/></svg>
+      <span>Presets</span>
     </button>
 
     <!-- Toggle log -->
-    <button class="ico" id="logBtn" title="Show log">
+    <button class="ico lbl" id="logBtn" title="Show log">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
            stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="14" y2="17"/></svg>
+      <span>Log</span>
     </button>
   </div>
 
@@ -326,7 +350,10 @@
     <div class="row">
       <input type="range" class="size" id="sizeSlider" min="72" max="200" step="4"
              title="Preview size" />
-      <button class="btn primary" id="applyBtn" disabled>Apply to selected layer</button>
+      <button class="btn primary" id="applyBtn" disabled
+              title="Apply the preset — entrance keyframes only">Apply In</button>
+      <button class="btn" id="applyOutBtn" disabled
+              title="Apply the entrance keyframes, then time-reverse them">Apply Out</button>
     </div>
   </div>
 

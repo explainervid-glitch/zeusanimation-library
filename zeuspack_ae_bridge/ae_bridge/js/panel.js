@@ -34,7 +34,8 @@
   var promptInput = document.getElementById("promptInput");
   var promptOk    = document.getElementById("promptOk");
   var listEl     = document.getElementById("list");
-  var applyBtn   = document.getElementById("applyBtn");
+  var applyBtn    = document.getElementById("applyBtn");
+  var applyOutBtn = document.getElementById("applyOutBtn");
   var menuEl     = document.getElementById("menu");
   var sizeSlider = document.getElementById("sizeSlider");
   var catsEl     = document.getElementById("cats");
@@ -120,6 +121,79 @@
       .then(function () { setTimeout(poll, POLL_MS); });
   }
 
+  // ═══════════════════════════════════════════════════════════
+  //  UPDATE CHECK
+  // ═══════════════════════════════════════════════════════════
+  // Compares the installed extension version against the newest GitHub release
+  // tag. Entirely best-effort: no network, a rate-limited API or a repo with no
+  // releases all end in silence rather than an error the user can't act on.
+  var UPDATE_REPO = "explainervid-glitch/zeusanimation-library";
+  var UPDATE_API  = "https://api.github.com/repos/" + UPDATE_REPO + "/releases/latest";
+  var UPDATE_PAGE = "https://github.com/" + UPDATE_REPO + "/releases/latest";
+  var UPDATE_TS_KEY   = "zae.updateCheckedAt";
+  var UPDATE_SEEN_KEY = "zae.updateSeen";
+  var UPDATE_EVERY_MS = 6 * 60 * 60 * 1000;   // unauthenticated GitHub is 60 req/h
+  var PANEL_VERSION   = "1.0.0";              // fallback if CEP won't tell us
+
+  var updateBtn = document.getElementById("updateBtn");
+
+  function installedVersion() {
+    try {
+      var list = csInterface.getExtensions([csInterface.getExtensionID()]);
+      if (list && list.length && list[0].version) return String(list[0].version);
+    } catch (e) {}
+    return PANEL_VERSION;
+  }
+
+  // Numeric compare on major.minor.patch; a leading "v" on the tag is ignored.
+  function cmpVersion(a, b) {
+    var pa = String(a).replace(/^v/i, "").split(".");
+    var pb = String(b).replace(/^v/i, "").split(".");
+    for (var i = 0; i < 3; i++) {
+      var x = parseInt(pa[i], 10) || 0;
+      var y = parseInt(pb[i], 10) || 0;
+      if (x !== y) return x < y ? -1 : 1;
+    }
+    return 0;
+  }
+
+  function showUpdate(latest, url) {
+    updateBtn.style.display = "";
+    updateBtn.title = "Version " + latest + " is available (you have " + installedVersion() + ")";
+    updateBtn.onclick = function () {
+      try { csInterface.openURLInDefaultBrowser(url || UPDATE_PAGE); } catch (e) {}
+      // Hide until an even newer release appears, so it stops nagging once
+      // the user has gone to fetch it.
+      try { localStorage.setItem(UPDATE_SEEN_KEY, latest); } catch (e2) {}
+      updateBtn.style.display = "none";
+    };
+    log("Update available: " + latest, "ok");
+  }
+
+  function checkForUpdate() {
+    if (typeof fetch !== "function") return;
+
+    var last = 0;
+    try { last = Number(localStorage.getItem(UPDATE_TS_KEY)) || 0; } catch (e) {}
+    if (Date.now() - last < UPDATE_EVERY_MS) return;
+    try { localStorage.setItem(UPDATE_TS_KEY, String(Date.now())); } catch (e2) {}
+
+    fetch(UPDATE_API, { cache: "no-store", headers: { Accept: "application/vnd.github+json" } })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        if (!d || !d.tag_name) return;                    // no releases published yet
+        var latest = String(d.tag_name);
+        if (cmpVersion(installedVersion(), latest) >= 0) return;
+
+        var seen = null;
+        try { seen = localStorage.getItem(UPDATE_SEEN_KEY); } catch (e3) {}
+        if (seen && cmpVersion(seen, latest) >= 0) return;  // already sent there
+
+        showUpdate(latest, d.html_url);
+      })
+      .catch(function () { /* offline or rate-limited — stay quiet */ });
+  }
+
   // ── Buttons ──
   testBtn.addEventListener("click", function () {
     csInterface.evalScript("zae_getActiveProjectInfo({})", function (result) {
@@ -138,6 +212,7 @@
   var declaredCats = null; // categories.json contents, or null when absent
   var activeFolder = null; // null = all folders
   var selectedIdx = -1;   // index into `view`
+  var dragIndex   = -1;   // card being dragged onto a category, or -1
   var currentDir  = "";
   var presetsLoaded = false;
   var roots        = [];  // { id, label, path, exists }
@@ -146,8 +221,15 @@
   // ExtendScript hands back platform paths ("C:\Users\…"); <video>/<img> need a
   // file:// URL. encodeURI leaves ':' and '/' alone but '#' would truncate the
   // path, so it's escaped explicitly.
-  function fileUrl(p) {
-    return "file:///" + encodeURI(String(p).replace(/\\/g, "/")).replace(/#/g, "%23");
+  //
+  // `version` (the preview file's mtime) is appended as a query string.
+  // Chromium caches file:// media by URL, so re-exporting a preview to the same
+  // path kept serving the old frames until the panel was reopened. Chromium's
+  // file loader ignores the query when resolving the path, so it is a safe
+  // cache key rather than part of the filename.
+  function fileUrl(p, version) {
+    var u = "file:///" + encodeURI(String(p).replace(/\\/g, "/")).replace(/#/g, "%23");
+    return version ? u + "?v=" + version : u;
   }
 
   function esc(s) {
@@ -169,8 +251,12 @@
     }
     // The button follows the asset kind rather than going dead on compositions.
     var p = (i >= 0) ? view[i] : null;
-    applyBtn.textContent = (p && p.kind === "comp") ? "Add to comp" : "Apply to selected layer";
+    var isComp = !!(p && p.kind === "comp");
+    applyBtn.textContent = isComp ? "Add to comp" : "Apply In";
     applyBtn.disabled = !p;
+    // Reversing keyframes only means anything for a preset.
+    applyOutBtn.style.display = isComp ? "none" : "";
+    applyOutBtn.disabled = !p;
   }
 
   function showMessage(html, isErr) {
@@ -186,9 +272,12 @@
   var AUTOPLAY_ALL = true;
 
   function thumbHtml(p) {
+    // draggable="false" on the media: images and videos are natively draggable
+    // and would hijack the card's own drag, so the drop would carry a file URL
+    // instead of the asset.
     var video = AUTOPLAY_ALL
-      ? '<video src="' + esc(fileUrl(p.preview)) + '" preload="auto" autoplay loop muted playsinline></video>'
-      : '<video src="' + esc(fileUrl(p.preview)) + '" preload="metadata" loop muted playsinline></video>';
+      ? '<video draggable="false" src="' + esc(fileUrl(p.preview, p.previewMtime)) + '" preload="auto" autoplay loop muted playsinline></video>'
+      : '<video draggable="false" src="' + esc(fileUrl(p.preview, p.previewMtime)) + '" preload="metadata" loop muted playsinline></video>';
 
     // The badge marks WHAT the asset is, not what sidecars it has: "ffx" is an
     // animation preset, "aep" a composition. A preset's same-named .aep is only
@@ -199,7 +288,8 @@
 
     var media = !p.preview
       ? '<span class="ph">' + label + "</span>"
-      : (p.previewKind === "video" ? video : '<img src="' + esc(fileUrl(p.preview)) + '" alt="">');
+      : (p.previewKind === "video" ? video
+          : '<img draggable="false" src="' + esc(fileUrl(p.preview, p.previewMtime)) + '" alt="">');
 
     var tags = '<span class="tag ' + cls + '">' + label + "</span>";
     if (!p.preview) tags += '<span class="tag">no preview</span>';
@@ -208,57 +298,69 @@
   }
 
   // ── Folder categories ────────────────────────────────────────
-  // The subfolders of the preset root, listed like the ZeusPack sidebar's
-  // categories. Selecting one filters the grid, which is why the folder name no
-  // longer needs repeating on every card.
-  // A preset in "Text/Kinetic" belongs to the "Text" category — categories are
-  // the top level only, matching what categories.json declares.
-  function topFolder(p) {
-    return String(p.folder || "").split("/")[0];
-  }
-
-  function has(list, v) {
-    for (var i = 0; i < list.length; i++) if (list[i] === v) return true;
-    return false;
+  // A tree: top-level categories from categories.json, and any subfolders found
+  // beneath them. Subcategories are DISCOVERED rather than declared — the
+  // manifest only gates the top level (that's what keeps Auto-Save out), so
+  // anything inside a declared category was already scanned.
+  //
+  // Selecting a row shows that folder AND everything under it, so picking
+  // "Text" still includes "Text/Kinetic".
+  function inFolder(p, sel) {
+    var f = String(p.folder || "");
+    if (sel === "") return f === "";              // root = loose files only
+    return f === sel || f.indexOf(sel + "/") === 0;
   }
 
   function renderCats() {
-    var counts = {}, order = [], i, f;
+    var counts = {}, nodes = {}, i, f;
 
-    // Counts always come from what's on disk…
+    // Direct count per exact folder path.
     for (i = 0; i < presets.length; i++) {
-      f = topFolder(presets[i]);
-      if (!counts.hasOwnProperty(f)) { counts[f] = 0; order.push(f); }
-      counts[f]++;
+      f = String(presets[i].folder || "");
+      counts[f] = (counts[f] || 0) + 1;
     }
 
-    // …but the ROWS come from categories.json when it exists, so a category you
-    // just created shows up empty and ready to fill.
-    if (declaredCats) {
-      var declared = [];
-      if (counts.hasOwnProperty("")) declared.push("");        // loose root presets
-      for (i = 0; i < declaredCats.length; i++) {
-        if (!counts.hasOwnProperty(declaredCats[i])) counts[declaredCats[i]] = 0;
-        if (!has(declared, declaredCats[i])) declared.push(declaredCats[i]);
+    // Every row to draw = each path seen on disk, each declared category, and
+    // all their ancestors (a preset in "A/B/C" implies rows for A and A/B).
+    function addPath(path) {
+      if (!path) { nodes[""] = true; return; }
+      var parts = String(path).split("/"), acc = "";
+      for (var k = 0; k < parts.length; k++) {
+        if (!parts[k]) continue;
+        acc = acc ? acc + "/" + parts[k] : parts[k];
+        nodes[acc] = true;
       }
-      // A folder on disk but missing from the manifest still holds real presets
-      // — list it rather than hiding assets the scan already found.
-      for (i = 0; i < order.length; i++) {
-        if (order[i] && !has(declared, order[i])) declared.push(order[i]);
-      }
-      order = declared;
     }
+    nodes[""] = true;                              // root is always a drop target
+    for (f in counts) if (counts.hasOwnProperty(f)) addPath(f);
+    if (declaredCats) for (i = 0; i < declaredCats.length; i++) addPath(declaredCats[i]);
 
-    // One bucket and no manifest means there is nothing to filter by — don't
-    // spend the space.
+    var order = [];
+    for (f in nodes) if (nodes.hasOwnProperty(f)) order.push(f);
+
+    // Only the root row and no manifest means there is nothing to filter by.
     if (order.length <= 1 && !declaredCats) {
       catsEl.className = "cats"; catGrip.className = "catgrip";
       catsEl.innerHTML = "";
       return;
     }
 
+    // Rolled up, so a parent reports everything beneath it — matching what
+    // clicking it actually shows.
+    function total(path) {
+      if (path === "") return counts[""] || 0;
+      var sum = 0;
+      for (var k in counts) {
+        if (!counts.hasOwnProperty(k)) continue;
+        if (k === path || k.indexOf(path + "/") === 0) sum += counts[k];
+      }
+      return sum;
+    }
+
+    // Plain path sort puts children directly under their parent, because a
+    // parent string is a prefix of its children.
     order.sort(function (a, b) {
-      if (a === "") return -1;              // loose presets at the root first
+      if (a === "") return -1;
       if (b === "") return 1;
       return a.toLowerCase() < b.toLowerCase() ? -1 : 1;
     });
@@ -269,9 +371,14 @@
              + "</div>";
     for (i = 0; i < order.length; i++) {
       f = order[i];
-      html += '<div class="cat' + (activeFolder === f ? " sel" : "") + '" data-f="' + esc(f) + '">'
-            +   '<span class="cn">' + esc(f || "(root)") + "</span>"
-            +   '<span class="cc">' + counts[f] + "</span>"
+      var parts = f ? f.split("/") : [];
+      var depth = parts.length ? parts.length - 1 : 0;
+      var label = parts.length ? parts[parts.length - 1] : "(root)";
+      html += '<div class="cat' + (activeFolder === f ? " sel" : "") + '" data-f="' + esc(f) + '"'
+            +   ' title="' + esc(f || "(root)") + '"'
+            +   ' style="padding-left:' + (6 + depth * 10) + 'px">'
+            +   '<span class="cn">' + esc(label) + "</span>"
+            +   '<span class="cc">' + total(f) + "</span>"
             + "</div>";
     }
     catsEl.className = "cats open"; catGrip.className = "catgrip open";
@@ -285,13 +392,75 @@
         renderCats();
         applyFilter();
       });
+
+      // Right-click targets the row you clicked, and selects it first so the
+      // menu's wording matches what you can see is highlighted.
+      rows[i].addEventListener("contextmenu", function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        var isAll = !!this.getAttribute("data-all");
+        var path  = isAll ? "" : (this.getAttribute("data-f") || "");
+        if (!isAll) {
+          activeFolder = path;
+          renderCats();
+          applyFilter();
+        }
+        openCatMenu(path, ev.clientX, ev.clientY);
+      });
+
+      // ── Drop target: move the dragged asset into this category ──
+      // "All presets" is a filter, not a folder, so it never accepts a drop.
+      rows[i].addEventListener("dragover", function (ev) {
+        if (dragIndex < 0 || this.getAttribute("data-all")) return;
+        ev.preventDefault();
+        try { ev.dataTransfer.dropEffect = "move"; } catch (e) {}
+        setDropTarget(this, true);
+      });
+      rows[i].addEventListener("dragleave", function () { setDropTarget(this, false); });
+      rows[i].addEventListener("drop", function (ev) {
+        if (dragIndex < 0 || this.getAttribute("data-all")) return;
+        ev.preventDefault();
+        setDropTarget(this, false);
+        var to = this.getAttribute("data-f") || "";
+        var i2 = dragIndex;
+        dragIndex = -1;
+        moveAsset(i2, to);
+      });
     }
+  }
+
+  // The rows are rebuilt on every render, so the highlight is a class toggle
+  // rather than stored state.
+  function setDropTarget(row, on) {
+    var base = row.getAttribute("data-basecls") || row.className.replace(/\s*drop\b/, "");
+    row.setAttribute("data-basecls", base);
+    row.className = on ? base + " drop" : base;
+  }
+
+  function clearDropTargets() {
+    var rows = catsEl.getElementsByClassName("cat");
+    for (var i = 0; i < rows.length; i++) setDropTarget(rows[i], false);
+  }
+
+  function moveAsset(i, to) {
+    var p = view[i];
+    if (!p) return;
+    if ((p.folder || "") === to) { flash(p.name + " is already there"); return; }
+
+    flash("Moving " + p.name + "…");
+    callHost("zae_moveAsset", {
+      root: currentDir, name: p.name, from: p.folder || "", to: to
+    }, function (r) {
+      log("Move " + p.name + " → " + r.message, r.ok ? "ok" : "err");
+      flash(r.ok ? p.name + " ✓" : r.message, !r.ok);
+      if (r.ok && currentDir) loadPresets(currentDir);
+    });
   }
 
   function applyFilter() {
     view = [];
     for (var i = 0; i < presets.length; i++) {
-      if (activeFolder === null || topFolder(presets[i]) === activeFolder) view.push(presets[i]);
+      if (activeFolder === null || inFolder(presets[i], activeFolder)) view.push(presets[i]);
     }
     selectedIdx = -1;
     renderList();
@@ -309,7 +478,7 @@
     for (var i = 0; i < view.length; i++) {
       var p = view[i];
       // Folder is shown by the category list above, not repeated per card.
-      html += '<div class="card" data-i="' + i + '" title="' + esc(p.path) + '">'
+      html += '<div class="card" draggable="true" data-i="' + i + '" title="' + esc(p.path) + '">'
             +   thumbHtml(p)
             +   '<div class="meta"><span class="nm">' + esc(p.name) + "</span></div>"
             + "</div>";
@@ -332,6 +501,21 @@
         select(i);
         useSelected();
       });
+      // Drag a card onto a category row to move the asset there.
+      card.addEventListener("dragstart", function (ev) {
+        dragIndex = Number(this.getAttribute("data-i"));
+        closeMenu();
+        try {
+          ev.dataTransfer.effectAllowed = "move";
+          // Some payload is required or the drag never starts in Chromium.
+          ev.dataTransfer.setData("text/plain", String(dragIndex));
+        } catch (e) {}
+      });
+      card.addEventListener("dragend", function () {
+        dragIndex = -1;
+        clearDropTargets();
+      });
+
       card.addEventListener("contextmenu", function (ev) {
         ev.preventDefault();
         var i = Number(this.getAttribute("data-i"));
@@ -481,6 +665,8 @@
 
   // ── Name prompt (shared by New Category and Add Asset) ───────
   var promptMode = "category";
+  var promptIdx  = -1;          // asset being renamed, for mode "rename"
+  var promptPath = "";          // folder path, for modes "category" / "catrename"
 
   // "All presets" (null) and the root row ("") both mean the preset root.
   function targetCategory() {
@@ -496,24 +682,59 @@
     syncHeight();
   }
 
-  function openPrompt(mode) {
+  // opts: { idx } for an asset rename, { path } for folder create/rename.
+  function openPrompt(mode, opts) {
     if (!currentDir) { flash("Pick a preset folder first", true); return; }
+    opts = opts || {};
     promptMode = mode;
-    promptInput.value = "";
-    promptInput.placeholder = mode === "asset"
-      ? "Asset name… (into " + targetLabel() + ")"
-      : "Category name…";
-    promptOk.textContent = mode === "asset" ? "Create" : "Add";
+    promptIdx  = (opts.idx === undefined) ? -1 : opts.idx;
+    promptPath = (opts.path === undefined) ? "" : opts.path;
+
+    var lastSegment = promptPath ? promptPath.split("/").pop() : "";
+    var current = "";
+    if (mode === "rename" && view[promptIdx]) current = view[promptIdx].name;
+    else if (mode === "catrename") current = lastSegment;
+
+    promptInput.value = current;
+    promptInput.placeholder =
+        mode === "asset"     ? "Asset name… (into " + targetLabel() + ")"
+      : mode === "rename"    ? "New name…"
+      : mode === "catrename" ? "Rename folder…"
+      : promptPath           ? "Folder inside " + lastSegment + "…"
+      :                        "Folder name…";
+    promptOk.textContent =
+        mode === "asset" ? "Create"
+      : (mode === "rename" || mode === "catrename") ? "Rename"
+      : "Add";
+
     promptRow.className = "row addcat open";
     addCatBtn.className = mode === "category" ? "ico on" : "ico";
     syncHeight();
     promptInput.focus();
+    // Pre-select the old name so typing replaces it, but Tab/End keeps it.
+    if (current) { try { promptInput.select(); } catch (e) {} }
   }
 
   function submitPrompt() {
     var name = promptInput.value.replace(/^\s+|\s+$/g, "");
     if (!name || !currentDir) return;
     promptOk.disabled = true;
+
+    if (promptMode === "rename") {
+      var p = view[promptIdx];
+      if (!p) { promptOk.disabled = false; closePrompt(); return; }
+      callHost("zae_renameAsset", {
+        root: currentDir, folder: p.folder || "", from: p.name, to: name
+      }, function (r) {
+        promptOk.disabled = false;
+        log("Rename " + p.name + " → " + r.message, r.ok ? "ok" : "err");
+        flash(r.message, !r.ok);
+        if (!r.ok) return;
+        closePrompt();
+        loadPresets(currentDir);
+      });
+      return;
+    }
 
     if (promptMode === "asset") {
       flash("Creating " + name + "…");
@@ -531,7 +752,29 @@
       return;
     }
 
-    callHost("zae_addCategory", { root: currentDir, name: name }, function (r) {
+    if (promptMode === "catrename") {
+      var oldPath = promptPath;
+      callHost("zae_renameCategory", { root: currentDir, path: oldPath, to: name }, function (r) {
+        promptOk.disabled = false;
+        log("Rename folder " + oldPath + " → " + r.message, r.ok ? "ok" : "err");
+        flash(r.message, !r.ok);
+        if (!r.ok) return;
+        closePrompt();
+        // Follow the folder: a selection pointing at the old path would filter
+        // to nothing after the reload.
+        if (activeFolder === oldPath || (activeFolder && activeFolder.indexOf(oldPath + "/") === 0)) {
+          activeFolder = r.data && r.data.path
+            ? (activeFolder === oldPath ? r.data.path
+                                        : r.data.path + activeFolder.substring(oldPath.length))
+            : null;
+        }
+        loadPresets(currentDir);
+      });
+      return;
+    }
+
+    // promptPath is the parent chosen by the rail's right-click; empty = root.
+    callHost("zae_addCategory", { root: currentDir, parent: promptPath, name: name }, function (r) {
       promptOk.disabled = false;
       log("Add category → " + r.message, r.ok ? "ok" : "err");
       flash(r.message, !r.ok);
@@ -544,7 +787,7 @@
 
   addCatBtn.addEventListener("click", function () {
     if (promptRow.className.indexOf("open") !== -1 && promptMode === "category") closePrompt();
-    else openPrompt("category");
+    else openPrompt("category", { path: targetCategory() });
   });
   promptOk.addEventListener("click", submitPrompt);
   promptInput.addEventListener("keydown", function (ev) {
@@ -695,9 +938,28 @@
     });
   }
 
+  // Drop CEF's handle on a card's preview file before overwriting it. Every
+  // card holds its .mp4 open while AUTOPLAY_ALL is on, and the export deletes
+  // the previous file first — on Windows that delete can fail against a live
+  // handle. The card is re-rendered from the rescan afterwards either way.
+  function releasePreview(i) {
+    var cards = listEl.getElementsByClassName("card");
+    for (var n = 0; n < cards.length; n++) {
+      if (Number(cards[n].getAttribute("data-i")) !== i) continue;
+      var v = cards[n].getElementsByTagName("video")[0];
+      if (v) {
+        try { v.pause(); v.removeAttribute("src"); v.load(); } catch (e) {}
+      }
+      var img = cards[n].getElementsByTagName("img")[0];
+      if (img) { try { img.removeAttribute("src"); } catch (e2) {} }
+      return;
+    }
+  }
+
   function exportImagePreview(i) {
     var p = view[i];
     if (!p) return;
+    releasePreview(i);
     flash("Saving " + p.name + ".png…");
     callHost("zae_exportImagePreview", {
       path: p.path, name: p.name, width: EXPORT_W, height: EXPORT_H
@@ -711,6 +973,7 @@
   function exportPreview(i) {
     var p = view[i];
     if (!p) return;
+    releasePreview(i);
     // rq.render() blocks After Effects until it finishes, so evalScript's
     // callback only fires at the end — say what's happening up front.
     flash("Rendering " + p.name + "…");
@@ -787,9 +1050,16 @@
     if (p.kind === "comp") {
       item("Add to Comp", true, function () { addToComp(i); }, "Main comp → active comp");
     } else {
-      item("Apply to selected layer", true,
-        function () { select(i); applySelected(); }, "Applies to the selected layer(s)");
+      item("Apply In", true,
+        function () { select(i); applySelected(false); },
+        "Applies the preset, keeping only its entrance keyframes");
+      item("Apply Out", true,
+        function () { select(i); applySelected(true); },
+        "Applies the entrance keyframes, then time-reverses them");
     }
+    sep();
+    item("Rename…", true, function () { openPrompt("rename", { idx: i }); },
+      "Renames the .ffx/.aep and its preview together");
     item("Reveal in Explorer", true, function () { revealPreset(i); }, p.path);
 
     // Show it before measuring, then clamp so it never runs off the panel.
@@ -799,6 +1069,52 @@
     menuEl.style.left = Math.max(2, Math.min(x, vw - mw - 2)) + "px";
     menuEl.style.top  = Math.max(2, Math.min(y, vh - mh - 2)) + "px";
   }
+
+  // Right-click in the category rail. `path` is the row that was clicked, or ""
+  // for the root (empty rail space, or the (root) row itself).
+  function openCatMenu(path, x, y) {
+    menuEl.innerHTML = "";
+
+    var isRoot = !path;
+    var label  = isRoot ? "the preset root" : path.split("/").pop();
+
+    item("New Folder…", !!currentDir,
+      function () { openPrompt("category", { path: isRoot ? "" : path }); },
+      isRoot ? "New top-level folder" : "New folder inside " + label);
+
+    // Only a real folder can be renamed — "All presets" is a filter and the
+    // root is the preset folder itself.
+    if (!isRoot) {
+      item("Rename…", true,
+        function () { openPrompt("catrename", { path: path }); },
+        "Renames the folder on disk");
+    }
+
+    sep();
+    item("Reveal in Explorer", !!currentDir, function () {
+      var full = currentDir + (isRoot ? "" : "\\" + path.split("/").join("\\"));
+      callHost("zae_revealPreset", { path: full }, function (r) {
+        if (!r.ok) flash(r.message, true);
+      });
+    }, isRoot ? currentDir : path);
+
+    menuEl.className = "menu open";
+    var mw = menuEl.offsetWidth, mh = menuEl.offsetHeight;
+    var vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
+    menuEl.style.left = Math.max(2, Math.min(x, vw - mw - 2)) + "px";
+    menuEl.style.top  = Math.max(2, Math.min(y, vh - mh - 2)) + "px";
+  }
+
+  // Empty space in the rail targets the root.
+  catsEl.addEventListener("contextmenu", function (ev) {
+    var n = ev.target;
+    while (n && n !== catsEl) {
+      if (n.className && String(n.className).indexOf("cat") !== -1) return;  // a row handles it
+      n = n.parentNode;
+    }
+    ev.preventDefault();
+    openCatMenu("", ev.clientX, ev.clientY);
+  });
 
   // Right-click on the grid's empty space — actions that create things in the
   // selected category rather than acting on a card.
@@ -813,8 +1129,7 @@
       ASSET_W + "×" + ASSET_H + " @ " + ASSET_FPS + "fps → " + into);
 
     sep();
-    item("New Category…", !!currentDir, function () { openPrompt("category"); },
-      "New folder in " + (currentDir || "the preset root"));
+    // Folder creation/renaming lives on the rail's own right-click menu.
     item("Reveal in Explorer", !!currentDir, function () {
       callHost("zae_revealPreset", { path: currentDir }, function (r) {
         if (!r.ok) flash(r.message, true);
@@ -852,14 +1167,17 @@
     if (!listEl.contains(ev.target)) closeMenu();
   });
 
-  function applySelected() {
+  // reverse = "Apply Out": the preset's own keyframes get time-reversed, so an
+  // in-animation becomes the matching out-animation.
+  function applySelected(reverse) {
     var p = view[selectedIdx];
     if (!p) return;
-    applyBtn.disabled = true;
-    callHost("zae_applyPreset", { path: p.path }, function (r) {
-      applyBtn.disabled = false;
-      log("Apply " + p.name + " → " + r.message, r.ok ? "ok" : "err");
-      flash(r.ok ? p.name + " ✓" : r.message, !r.ok);
+    var label = reverse ? "Apply Out" : "Apply In";
+    applyBtn.disabled = true; applyOutBtn.disabled = true;
+    callHost("zae_applyPreset", { path: p.path, reverse: !!reverse }, function (r) {
+      applyBtn.disabled = false; applyOutBtn.disabled = false;
+      log(label + " " + p.name + " → " + r.message, r.ok ? "ok" : "err");
+      flash(r.ok ? p.name + (reverse ? " out ✓" : " ✓") : r.message, !r.ok);
     });
   }
 
@@ -872,6 +1190,7 @@
   }
 
   applyBtn.addEventListener("click", useSelected);
+  applyOutBtn.addEventListener("click", function () { applySelected(true); });
 
   // Collapsed = one status row only. Ask the host to shrink/grow the panel to
   // match, so a closed log costs no screen space next to AE's own panels.
@@ -893,19 +1212,29 @@
   logBtn.addEventListener("click", function () {
     var open = logEl.className.indexOf("open") === -1;
     logEl.className = open ? "log open" : "log";
-    logBtn.className = open ? "ico on" : "ico";
+    logBtn.className = open ? "ico lbl on" : "ico lbl";
     logBtn.title = open ? "Hide log" : "Show log";
     syncHeight();
   });
 
-  presetBtn.addEventListener("click", function () {
-    var open = presetsEl.className.indexOf("open") === -1;
+  var PRESETS_KEY = "zae.presetsOpen";
+
+  // `deferScan` is for the startup call only: CEP loads the panel HTML and the
+  // JSX independently, so evalScript fired synchronously on load can land
+  // before host.jsx is in place. A click is always well after that.
+  function setPresetsOpen(open, deferScan) {
     presetsEl.className = open ? "presets open" : "presets";
-    presetBtn.className = open ? "ico on" : "ico";
-    presetBtn.title = open ? "Hide presets" : "Browse .ffx presets";
+    presetBtn.className = open ? "ico lbl on" : "ico lbl";
+    presetBtn.title = open ? "Hide presets" : "Browse .ffx presets and .aep compositions";
     syncHeight();
-    // Scan lazily — a panel that's never opened shouldn't walk the disk.
-    if (open) initPresets();
+    try { localStorage.setItem(PRESETS_KEY, open ? "1" : "0"); } catch (e) {}
+    if (!open) return;
+    if (deferScan) setTimeout(initPresets, 200);
+    else initPresets();
+  }
+
+  presetBtn.addEventListener("click", function () {
+    setPresetsOpen(presetsEl.className.indexOf("open") === -1, false);
   });
 
   if (typeof fetch !== "function") {
@@ -916,6 +1245,14 @@
 
   initCardSize();
   initCatsWidth();
+
+  // Browser is open by default; after that the panel remembers whether it was
+  // left open, so closing it isn't undone on every launch.
+  var savedOpen = null;
+  try { savedOpen = localStorage.getItem(PRESETS_KEY); } catch (e) {}
+  setPresetsOpen(savedOpen === null ? true : savedOpen === "1", true);
+
+  checkForUpdate();
   log("Panel started. Polling ZeusPack…");
   poll();
 })();

@@ -322,8 +322,9 @@ function zae_presetRoots(params) {
 // Create a category folder and record it in categories.json.
 function zae_addCategory(params) {
     try {
-        var root = params && params.root ? String(params.root) : "";
-        var name = params && params.name ? String(params.name) : "";
+        var root   = params && params.root   ? String(params.root)   : "";
+        var name   = params && params.name   ? String(params.name)   : "";
+        var parent = params && params.parent ? String(params.parent) : "";
         name = name.replace(/^\s+|\s+$/g, "");
 
         if (!root) return _result(false, "No folder given.");
@@ -335,11 +336,23 @@ function zae_addCategory(params) {
         var rootFolder = new Folder(root);
         if (!rootFolder.exists) return _result(false, "Folder not found: " + root);
 
-        var dir = new Folder(rootFolder.fsName + "/" + name);
+        // A parent means this is a SUBcategory. Those are discovered by the
+        // scan rather than declared, so only top-level ones touch the manifest.
+        var parentFolder = _ensureFolder(root, parent);
+        if (!parentFolder) return _result(false, "Could not open " + (parent || "the preset root"));
+
+        var dir = new Folder(parentFolder.fsName + "/" + name);
         var createdFolder = false;
         if (!dir.exists) {
             if (!dir.create()) return _result(false, "Could not create folder: " + name);
             createdFolder = true;
+        }
+
+        if (parent) {
+            return _result(true,
+                createdFolder ? 'Added "' + parent + "/" + name + '"'
+                              : '"' + parent + "/" + name + '" already exists',
+                { categories: null, created: createdFolder, parent: parent });
         }
 
         var cats = _readCategories(rootFolder);
@@ -478,7 +491,11 @@ function _walkPresets(folder, depth, relPrefix, acc, allowed) {
             var pk = base.toLowerCase();
             var prev = previews[pk];
             if (!prev || _previewRank(ext) < _previewRank(prev.ext)) {
-                previews[pk] = { path: e.fsName, ext: ext };
+                // mtime rides along so the panel can cache-bust the file:// URL
+                // after a re-render — see fileUrl() in panel.js.
+                var mt = 0;
+                try { mt = e.modified ? e.modified.getTime() : 0; } catch (eM) {}
+                previews[pk] = { path: e.fsName, ext: ext, mtime: mt };
             }
         }
     }
@@ -500,6 +517,7 @@ function _walkPresets(folder, depth, relPrefix, acc, allowed) {
             folder:      relPrefix || "",
             preview:     pv ? pv.path : "",
             previewKind: pv ? (pv.ext === "mp4" || pv.ext === "webm" ? "video" : "image") : "",
+            previewMtime: pv ? pv.mtime : 0,
             // The .aep the preview was rendered from, when one exists.
             project:     projects[key] || ""
         });
@@ -518,6 +536,7 @@ function _walkPresets(folder, depth, relPrefix, acc, allowed) {
             folder:      relPrefix || "",
             preview:     pv ? pv.path : "",
             previewKind: pv ? (pv.ext === "mp4" || pv.ext === "webm" ? "video" : "image") : "",
+            previewMtime: pv ? pv.mtime : 0,
             project:     aep[j].file.fsName     // it IS the project
         });
     }
@@ -569,6 +588,104 @@ function zae_listPresets(params) {
 }
 
 // Apply a .ffx to whatever is selected in the active comp.
+// Depth-first walk of a layer's property tree, visiting only leaf properties.
+// The key is an index+matchName path, which is stable enough to tell "this
+// property existed before" from "the preset created it".
+function _walkProps(group, path, visit, depth) {
+    if (!group || depth > 8) return;
+    var n = 0;
+    try { n = group.numProperties; } catch (e) { return; }
+
+    for (var i = 1; i <= n; i++) {
+        var p = null;
+        try { p = group.property(i); } catch (e2) { continue; }
+        if (!p) continue;
+
+        var key = path + "/" + i + ":" + (p.matchName || p.name || "");
+        var t = null;
+        try { t = p.propertyType; } catch (e3) {}
+
+        if (t === PropertyType.PROPERTY) visit(p, key);
+        else _walkProps(p, key, visit, depth + 1);
+    }
+}
+
+// Keyframe values are numbers or arrays depending on the property.
+function _sameKeyValue(a, b) {
+    if (a === b) return true;
+    if (a === null || b === null || a === undefined || b === undefined) return false;
+
+    if (typeof a === "number" && typeof b === "number") return Math.abs(a - b) < 1e-6;
+
+    if (a.length !== undefined && b.length !== undefined) {
+        if (a.length !== b.length) return false;
+        for (var i = 0; i < a.length; i++) {
+            if (Math.abs(a[i] - b[i]) > 1e-6) return false;
+        }
+        return true;
+    }
+    return false;   // Shape / TextDocument etc. — not comparable, treat as different
+}
+
+// Keep only the ENTRANCE segment of the keyframes a preset created.
+//
+// Many presets animate in AND out; "Apply In" should leave just the entrance so
+// the exit can be timed separately (or added with Apply Out).
+//
+// Finding the split by value rather than by count:
+//   1. An in/out preset SETTLES — two consecutive keyframes hold the same value
+//      — and the exit starts after that hold. Cut at the start of the hold.
+//   2. Otherwise, a preset that ends exactly where it started is symmetric, so
+//      the first half is the entrance.
+//   3. Neither pattern means there is no evidence of an exit, so nothing is
+//      removed. Two keyframes is a single move and is always left alone.
+function _trimToIn(p) {
+    var n = 0;
+    try { n = p.numKeys; } catch (e) { return 0; }
+    if (n < 3) return 0;
+
+    var cut = 0, i;
+    for (i = 1; i < n; i++) {
+        if (_sameKeyValue(p.keyValue(i), p.keyValue(i + 1))) { cut = i; break; }
+    }
+    if (!cut && _sameKeyValue(p.keyValue(1), p.keyValue(n))) cut = Math.ceil(n / 2);
+    if (!cut || cut >= n) return 0;
+
+    // Back to front, so the indices of the keys still to remove don't shift.
+    var removed = 0;
+    for (i = n; i > cut; i--) {
+        try { p.removeKey(i); removed++; } catch (e2) {}
+    }
+    return removed;
+}
+
+// Time-Reverse Keyframes acts on the comp's SELECTED keyframes, so anything
+// already selected elsewhere would be reversed too.
+function _deselectAllKeys(comp) {
+    for (var L = 1; L <= comp.numLayers; L++) {
+        _walkProps(comp.layer(L), "L" + L, function (p) {
+            var sel;
+            try { sel = p.selectedKeys; } catch (e) { return; }
+            for (var s = 0; s < sel.length; s++) {
+                try { p.setSelectedAtKey(sel[s], false); } catch (e2) {}
+            }
+        }, 0);
+    }
+}
+
+// Apply an animation preset to the selected layer(s).
+//
+// params.reverse — "Apply Out": run the preset, then time-reverse the keyframes
+// it created, turning an in-animation into its out-animation.
+//
+// The reversal uses AE's own Keyframe Assistant rather than rewriting keys by
+// hand: doing it manually means reconstructing temporal easing, spatial
+// tangents and hold keys, and getting any of that subtly wrong is worse than
+// not offering the feature.
+//
+// Only properties the preset itself animated are reversed. Properties that
+// already had keyframes are left alone — reversing a layer's pre-existing
+// animation because a preset happened to be dropped on it would be surprising.
 function zae_applyPreset(params) {
     try {
         var path = params && params.path ? String(params.path) : "";
@@ -576,25 +693,105 @@ function zae_applyPreset(params) {
         var f = new File(path);
         if (!f.exists) return _result(false, "Preset not found: " + path);
 
+        var reverse = !!(params && params.reverse);
+
         var comp = app.project ? app.project.activeItem : null;
         if (!(comp instanceof CompItem)) return _result(false, "Open a composition first.");
 
         var layers = comp.selectedLayers;
         if (!layers || !layers.length) return _result(false, "Select at least one layer.");
 
-        app.beginUndoGroup("ZeusPack: Apply Preset");
+        var i, L;
+        app.beginUndoGroup(reverse ? "ZeusPack: Apply Preset (out)" : "ZeusPack: Apply Preset (in)");
+
+        // Snapshot key counts so the newly-animated properties can be told apart
+        // from animation the layer already had.
+        var before = {};
+        for (i = 0; i < layers.length; i++) {
+            _walkProps(layers[i], "L" + i, function (p, key) {
+                var n = 0;
+                try { n = p.numKeys; } catch (e) {}
+                before[key] = n;
+            }, 0);
+        }
+
         var applied = 0;
-        for (var i = 0; i < layers.length; i++) {
+        for (i = 0; i < layers.length; i++) {
             try { layers[i].applyPreset(f); applied++; } catch (e2) {}
         }
+
+        if (!applied) {
+            app.endUndoGroup();
+            return _result(false, "Could not apply to the selected layer(s).");
+        }
+
+        var fresh = [];
+        for (i = 0; i < layers.length; i++) {
+            _walkProps(layers[i], "L" + i, function (p, key) {
+                var had = before.hasOwnProperty(key) ? before[key] : -1;
+                var now = 0;
+                try { now = p.numKeys; } catch (e) {}
+                // had <= 0 covers both "property is new" and "existed but was
+                // static". Two keys minimum — one has nothing to trim or reverse.
+                if (had <= 0 && now > 1) fresh.push(p);
+            }, 0);
+        }
+
+        // Drop the exit half BEFORE any reversal, so Apply Out reverses the
+        // entrance rather than flipping an in+out pair back on itself.
+        var trimmedKeys = 0, trimmedProps = 0;
+        if (params.trim !== false) {
+            for (i = 0; i < fresh.length; i++) {
+                var t = _trimToIn(fresh[i]);
+                if (t) { trimmedKeys += t; trimmedProps++; }
+            }
+        }
+
+        var reversedProps = 0, cmdId = 0;
+        if (reverse) {
+            if (fresh.length) {
+                _deselectAllKeys(comp);
+                for (i = 0; i < fresh.length; i++) {
+                    var p = fresh[i];
+                    for (var k = 1; k <= p.numKeys; k++) {
+                        try { p.setSelectedAtKey(k, true); } catch (e3) {}
+                    }
+                    reversedProps++;
+                }
+
+                // Keyframe Assistant commands read the front-most comp viewer.
+                try { comp.openInViewer(); } catch (e4) {}
+
+                var names = ["Time-Reverse Keyframes", "Time Reverse Keyframes"];
+                for (i = 0; i < names.length && !cmdId; i++) {
+                    try { cmdId = app.findMenuCommandId(names[i]); } catch (e5) {}
+                }
+                if (cmdId) { try { app.executeCommand(cmdId); } catch (e6) { cmdId = 0; } }
+            }
+        }
+
         app.endUndoGroup();
 
-        if (!applied) return _result(false, "Could not apply to the selected layer(s).");
-        return _result(true, "Applied to " + applied + " layer" + (applied === 1 ? "" : "s"), {
-            applied: applied, comp: comp.name
+        var msg = "Applied to " + applied + " layer" + (applied === 1 ? "" : "s");
+        if (trimmedProps) {
+            msg += ", dropped the exit from " + trimmedProps + " propert"
+                 + (trimmedProps === 1 ? "y" : "ies")
+                 + " (" + trimmedKeys + " keyframe" + (trimmedKeys === 1 ? "" : "s") + ")";
+        }
+        if (reverse) {
+            if (!reversedProps)   msg += " — no keyframes to reverse (static preset)";
+            else if (!cmdId)      msg += " — but Time-Reverse Keyframes was not found on this AE version";
+            else                  msg += ", reversed " + reversedProps + " animated propert"
+                                       + (reversedProps === 1 ? "y" : "ies");
+        }
+
+        return _result(reverse ? (!reversedProps || !!cmdId) : true, msg, {
+            applied: applied, comp: comp.name,
+            trimmedProps: trimmedProps, trimmedKeys: trimmedKeys,
+            reversed: reversedProps, reverseApplied: !!cmdId
         });
     } catch (e) {
-        try { app.endUndoGroup(); } catch (e3) {}
+        try { app.endUndoGroup(); } catch (e7) {}
         return _result(false, "Exception: " + e.toString());
     }
 }
@@ -949,6 +1146,215 @@ function zae_exportImagePreview(params) {
     }
 }
 
+// Move an asset — every file sharing its base name — into another category.
+//
+// "The asset" is the .ffx/.aep plus its preview, so all of them travel
+// together; leaving the preview behind would orphan it and blank the card.
+// Only known extensions move, so unrelated files that happen to share the name
+// are left alone.
+function zae_moveAsset(params) {
+    try {
+        var root = params && params.root ? String(params.root) : "";
+        var name = params && params.name ? String(params.name) : "";
+        var from = params && params.from ? String(params.from) : "";
+        var to   = params && params.to   ? String(params.to)   : "";
+
+        if (!root || !name) return _result(false, "Nothing to move.");
+        if (from === to) return _result(true, name + " is already in " + (to || "root"), { moved: 0 });
+
+        var rootFolder = new Folder(root);
+        if (!rootFolder.exists) return _result(false, "Folder not found: " + root);
+
+        var src = from ? new Folder(rootFolder.fsName + "/" + from) : rootFolder;
+        if (!src.exists) return _result(false, "Source folder not found: " + from);
+
+        var dst = _targetFolder(root, to);
+        if (!dst) return _result(false, "Could not open the target category.");
+
+        var i;
+        var wanted = ["ffx", "aep"];
+        for (i = 0; i < _PREVIEW_EXTS.length; i++) wanted.push(_PREVIEW_EXTS[i]);
+
+        var entries = src.getFiles() || [];
+        var moves = [], lower = name.toLowerCase();
+        for (i = 0; i < entries.length; i++) {
+            var e = entries[i];
+            if (e instanceof Folder) continue;
+            var n = _baseName(e);
+            if (_stripExt(n).toLowerCase() !== lower) continue;
+            if (!_inList(wanted, _extOf(n))) continue;
+            moves.push({ file: e, name: n });
+        }
+        if (!moves.length) return _result(false, "No files found for " + name + ".");
+
+        // Refuse up front rather than half-moving: check every destination.
+        var clash = [];
+        for (i = 0; i < moves.length; i++) {
+            if (new File(dst.fsName + "/" + moves[i].name).exists) clash.push(moves[i].name);
+        }
+        if (clash.length) {
+            return _result(false, '"' + (to || "root") + '" already has ' + clash.join(", "));
+        }
+
+        // Two-phase — copy everything, then delete the originals. ExtendScript
+        // has no cross-folder move, and a failure part-way through would
+        // otherwise split an asset across two categories. Copies made before a
+        // failure are rolled back.
+        var copied = [];
+        for (i = 0; i < moves.length; i++) {
+            var target = dst.fsName + "/" + moves[i].name;
+            var ok = false;
+            try { ok = moves[i].file.copy(target); } catch (e2) { ok = false; }
+            if (!ok) {
+                for (var c = 0; c < copied.length; c++) {
+                    try { new File(copied[c]).remove(); } catch (e3) {}
+                }
+                return _result(false, "Could not copy " + moves[i].name + " — nothing was moved.");
+            }
+            copied.push(target);
+        }
+
+        var removed = 0;
+        for (i = 0; i < moves.length; i++) {
+            try { if (moves[i].file.remove()) removed++; } catch (e4) {}
+        }
+
+        var msg = "Moved " + name + " → " + (to || "root");
+        if (removed !== moves.length) {
+            msg += " (copied, but " + (moves.length - removed) + " original file(s) could not be deleted)";
+        }
+        return _result(true, msg, { moved: moves.length, removed: removed, to: to, files: copied.length });
+    } catch (e) {
+        return _result(false, "Exception: " + e.toString());
+    }
+}
+
+// Rename a category folder. The files inside travel with it, so this is a plain
+// folder rename — only the manifest needs patching, and only for a top-level
+// category, since subcategories are never declared.
+function zae_renameCategory(params) {
+    try {
+        var root = params && params.root ? String(params.root) : "";
+        var path = params && params.path ? String(params.path) : "";
+        var to   = params && params.to   ? String(params.to)   : "";
+        to = to.replace(/^\s+|\s+$/g, "");
+
+        if (!root || !path) return _result(false, "No folder to rename.");
+        if (!to) return _result(false, "Enter a new name.");
+        if (/[\\\/:\*\?"<>\|]/.test(to)) return _result(false, 'Name cannot contain \\ / : * ? " < > |');
+        if (to === "." || to === "..") return _result(false, "Invalid name.");
+
+        var rootFolder = new Folder(root);
+        if (!rootFolder.exists) return _result(false, "Folder not found: " + root);
+
+        var dir = new Folder(rootFolder.fsName + "/" + path.split("/").join("/"));
+        if (!dir.exists) return _result(false, "Folder not found: " + path);
+
+        var parts     = path.split("/");
+        var oldName   = parts[parts.length - 1];
+        var parentRel = parts.slice(0, parts.length - 1).join("/");
+        if (to === oldName) return _result(true, "Name unchanged.", { path: path });
+
+        var parentFolder = parentRel
+            ? new Folder(rootFolder.fsName + "/" + parentRel)
+            : rootFolder;
+
+        var dest = new Folder(parentFolder.fsName + "/" + to);
+        if (dest.exists && dest.fsName !== dir.fsName) {
+            return _result(false, '"' + to + '" already exists there.');
+        }
+
+        var ok = false;
+        try { ok = dir.rename(to); } catch (e2) { ok = false; }
+        if (!ok) return _result(false, "Could not rename " + oldName + ".");
+
+        // Top-level categories are declared; keep the manifest in step.
+        var patched = false;
+        if (!parentRel) {
+            var cats = _readCategories(rootFolder);
+            if (cats) {
+                for (var i = 0; i < cats.length; i++) {
+                    if (cats[i] === oldName) { cats[i] = to; patched = true; }
+                }
+                if (patched) _writeCategories(rootFolder, cats);
+            }
+        }
+
+        var newPath = parentRel ? parentRel + "/" + to : to;
+        return _result(true, "Renamed " + oldName + " → " + to, {
+            path: newPath, from: path, manifestUpdated: patched
+        });
+    } catch (e) {
+        return _result(false, "Exception: " + e.toString());
+    }
+}
+
+// Rename an asset — every file sharing its base name, so the .ffx/.aep/preview
+// stay a set. Renaming only the .ffx would orphan the others.
+function zae_renameAsset(params) {
+    try {
+        var root   = params && params.root   ? String(params.root)   : "";
+        var folder = params && params.folder ? String(params.folder) : "";
+        var from   = params && params.from   ? String(params.from)   : "";
+        var to     = params && params.to     ? String(params.to)     : "";
+        to = to.replace(/^\s+|\s+$/g, "");
+
+        if (!root || !from) return _result(false, "Nothing to rename.");
+        if (!to) return _result(false, "Enter a new name.");
+        if (/[\\\/:\*\?"<>\|]/.test(to)) return _result(false, 'Name cannot contain \\ / : * ? " < > |');
+        if (to === from) return _result(true, "Name unchanged.", { renamed: 0, name: from });
+
+        var rootFolder = new Folder(root);
+        if (!rootFolder.exists) return _result(false, "Folder not found: " + root);
+        var dir = folder ? new Folder(rootFolder.fsName + "/" + folder) : rootFolder;
+        if (!dir.exists) return _result(false, "Folder not found: " + folder);
+
+        var i, wanted = ["ffx", "aep"];
+        for (i = 0; i < _PREVIEW_EXTS.length; i++) wanted.push(_PREVIEW_EXTS[i]);
+
+        var entries = dir.getFiles() || [], targets = [], lower = from.toLowerCase();
+        for (i = 0; i < entries.length; i++) {
+            var e = entries[i];
+            if (e instanceof Folder) continue;
+            var n = _baseName(e), ext = _extOf(n);
+            if (_stripExt(n).toLowerCase() !== lower) continue;
+            if (!_inList(wanted, ext)) continue;
+            targets.push({ file: e, newName: to + "." + ext });
+        }
+        if (!targets.length) return _result(false, "No files found for " + from + ".");
+
+        // Check every destination first, so a clash can't leave the set split
+        // between two names. A file colliding with itself (case-only change) is
+        // not a clash.
+        var clash = [];
+        for (i = 0; i < targets.length; i++) {
+            var t = new File(dir.fsName + "/" + targets[i].newName);
+            if (t.exists && t.fsName !== targets[i].file.fsName) clash.push(targets[i].newName);
+        }
+        if (clash.length) return _result(false, "Already exists: " + clash.join(", "));
+
+        var done = [];
+        for (i = 0; i < targets.length; i++) {
+            var oldName = _baseName(targets[i].file);
+            var ok = false;
+            try { ok = targets[i].file.rename(targets[i].newName); } catch (e2) { ok = false; }
+            if (!ok) {
+                // rename() leaves the File pointing at its new name, so undoing
+                // is just renaming it back.
+                for (var r = 0; r < done.length; r++) {
+                    try { done[r].file.rename(done[r].old); } catch (e3) {}
+                }
+                return _result(false, "Could not rename " + oldName + " — nothing was changed.");
+            }
+            done.push({ file: targets[i].file, old: oldName });
+        }
+
+        return _result(true, "Renamed " + from + " → " + to, { renamed: done.length, name: to });
+    } catch (e) {
+        return _result(false, "Exception: " + e.toString());
+    }
+}
+
 // Open the containing folder in Explorer/Finder — the quickest way to drop a
 // rendered preview next to the preset.
 function zae_revealPreset(params) {
@@ -985,13 +1391,24 @@ function _collectFfx(folder, depth, map) {
     }
 }
 
+// `relative` may be nested ("Text/Kinetic"). Folder.create() does not reliably
+// make intermediate directories, so each segment is created in turn.
+function _ensureFolder(root, relative) {
+    var cur = new Folder(root);
+    if (!cur.exists) return null;
+    if (!relative) return cur;
+
+    var parts = String(relative).split("/");
+    for (var i = 0; i < parts.length; i++) {
+        if (!parts[i]) continue;
+        cur = new Folder(cur.fsName + "/" + parts[i]);
+        if (!cur.exists && !cur.create()) return null;
+    }
+    return cur;
+}
+
 function _targetFolder(root, category) {
-    var rootFolder = new Folder(root);
-    if (!rootFolder.exists) return null;
-    if (!category) return rootFolder;
-    var t = new Folder(rootFolder.fsName + "/" + category);
-    if (!t.exists && !t.create()) return null;
-    return t;
+    return _ensureFolder(root, category);
 }
 
 // Save the current selection as a preset, into the chosen category.
