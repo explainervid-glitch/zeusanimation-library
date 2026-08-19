@@ -149,7 +149,7 @@ was selected.
 | Control | What it does |
 |---|---|
 | Path dropdown | `Zeus Presets` / `User Presets` / `Browse…` |
-| Folder+ | New category |
+| Loop / Hover | Preview playback mode — see below |
 | ↻ | Rescan the current folder |
 | Size slider | Thumbnail size, 72–200px |
 | Apply to selected layer | Applies the selected preset (or *Add to comp*) |
@@ -162,7 +162,19 @@ than a folder and never accepts a drop.
 Drag the **right edge of the category rail** to resize it. The grid is never
 squeezed below 96px, so dragging fully right stops rather than hiding it.
 
-Rail width, thumbnail size and the chosen root all persist in `localStorage`.
+**Loop / Hover** switches how video previews play:
+
+- **Loop** — every card plays continuously. Reads best, but a folder of a few
+  hundred previews means that many simultaneous video decoders.
+- **Hover** — the first frame is painted and only the card under the pointer
+  plays, so one decoder runs at a time.
+
+Decoder count follows the cards in the DOM rather than the visible ones, so the
+difference shows up on large folders and wide panels. If the grid ever feels
+sluggish, this is the first thing to try.
+
+Rail width, thumbnail size, playback mode and the chosen root all persist in
+`localStorage`.
 
 Click a card to select. **Double-click uses the asset** — applies a preset, or
 imports a composition into the open comp. The bottom button follows suit,
@@ -230,7 +242,7 @@ Panel constants, top of the relevant block in `js/panel.js`:
 | `EXPORT_MBPS` | `8` | Target H.264 bitrate |
 | `CARD_MIN/MAX/DEFAULT` | `72 / 200 / 100` | Thumbnail size slider range |
 | `CATS_MIN/MAX/DEFAULT` | `56 / 240 / 84` | Category rail width range |
-| `AUTOPLAY_ALL` | `true` | All previews play, vs. play-on-hover |
+| `AUTOPLAY_KEY` | `zae.autoplay` | Stores the Loop/Hover choice |
 
 Host constants in `jsx/host.jsx`:
 
@@ -242,14 +254,6 @@ Host constants in `jsx/host.jsx`:
 | `_MAX_DEPTH` | `4` | Scan recursion depth |
 
 Card size, rail width and the chosen root persist in `localStorage`.
-
-### `AUTOPLAY_ALL`
-
-`true` renders every preview with `autoplay loop muted` — currently set this way
-to measure performance. Decoder count scales with the number of **cards in the
-DOM**, not the visible ones, so a wide panel at Small size over a large folder is
-the honest stress test. Set to `false` for `preload="metadata"` plus
-play-on-hover, which keeps one decoder running at a time.
 
 ---
 

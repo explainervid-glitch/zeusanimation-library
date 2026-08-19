@@ -29,7 +29,6 @@
   var presetsEl  = document.getElementById("presets");
   var pathSelect = document.getElementById("pathSelect");
   var refreshBtn = document.getElementById("refreshBtn");
-  var addCatBtn   = document.getElementById("addCatBtn");
   var promptRow   = document.getElementById("promptRow");
   var promptInput = document.getElementById("promptInput");
   var promptOk    = document.getElementById("promptOk");
@@ -40,6 +39,8 @@
   var sizeSlider = document.getElementById("sizeSlider");
   var catsEl     = document.getElementById("cats");
   var catGrip    = document.getElementById("catGrip");
+  var loopBtn    = document.getElementById("loopBtn");
+  var loopLbl    = document.getElementById("loopLbl");
 
   var connected = null;   // tri-state so the first result always renders
 
@@ -265,17 +266,42 @@
     applyBtn.disabled = true;
   }
 
-  // PERF TEST: every card plays continuously instead of only on hover.
-  // A folder can hold hundreds of presets, and that many simultaneous video
-  // decoders is exactly what this flag is for measuring. Set to false to go
-  // back to preload="metadata" + play-on-hover (one decoder at a time).
-  var AUTOPLAY_ALL = true;
+  // Preview playback mode, toggled from the toolbar.
+  //   Loop  — every card plays continuously. Reads best, but a folder of a few
+  //           hundred previews means that many simultaneous video decoders.
+  //   Hover — preload="metadata" paints the first frame and only the card under
+  //           the pointer plays, so one decoder runs at a time.
+  // Decoder count follows the cards in the DOM, not the visible ones, so the
+  // difference shows up on big folders and wide panels.
+  var AUTOPLAY_KEY = "zae.autoplay";
+  var autoplayAll  = true;
+  try {
+    var savedAutoplay = localStorage.getItem(AUTOPLAY_KEY);
+    if (savedAutoplay !== null) autoplayAll = (savedAutoplay === "1");
+  } catch (e) {}
+
+  // `rerender` rebuilds the cards: the mode changes the <video> attributes and
+  // which listeners are attached, so existing elements can't just be retuned.
+  function setAutoplay(on, rerender) {
+    autoplayAll = !!on;
+    loopBtn.className = autoplayAll ? "ico lbl on" : "ico lbl";
+    loopLbl.textContent = autoplayAll ? "Loop" : "Hover";
+    loopBtn.title = autoplayAll
+      ? "All previews loop — click for hover-only playback"
+      : "Previews play on hover — click to loop them all";
+    try { localStorage.setItem(AUTOPLAY_KEY, autoplayAll ? "1" : "0"); } catch (e2) {}
+
+    if (rerender && view.length) {
+      renderList();
+      select(selectedIdx);      // renderList rebuilds the DOM, losing the highlight
+    }
+  }
 
   function thumbHtml(p) {
     // draggable="false" on the media: images and videos are natively draggable
     // and would hijack the card's own drag, so the drop would carry a file URL
     // instead of the asset.
-    var video = AUTOPLAY_ALL
+    var video = autoplayAll
       ? '<video draggable="false" src="' + esc(fileUrl(p.preview, p.previewMtime)) + '" preload="auto" autoplay loop muted playsinline></video>'
       : '<video draggable="false" src="' + esc(fileUrl(p.preview, p.previewMtime)) + '" preload="metadata" loop muted playsinline></video>';
 
@@ -523,8 +549,8 @@
         openMenu(i, ev.clientX, ev.clientY);
       });
 
-      // Hover playback is redundant while AUTOPLAY_ALL keeps everything running.
-      if (video && !AUTOPLAY_ALL) {
+      // Hover playback is redundant while every card is already looping.
+      if (video && !autoplayAll) {
         card.addEventListener("mouseenter", function () {
           var v = this.getElementsByTagName("video")[0];
           if (v) { try { v.play(); } catch (e) {} }
@@ -535,7 +561,7 @@
         });
       }
       // autoplay is ignored by some CEF builds — nudge it explicitly.
-      if (video && AUTOPLAY_ALL) { try { video.play(); } catch (e) {} }
+      if (video && autoplayAll) { try { video.play(); } catch (e) {} }
 
       // CEF blocks file:// media unless the manifest grants access; without
       // this the card would just show an empty black box.
@@ -658,6 +684,8 @@
     return "";
   }
 
+  loopBtn.addEventListener("click", function () { setAutoplay(!autoplayAll, true); });
+
   refreshBtn.addEventListener("click", function () {
     if (currentDir) loadPresets(currentDir);
     else { presetsLoaded = false; initPresets(); }
@@ -678,7 +706,6 @@
 
   function closePrompt() {
     promptRow.className = "row addcat";
-    addCatBtn.className = "ico";
     syncHeight();
   }
 
@@ -708,7 +735,6 @@
       : "Add";
 
     promptRow.className = "row addcat open";
-    addCatBtn.className = mode === "category" ? "ico on" : "ico";
     syncHeight();
     promptInput.focus();
     // Pre-select the old name so typing replaces it, but Tab/End keeps it.
@@ -785,10 +811,6 @@
     });
   }
 
-  addCatBtn.addEventListener("click", function () {
-    if (promptRow.className.indexOf("open") !== -1 && promptMode === "category") closePrompt();
-    else openPrompt("category", { path: targetCategory() });
-  });
   promptOk.addEventListener("click", submitPrompt);
   promptInput.addEventListener("keydown", function (ev) {
     if (ev.keyCode === 13) { ev.preventDefault(); submitPrompt(); }
@@ -939,7 +961,7 @@
   }
 
   // Drop CEF's handle on a card's preview file before overwriting it. Every
-  // card holds its .mp4 open while AUTOPLAY_ALL is on, and the export deletes
+  // card holds its .mp4 open while Loop mode is on, and the export deletes
   // the previous file first — on Windows that delete can fail against a live
   // handle. The card is re-rendered from the rescan afterwards either way.
   function releasePreview(i) {
@@ -1245,6 +1267,7 @@
 
   initCardSize();
   initCatsWidth();
+  setAutoplay(autoplayAll, false);
 
   // Browser is open by default; after that the panel remembers whether it was
   // left open, so closing it isn't undone on every launch.
