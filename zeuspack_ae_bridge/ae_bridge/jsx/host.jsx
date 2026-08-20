@@ -459,6 +459,71 @@ function zae_pickPresetFolder(params) {
     }
 }
 
+// ── Bundle folders ───────────────────────────────────────────────────────────
+// A composition that needs external footage is normally stored as a folder:
+// After Effects' Collect Files writes "<name> folder/" holding "<name>.aep",
+// "(Footage)/" and a report. That folder is an ASSET, not a category — walking
+// into it would add a phantom row to the rail for something the user never
+// meant as a category.
+//
+// The signature is exactly one .aep plus a corroborating sign: collected
+// footage, a Collect Files report, or the "… folder" naming. A category that
+// simply holds several projects never matches, because it has more than one
+// .aep; a folder holding a .ffx is a preset directory and is left alone.
+var _FOOTAGE_FOLDER = /^\(footage\)$/i;
+
+function _bundleAep(folder) {
+    var entries;
+    try { entries = folder.getFiles(); } catch (e) { return null; }
+    if (!entries) return null;
+
+    var aep = null, aepCount = 0, ffxCount = 0, hasFootage = false, reports = {};
+    for (var i = 0; i < entries.length; i++) {
+        var e = entries[i];
+        var n = _baseName(e);
+        if (e instanceof Folder) {
+            if (_FOOTAGE_FOLDER.test(n)) hasFootage = true;
+            continue;
+        }
+        var ext = _extOf(n), base = _stripExt(n);
+        if (ext === "aep") { aepCount++; aep = { file: e, base: base }; }
+        else if (ext === "ffx") ffxCount++;
+        else if (ext === "txt" && / Report$/i.test(base)) {
+            reports[base.replace(/ Report$/i, "").toLowerCase()] = true;
+        }
+    }
+    if (aepCount !== 1 || ffxCount || !aep) return null;
+
+    var dirName = _baseName(folder);
+    var named   = dirName.toLowerCase() === (aep.base + " folder").toLowerCase();
+    if (!hasFootage && !named && !reports[aep.base.toLowerCase()]) return null;
+    return aep;
+}
+
+// The bundle's own preview, rendered next to the project inside it. A file
+// named after the project wins; anything else in the folder is a fallback so a
+// hand-dropped preview still shows.
+function _bundlePreview(folder, base) {
+    var entries;
+    try { entries = folder.getFiles(); } catch (e) { return null; }
+    if (!entries) return null;
+
+    var best = null, bestScore = 1e9, lower = String(base).toLowerCase();
+    for (var i = 0; i < entries.length; i++) {
+        var e = entries[i];
+        if (e instanceof Folder) continue;
+        var n = _baseName(e), ext = _extOf(n);
+        if (!_isPreviewExt(ext)) continue;
+        var score = (_stripExt(n).toLowerCase() === lower ? 0 : 100) + _previewRank(ext);
+        if (score >= bestScore) continue;
+        var mt = 0;
+        try { mt = e.modified ? e.modified.getTime() : 0; } catch (eM) {}
+        best = { path: e.fsName, ext: ext, mtime: mt };
+        bestScore = score;
+    }
+    return best;
+}
+
 // Recursive .ffx walk. Collects previews per directory so a folder is only
 // listed once no matter how many presets it holds.
 // `allowed` (an array, or null) gates which TOP-LEVEL folders are entered.
@@ -519,7 +584,8 @@ function _walkPresets(folder, depth, relPrefix, acc, allowed) {
             previewKind: pv ? (pv.ext === "mp4" || pv.ext === "webm" ? "video" : "image") : "",
             previewMtime: pv ? pv.mtime : 0,
             // The .aep the preview was rendered from, when one exists.
-            project:     projects[key] || ""
+            project:     projects[key] || "",
+            bundle:      ""
         });
     }
 
@@ -537,7 +603,8 @@ function _walkPresets(folder, depth, relPrefix, acc, allowed) {
             preview:     pv ? pv.path : "",
             previewKind: pv ? (pv.ext === "mp4" || pv.ext === "webm" ? "video" : "image") : "",
             previewMtime: pv ? pv.mtime : 0,
-            project:     aep[j].file.fsName     // it IS the project
+            project:     aep[j].file.fsName,    // it IS the project
+            bundle:      ""
         });
     }
 
@@ -546,6 +613,33 @@ function _walkPresets(folder, depth, relPrefix, acc, allowed) {
         var nm  = _baseName(sub);
         if (nm.charAt(0) === ".") continue;
         if (_IGNORED_FOLDER.test(nm)) continue;
+
+        // A collected project folder is one asset — emit a card for it and do
+        // not descend. Checked before the `allowed` gate so a bundle dropped at
+        // the preset root still shows even though it is not a category.
+        var bun = _bundleAep(sub);
+        if (bun) {
+            if (acc.presets.length >= _MAX_PRESETS) { acc.truncated = true; return; }
+            var bpv = _bundlePreview(sub, bun.base);
+            acc.presets.push({
+                kind:        "comp",
+                name:        bun.base,
+                path:        bun.file.fsName,
+                // The card belongs to the category the bundle sits in, not to
+                // the bundle folder itself.
+                folder:      relPrefix || "",
+                preview:     bpv ? bpv.path : "",
+                previewKind: bpv ? (bpv.ext === "mp4" || bpv.ext === "webm" ? "video" : "image") : "",
+                previewMtime: bpv ? bpv.mtime : 0,
+                project:     bun.file.fsName,
+                // Set only for bundles: the asset's folder relative to the
+                // preset root. Move and rename act on this instead of on loose
+                // files, so the footage travels with the project.
+                bundle:      relPrefix ? (relPrefix + "/" + nm) : nm
+            });
+            continue;
+        }
+
         // Only the top level is gated — once inside a declared category, its
         // own subfolders are walked normally.
         if (depth === 0 && allowed && !_inList(allowed, nm)) continue;
@@ -1156,8 +1250,9 @@ function zae_moveAsset(params) {
     try {
         var root = params && params.root ? String(params.root) : "";
         var name = params && params.name ? String(params.name) : "";
-        var from = params && params.from ? String(params.from) : "";
-        var to   = params && params.to   ? String(params.to)   : "";
+        var from   = params && params.from   ? String(params.from)   : "";
+        var to     = params && params.to     ? String(params.to)     : "";
+        var bundle = params && params.bundle ? String(params.bundle) : "";
 
         if (!root || !name) return _result(false, "Nothing to move.");
         if (from === to) return _result(true, name + " is already in " + (to || "root"), { moved: 0 });
@@ -1170,6 +1265,22 @@ function zae_moveAsset(params) {
 
         var dst = _targetFolder(root, to);
         if (!dst) return _result(false, "Could not open the target category.");
+
+        // A collected project is a whole folder — move the tree, not the loose
+        // files, or the .aep would arrive without its (Footage).
+        if (bundle) {
+            var bsrc = new Folder(rootFolder.fsName + "/" + bundle);
+            if (!bsrc.exists) return _result(false, "Folder not found: " + bundle);
+            var bname = _baseName(bsrc);
+            var bdst  = new Folder(dst.fsName + "/" + bname);
+            if (bdst.exists) return _result(false, '"' + (to || "root") + '" already has ' + bname);
+
+            var mv = _moveTree(bsrc, bdst);
+            if (!mv.ok) return _result(false, mv.message);
+            return _result(true, "Moved " + name + " → " + (to || "root") + (mv.warn || ""), {
+                moved: 1, to: to, bundle: (to ? to + "/" : "") + bname
+            });
+        }
 
         var i;
         var wanted = ["ffx", "aep"];
@@ -1289,6 +1400,135 @@ function zae_renameCategory(params) {
     }
 }
 
+// Delete a category folder.
+//
+// Empty ones only. The panel has no confirmation dialog and there is no undo,
+// so a folder that still holds anything is refused with a list of what is in
+// the way — "Reveal in Explorer" is one item above this in the same menu and
+// is the right tool for deleting a folder full of work.
+function zae_deleteCategory(params) {
+    try {
+        var root = params && params.root ? String(params.root) : "";
+        var path = params && params.path ? String(params.path) : "";
+
+        if (!root || !path) return _result(false, "No folder to delete.");
+        if (path.indexOf("..") !== -1) return _result(false, "Invalid path.");
+
+        var rootFolder = new Folder(root);
+        if (!rootFolder.exists) return _result(false, "Folder not found: " + root);
+
+        var dir = new Folder(rootFolder.fsName + "/" + path);
+        if (!dir.exists) return _result(false, "Folder not found: " + path);
+
+        var parts = path.split("/");
+        var name  = parts[parts.length - 1];
+
+        var entries = dir.getFiles() || [];
+        var blocking = [], hidden = [], i;
+        for (i = 0; i < entries.length; i++) {
+            var n = _baseName(entries[i]);
+            // Dotfiles and desktop.ini are OS litter, not the user's work —
+            // they shouldn't be what stops a folder being tidied away.
+            if (n.charAt(0) === "." || n.toLowerCase() === "desktop.ini") {
+                if (!(entries[i] instanceof Folder)) hidden.push(entries[i]);
+                continue;
+            }
+            blocking.push(n);
+        }
+        if (blocking.length) {
+            var shown = blocking.slice(0, 3).join(", ");
+            if (blocking.length > 3) shown += " and " + (blocking.length - 3) + " more";
+            return _result(false, '"' + name + '" is not empty (' + shown + ") — empty it first.");
+        }
+        for (i = 0; i < hidden.length; i++) { try { hidden[i].remove(); } catch (eH) {} }
+
+        var ok = false;
+        try { ok = dir.remove(); } catch (e2) { ok = false; }
+        if (!ok) return _result(false, "Could not delete " + name + ".");
+
+        // Top-level categories are declared; drop it from the manifest too, or
+        // the rail would keep showing a row for a folder that is gone.
+        var patched = false, cats = null;
+        if (parts.length === 1) {
+            cats = _readCategories(rootFolder);
+            if (cats) {
+                var kept = [];
+                for (var j = 0; j < cats.length; j++) {
+                    if (cats[j] === name) patched = true; else kept.push(cats[j]);
+                }
+                if (patched) { cats = kept; _writeCategories(rootFolder, cats); }
+            }
+        }
+
+        return _result(true, 'Deleted "' + name + '"', {
+            path: path, categories: cats, manifestUpdated: patched
+        });
+    } catch (e) {
+        return _result(false, "Exception: " + e.toString());
+    }
+}
+
+// ── Folder trees ─────────────────────────────────────────────────────────────
+// ExtendScript has no cross-folder move, and a collected bundle can be hundreds
+// of megabytes, so ask the OS first — instant on the same volume — and fall
+// back to a copy-then-delete walk only when that isn't available.
+function _nativeMove(srcPath, dstPath) {
+    try {
+        var cmd = String($.os).indexOf("Windows") !== -1
+            ? 'cmd.exe /c move /Y "' + srcPath + '" "' + dstPath + '"'
+            : 'mv "' + srcPath + '" "' + dstPath + '"';
+        system.callSystem(cmd);
+    } catch (e) { return false; }
+    // callSystem's return value is inconsistent across hosts — trust the disk.
+    return new Folder(dstPath).exists && !new Folder(srcPath).exists;
+}
+
+function _copyTree(src, dst) {
+    if (!dst.exists && !dst.create()) return false;
+    var entries;
+    try { entries = src.getFiles(); } catch (e) { return false; }
+    if (!entries) return false;
+    for (var i = 0; i < entries.length; i++) {
+        var e = entries[i], n = _baseName(e);
+        if (e instanceof Folder) {
+            if (!_copyTree(e, new Folder(dst.fsName + "/" + n))) return false;
+        } else {
+            var ok = false;
+            try { ok = e.copy(dst.fsName + "/" + n); } catch (e2) { ok = false; }
+            if (!ok) return false;
+        }
+    }
+    return true;
+}
+
+// Only ever called on a tree we just copied in full, or on a half-finished
+// copy we are rolling back.
+function _removeTree(folder) {
+    var entries;
+    try { entries = folder.getFiles(); } catch (e) { return false; }
+    if (entries) {
+        for (var i = 0; i < entries.length; i++) {
+            var e = entries[i], ok = false;
+            try { ok = (e instanceof Folder) ? _removeTree(e) : e.remove(); } catch (e2) { ok = false; }
+            if (!ok) return false;
+        }
+    }
+    try { return folder.remove(); } catch (e3) { return false; }
+}
+
+function _moveTree(src, dst) {
+    if (_nativeMove(src.fsName, dst.fsName)) return { ok: true };
+
+    if (!_copyTree(src, dst)) {
+        try { _removeTree(dst); } catch (e) {}   // leave no half-copy behind
+        return { ok: false, message: "Could not copy " + _baseName(src) + " — nothing was moved." };
+    }
+    if (!_removeTree(src)) {
+        return { ok: true, warn: " (copied, but the original folder could not be deleted)" };
+    }
+    return { ok: true };
+}
+
 // Rename an asset — every file sharing its base name, so the .ffx/.aep/preview
 // stay a set. Renaming only the .ffx would orphan the others.
 function zae_renameAsset(params) {
@@ -1297,6 +1537,7 @@ function zae_renameAsset(params) {
         var folder = params && params.folder ? String(params.folder) : "";
         var from   = params && params.from   ? String(params.from)   : "";
         var to     = params && params.to     ? String(params.to)     : "";
+        var bundle = params && params.bundle ? String(params.bundle) : "";
         to = to.replace(/^\s+|\s+$/g, "");
 
         if (!root || !from) return _result(false, "Nothing to rename.");
@@ -1306,8 +1547,11 @@ function zae_renameAsset(params) {
 
         var rootFolder = new Folder(root);
         if (!rootFolder.exists) return _result(false, "Folder not found: " + root);
-        var dir = folder ? new Folder(rootFolder.fsName + "/" + folder) : rootFolder;
-        if (!dir.exists) return _result(false, "Folder not found: " + folder);
+        // A bundle's files live inside its own folder, not in the category.
+        var dir = bundle ? new Folder(rootFolder.fsName + "/" + bundle)
+                : folder ? new Folder(rootFolder.fsName + "/" + folder)
+                : rootFolder;
+        if (!dir.exists) return _result(false, "Folder not found: " + (bundle || folder));
 
         var i, wanted = ["ffx", "aep"];
         for (i = 0; i < _PREVIEW_EXTS.length; i++) wanted.push(_PREVIEW_EXTS[i]);
@@ -1349,7 +1593,27 @@ function zae_renameAsset(params) {
             done.push({ file: targets[i].file, old: oldName });
         }
 
-        return _result(true, "Renamed " + from + " → " + to, { renamed: done.length, name: to });
+        // Keep a collected folder's name in step with the project inside it,
+        // but only when it was named after that project to begin with — a
+        // folder the user named something else is theirs, not ours to rewrite.
+        var folderRenamed = "";
+        if (bundle) {
+            var dirName = _baseName(dir), want = null;
+            if (dirName.toLowerCase() === from.toLowerCase()) want = to;
+            else if (dirName.toLowerCase() === (from + " folder").toLowerCase()) want = to + " folder";
+
+            if (want && want !== dirName) {
+                var bParts    = bundle.split("/");
+                var parentRel = bParts.slice(0, bParts.length - 1).join("/");
+                var parentF   = parentRel ? new Folder(rootFolder.fsName + "/" + parentRel) : rootFolder;
+                if (!new Folder(parentF.fsName + "/" + want).exists) {
+                    try { if (dir.rename(want)) folderRenamed = want; } catch (eF) {}
+                }
+            }
+        }
+
+        return _result(true, "Renamed " + from + " → " + to,
+            { renamed: done.length, name: to, folderRenamed: folderRenamed });
     } catch (e) {
         return _result(false, "Exception: " + e.toString());
     }

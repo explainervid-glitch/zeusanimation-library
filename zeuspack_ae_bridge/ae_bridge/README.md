@@ -61,6 +61,33 @@ composition, plus **`no preview`** when the preview file is missing.
 Preview files may be `.mp4`, `.webm`, `.png`, `.jpg`, `.jpeg` or `.gif`. Video
 previews loop in the grid.
 
+### Bundle folders
+
+A composition that needs external footage is usually kept as a folder — run
+**File → Dependencies → Collect Files** and After Effects writes:
+
+```
+Zoom Blur folder/            ← the asset
+  Zoom Blur.aep                the composition
+  (Footage)/                   everything it links to
+  Zoom Blur Report.txt
+  Zoom Blur.mp4                its preview
+```
+
+That folder is read as **one `Comp` asset in the category it sits in** — it does
+not become a row in the rail. A folder qualifies when it holds **exactly one
+`.aep`, no `.ffx`**, and at least one corroborating sign: a `(Footage)` folder, a
+`… Report.txt`, or the `<name> folder` naming. A category that simply holds
+several projects has more than one `.aep`, so it never matches.
+
+The preview is whatever preview file is inside the bundle — one named after the
+project wins, anything else is a fallback, so exporting a preview works exactly
+as it does for a loose asset.
+
+Moving and renaming understand bundles: dragging one to another category moves
+the **whole folder** (so the footage travels with it), and renaming also renames
+the folder when it was named after the project.
+
 ---
 
 ## Categories
@@ -124,12 +151,19 @@ Transitions    1
 |---|---|
 | New Folder… | Creates inside the row you clicked; at top level from empty rail space or *(root)* |
 | Rename… | Renames the folder on disk — only on a real folder, not *All presets* or *(root)* |
+| Delete Folder | Removes the folder — **empty ones only** |
 | Reveal in Explorer | Opens that folder |
 
 Right-clicking a row selects it first, so the menu's wording matches what is
 highlighted. Renaming a top-level category also updates `categories.json`, and
 the current selection follows the folder — including when a subcategory of it
 was selected.
+
+**Delete Folder refuses a folder that still holds anything**, and says what is in
+the way. There is no confirmation step and no undo, so the guard is the point:
+deleting a category full of work is a job for Explorer, which is one item further
+down the same menu. Dotfiles and `desktop.ini` don't count as contents. Deleting
+a top-level category removes it from `categories.json` too.
 
 ---
 
@@ -189,9 +223,8 @@ reading *Apply to selected layer* or *Add to comp*.
 | Export Image Preview | Writes `<name>.png` at 480×270, from the frame under the playhead |
 | Apply to selected layer | `.ffx` assets — applies the preset to the selected layer(s) |
 | Add to Comp | `.aep` assets — imports the main comp into the active comp |
-| Rename… | Renames the `.ffx`/`.aep` and its preview together |
+| Rename… | Renames the `.ffx`/`.aep` and its preview together, and a bundle folder named after it |
 | Reveal in Explorer | Opens the containing folder |
-| Kontol | Opens the containing folder |
 
 Both exports are disabled until the preview comp exists. *Apply* and *Add to
 Comp* are mutually exclusive — only the one meaningful for that asset is shown.
@@ -326,6 +359,12 @@ is frozen until the export finishes. At 480×270 × 3s that's a second or two.
 **Existing previews are overwritten.** AE won't render onto an existing file, so
 Export Preview deletes the previous `<name>.mp4` first.
 
+**Moving a bundle can be slow.** ExtendScript has no cross-folder move, so the
+panel asks the OS first (`move` / `mv`), which is instant on the same volume.
+Only when that fails does it fall back to copying the tree and deleting the
+original — and a collected `(Footage)` folder can be large, with AE frozen
+throughout. A part-finished copy is rolled back rather than left behind.
+
 ---
 
 ## File layout
@@ -364,7 +403,15 @@ media. The manifest grants `--allow-file-access` and
 the panel falls back to User Presets, with a note in the log.
 
 **Auto-Save folders showing as categories** — add a `categories.json`, or use
-*New Category…* once, which seeds one from the folders already present.
+*New Folder…* once, which seeds one from the folders already present.
+
+**A collected project shows as a category instead of a card** — the folder is
+missing every bundle signal. Give it a `(Footage)` subfolder, keep the Collect
+Files report next to the `.aep`, or name the folder `<project> folder`. Two
+`.aep` files in one folder also disqualify it, by design.
+
+**"… is not empty" when deleting a folder** — that is the guard, not a bug. Move
+or delete the contents first; *Reveal in Explorer* is in the same menu.
 
 **No categories at all** — the rail hides itself when there's nothing to filter
 by: a single bucket and no manifest. Add a subfolder or a category and it appears.

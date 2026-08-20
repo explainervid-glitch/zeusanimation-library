@@ -475,7 +475,9 @@
 
     flash("Moving " + p.name + "…");
     callHost("zae_moveAsset", {
-      root: currentDir, name: p.name, from: p.folder || "", to: to
+      root: currentDir, name: p.name, from: p.folder || "", to: to,
+      // A collected project moves as a folder, not as loose files.
+      bundle: p.bundle || ""
     }, function (r) {
       log("Move " + p.name + " → " + r.message, r.ok ? "ok" : "err");
       flash(r.ok ? p.name + " ✓" : r.message, !r.ok);
@@ -750,7 +752,8 @@
       var p = view[promptIdx];
       if (!p) { promptOk.disabled = false; closePrompt(); return; }
       callHost("zae_renameAsset", {
-        root: currentDir, folder: p.folder || "", from: p.name, to: name
+        root: currentDir, folder: p.folder || "", from: p.name, to: name,
+        bundle: p.bundle || ""
       }, function (r) {
         promptOk.disabled = false;
         log("Rename " + p.name + " → " + r.message, r.ok ? "ok" : "err");
@@ -1092,6 +1095,21 @@
     menuEl.style.top  = Math.max(2, Math.min(y, vh - mh - 2)) + "px";
   }
 
+  // The host refuses a folder that still holds anything, so the failure path
+  // here is a message rather than lost work — no confirmation step needed.
+  function deleteCategory(path) {
+    if (!currentDir || !path) return;
+    var label = path.split("/").pop();
+    flash("Deleting " + label + "…");
+    callHost("zae_deleteCategory", { root: currentDir, path: path }, function (r) {
+      log("Delete folder " + path + " → " + r.message, r.ok ? "ok" : "err");
+      flash(r.message, !r.ok);
+      // loadPresets clears the selection, which pointed at a folder that is
+      // now gone.
+      if (r.ok) loadPresets(currentDir);
+    });
+  }
+
   // Right-click in the category rail. `path` is the row that was clicked, or ""
   // for the root (empty rail space, or the (root) row itself).
   function openCatMenu(path, x, y) {
@@ -1110,6 +1128,9 @@
       item("Rename…", true,
         function () { openPrompt("catrename", { path: path }); },
         "Renames the folder on disk");
+      item("Delete Folder", true,
+        function () { deleteCategory(path); },
+        "Deletes " + label + " — empty folders only, there is no undo");
     }
 
     sep();
