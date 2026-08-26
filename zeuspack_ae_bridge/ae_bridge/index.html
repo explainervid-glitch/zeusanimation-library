@@ -64,6 +64,10 @@
   .dot.ok { background:var(--ok); } .dot.err { background:var(--err); }
   .state { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--muted); }
   .state b { color:var(--text); font-weight:600; }
+  /* The row's text is set with textContent, never markup — it carries asset and
+     folder names — so emphasis comes from these classes instead of a <b>. */
+  .state.msg { color:var(--text); font-weight:600; }
+  .state.err { color:var(--err);  font-weight:600; }
 
   .ico {
     width:22px; height:22px; padding:0; flex-shrink:0;
@@ -115,8 +119,22 @@
   .path option:disabled { color:#5a5a5a; }
 
   /* New-category input row — collapsed unless the folder+ button opens it */
-  .addcat { display:none; }
+  .addcat { display:none; gap:5px; }
   .addcat.open { display:flex; }
+  /* Confirm mode (.ask): the message takes the input's place and a Cancel
+     button appears, so the destructive choice is never a single stray click. */
+  .addcat .ask, .addcat .cancel { display:none; }
+  /* The question WRAPS rather than ellipsising: at the 240px docked width the
+     message gets ~119px, and a truncated "Delete "Kinetic Ty…?" would hide the
+     very thing being confirmed. The row grows a line instead. */
+  .addcat.ask { align-items:center; }
+  .addcat.ask .ask {
+    display:block; flex:1; min-width:0;
+    font-size:10px; line-height:1.3; color:var(--text);
+    white-space:normal; overflow-wrap:break-word; word-break:break-word;
+  }
+  .addcat.ask .txt { display:none; }
+  .addcat.ask .cancel { display:block; }
   .txt {
     flex:1; min-width:0; height:22px; padding:0 6px;
     background:#151515; border:1px solid var(--border); border-radius:5px;
@@ -215,6 +233,9 @@
      its title tooltip never shows — and the unavailable items are exactly the
      ones whose tooltip explains why. */
   .menu button.off { color:#5a5a5a; cursor:default; }
+  /* Destructive action — the item only opens a confirmation, it never acts. */
+  .menu button.danger { color:var(--err); }
+  .menu button.danger:hover { background:var(--err); color:#fff; }
   .menu .sep { height:1px; background:var(--border); margin:3px 2px; }
 
   .btn {
@@ -225,6 +246,8 @@
   .btn:hover:not(:disabled) { color:var(--text); border-color:var(--accent); }
   .btn:disabled { opacity:.4; cursor:default; }
   .btn.primary { color:var(--accent); border-color:var(--accent); }
+  .btn.danger { color:var(--err); border-color:var(--err); }
+  .btn.danger:hover:not(:disabled) { background:var(--err); color:#fff; }
 
   /* Preview size — compact so it survives a 240px docked panel. */
   .size {
@@ -279,9 +302,27 @@
   /* Drop target while a card is being dragged over it. */
   .cat.drop { background:color-mix(in srgb, var(--accent) 30%, transparent);
               box-shadow:inset 0 0 0 1px var(--accent); color:var(--text); }
+  /* "(Uncategorize)" — the leftovers bucket, pinned below the real categories
+     and dimmed so the eye reads the named folders first. */
+  .cat.root { color:#6a6a6a; font-style:italic; }
+  .cat.root:hover { color:var(--muted); }
+  .cat.root.sel { color:#fff; font-style:normal; }
   .cat .cn  { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .cat .cc  { flex-shrink:0; font-size:9px; opacity:.65; }
   .cat.sel .cc { opacity:.85; }
+
+  /* Expand/collapse chevron — only rows with subcategories get a live one; a
+     leaf row gets an invisible spacer of the same width so labels still line
+     up. It owns its own click (stopPropagation'd in panel.js) so toggling
+     never also selects the row or changes the grid's filter. */
+  .cat .catToggle {
+    flex-shrink:0; width:10px; text-align:center;
+    font-size:8px; color:var(--muted); cursor:pointer;
+  }
+  .cat .catToggle:hover { color:var(--text); }
+  .cat .catToggle.spacer { visibility:hidden; cursor:default; }
+  .cat.sel .catToggle { color:#fff; opacity:.8; }
+  .cat.sel .catToggle:hover { opacity:1; }
 </style>
 </head>
 <body>
@@ -326,7 +367,7 @@
              stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
         <span id="loopLbl">Loop</span>
       </button>
-      <button class="ico" id="refreshBtn" title="Rescan folder">
+      <button class="ico" id="refreshBtn" title="Rescan folder — also drops categories whose folder is gone">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
              stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg>
       </button>
@@ -334,8 +375,12 @@
 
     <!-- Shared name input: new category, new asset. Hidden until asked for. -->
     <div class="row addcat" id="promptRow">
+      <!-- In confirm mode the message replaces the input: there is nothing to
+           type, only a decision to take. -->
+      <span class="ask" id="promptMsg"></span>
       <input type="text" class="txt" id="promptInput" placeholder="Category name…"
              spellcheck="false" maxlength="60" />
+      <button class="btn cancel" id="promptCancel">Cancel</button>
       <button class="btn" id="promptOk">Add</button>
     </div>
 

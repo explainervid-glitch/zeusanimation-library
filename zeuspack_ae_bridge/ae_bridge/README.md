@@ -116,23 +116,48 @@ roots with no manifest yet.)
 Notes:
 
 - Declared categories appear **even when empty**, so a category you just made is
-  visible and ready to fill.
+  visible and ready to fill. The flip side: **deleting a category folder in
+  Explorer leaves its row behind**, because the manifest still names it. Click
+  **Refresh** to reconcile — see below.
 - Creating your first category in a folder that already has subfolders **seeds
   the manifest with all of them**, so switching to declared mode can't silently
   hide presets you already had.
-- A folder on disk but missing from the manifest still gets listed if it holds
-  presets — hiding found assets would be worse than an unexpected row.
+- **A top-level folder missing from the manifest is not scanned at all**, even if
+  it holds presets — that gating is the whole point of the manifest, and it is
+  what keeps `Auto-Save` out. Add it with *New Folder…* on the rail, or put the
+  name in `categories.json` by hand. (Subfolders *inside* a declared category are
+  discovered normally.)
+
+### Refresh reconciles the manifest
+
+**Refresh is the only action that prunes `categories.json`.** It drops every
+declared category whose folder is no longer on disk, rewrites the file, and names
+what it removed in the log:
+
+```
+categories.json → removed Text (folder no longer on disk)
+```
+
+This is why folders deleted outside the panel need one Refresh to disappear from
+the rail.
+
+It is deliberately *not* automatic. Every other reload — after a rename, move,
+delete or root switch — leaves the manifest untouched. On a shared network root a
+category that is momentarily unreachable would otherwise be silently dropped from
+a file the whole team reads, and a write like that should be something someone
+chose to do. Nothing is written when nothing is missing.
+
 ### Subcategories
 
 Folders inside a category become subcategories, shown indented in the rail:
 
 ```
-(root)         1
-Backgrounds    0
-Text           5
-  Kinetic      3
-    Bold       1
-Transitions    1
+Backgrounds      0
+Text             5
+  Kinetic        3
+    Bold         1
+Transitions      1
+(Uncategorize)   1
 ```
 
 - **Subcategories are discovered, not declared.** `categories.json` only gates
@@ -142,7 +167,13 @@ Transitions    1
 - **Counts roll up.** `Text` shows 5 because that is what selecting it displays:
   its own presets plus everything beneath it. Selecting `Text/Kinetic` narrows
   to that subtree.
-- **`(root)` means loose files only**, not everything.
+- **`(Uncategorize)` means loose files only**, not everything — assets sitting
+  in the preset root that were never filed into a category. It is pinned below
+  the real categories and dimmed, because it is a leftovers bucket rather than a
+  folder you chose to make.
+- **Clicking the rail's empty space clears the filter**, the same as clicking
+  *All presets* — the background belongs to no folder, so nothing stays
+  highlighted there.
 - Dropping a card on any row, at any depth, moves the asset there.
 
 ### Right-click the category rail
@@ -220,14 +251,37 @@ reading *Apply to selected layer* or *Add to comp*.
 |---|---|
 | Make / Edit Preview Comp | Creates `<name>.aep` at 1920×1080 @ 30fps, or opens the existing one |
 | Export mp4 Preview | Renders `<name>.mp4` at 480×270, H.264, 8 Mbps |
-| Export Image Preview | Writes `<name>.png` at 480×270, from the frame under the playhead |
+| Export Image Preview | Writes `<name>.png` at 480×270, from the frame under the playhead in the **active comp** |
 | Apply to selected layer | `.ffx` assets — applies the preset to the selected layer(s) |
 | Add to Comp | `.aep` assets — imports the main comp into the active comp |
 | Rename… | Renames the `.ffx`/`.aep` and its preview together, and a bundle folder named after it |
 | Reveal in Explorer | Opens the containing folder |
+| **Delete Asset…** | Removes the `.ffx`/`.aep` and its preview — or the whole collected folder for a bundle |
 
 Both exports are disabled until the preview comp exists. *Apply* and *Add to
 Comp* are mutually exclusive — only the one meaningful for that asset is shown.
+
+### Deleting an asset
+
+*Delete Asset…* never deletes on the click. It opens a **confirmation bar** in
+place of the name prompt, naming the asset:
+
+```
+Delete "Zoom Blur" and its whole folder? No undo.     [ Cancel ] [ Delete ]
+```
+
+- **Focus lands on Cancel**, so a reflexive Enter backs out instead of deleting.
+  Escape closes it too.
+- The **target is captured when the bar opens**, not read back from the grid when
+  you click Delete — a rescan in between can't repoint it at a different asset.
+- The message **wraps rather than truncating**. At the 240px docked width it only
+  gets ~119px, and a clipped `Delete "Kinetic Ty…?` would hide the one thing
+  being confirmed; the row grows a line instead.
+- Only the known extensions are removed, so an unrelated file sharing the base
+  name survives. A **bundle deletes its whole folder**, footage included.
+- There is **no undo and no recycle bin** — ExtendScript's `remove()` is a hard
+  delete. If a preview is still held open the panel reports how many files it
+  actually managed to remove rather than claiming a clean delete.
 
 If an asset has both an `.mp4` and a `.png` preview, the grid shows the **mp4** —
 motion beats a still, and the precedence is fixed so the choice can't vary with
@@ -238,10 +292,47 @@ directory ordering.
 | Item | Notes |
 |---|---|
 | Save Animation as Preset… | Saves the current AE selection into the selected category |
+| Save Comp as Preset… | Runs Collect Files on the open project and files the result as a bundle |
 | Add Asset… | New `<name>.aep` at 1920×1080 @ 30fps in the selected category |
 | Reveal in Explorer | Opens the current preset folder |
 
 Folder creation and renaming live on the rail's own right-click menu.
+
+### Save Comp as Preset
+
+For a composition that needs external footage. It runs **File ▸ Dependencies ▸
+Collect Files** and files the collected folder as a [bundle](#bundle-folders),
+so it lands in the grid as one `Comp` card.
+
+**Two steps belong to AE's dialog and cannot be scripted** — `Collect Files` is a
+menu command with no arguments, exactly like `Save Animation Preset`:
+
+1. **Collect Source Files: `All`** — a dropdown in the dialog. AE remembers the
+   last choice, so this is one-time setup rather than a per-run chore.
+2. **The destination** — a folder chooser. The panel logs the exact path to aim
+   at before the dialog opens.
+
+Everything either side of it is automated:
+
+- The category folder is created if it doesn't exist.
+- The collected folder is found afterwards by diffing the category, the preset
+  root, and the project's own folder — so **if you point the dialog somewhere
+  else, the panel moves the result into the category for you** (see the move-cost
+  note under Known limitations).
+- AE always names its output `<project> folder`. The panel **renames it to plain
+  `<project>`** — unless the folder has neither a `(Footage)` subfolder nor a
+  report, in which case that suffix is the only thing marking it as a bundle and
+  removing it would hide the asset from the grid. Then AE's name is kept and the
+  panel says so.
+
+Notes:
+
+- **The project must be saved first.** Collect Files works from the project on
+  disk and names its output after the project file.
+- **It collects the whole project, not just the active comp.** The asset is named
+  after the project file, so one project = one preset.
+- If the category already holds a folder of that name, the panel refuses before
+  opening the dialog rather than guessing which folder is the new one.
 
 ---
 
@@ -311,6 +402,35 @@ verbatim, so the settings hold on any version.
 works on every supported AE version, needs no template, and is exact about its
 output size. On an older AE it's the dependable option.
 
+### Which comp gets rendered
+
+**Export Image Preview renders the active comp.** The composition inside the
+project does *not* have to be named after the file — rename it to anything and
+the export still works. It resolves in this order:
+
+1. **The active comp.** When the asset's project is already open, this is simply
+   the comp you're looking at.
+2. **A comp matching the asset name** — the old rule, kept as a fallback.
+3. **The only comp**, when the project has just one.
+4. **The main comp** — the one top-level comp not used as a layer inside another.
+   Precomps are nested, so this finds what the project is actually about.
+
+If several unrelated top-level comps remain and none is open, the panel lists
+them and asks you to open the one you want rather than guessing. When the comp
+rendered isn't the file's own name, the message says which one it used:
+
+```
+Exported Zoom Blur.png at 480×270 from "Final Render v3" — frame at 1.2s
+```
+
+Note that `activeItem` can come back null when the CEP panel has focus — which is
+exactly when this runs — so rules 2–4 are doing real work, not just covering
+edge cases.
+
+**Export mp4 Preview still requires the name match** (rule 2 only). Both exports
+sharing a resolver would mean the mp4 quietly rendering whatever comp happened to
+be open, which is a bigger change than a thumbnail.
+
 ---
 
 ## Updates
@@ -358,6 +478,15 @@ is frozen until the export finishes. At 480×270 × 3s that's a second or two.
 
 **Existing previews are overwritten.** AE won't render onto an existing file, so
 Export Preview deletes the previous `<name>.mp4` first.
+
+**ExtendScript `File` objects cache their filesystem state.** A file written by
+AE *through* an object — `saveFrameToPng`, the render queue — does not reliably
+refresh it, and `remove()` returns `false` for a file that is already gone. Both
+lie in the direction of a false alarm: a successful export reported as *"no file
+was written"*, or a completed delete reported as *"open somewhere else"*. Every
+such check goes through `_fileAppeared()` / `_removedFile()`, which re-stat with
+a fresh object and fall back to reading the directory — a listing cannot be
+answered from a stale per-file cache.
 
 **Moving a bundle can be slow.** ExtendScript has no cross-folder move, so the
 panel asks the OS first (`move` / `mv`), which is instant on the same volume.

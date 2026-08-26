@@ -112,6 +112,9 @@ function zae_listAepComps(params) {
         return _result(true, newComps.length + " composition(s) in " + f.name + ".",
                        { file: f.fsName, comps: newComps });
     } catch (e) {
+        // Throwing after beginUndoGroup would leave the group open and AE's
+        // undo stack confused for the rest of the session.
+        try { app.endUndoGroup(); } catch (e3) {}
         return _result(false, "Exception: " + e.toString());
     }
 }
@@ -189,6 +192,16 @@ function zae_importAep(params) {
             if (params.addToActive !== false && destComp && destComp.id !== target.id) {
                 var newLayer = destComp.layers.add(target);
                 try { newLayer.selected = true; } catch (eSel) {}
+                // Default ON: an added comp layer starts un-collapsed, so it
+                // renders through its own resolution/motion-blur pass instead
+                // of the parent's — visible as soft edges on vector content
+                // (shapes, text) after a scale or rotation. Continuously
+                // rasterizing (AE's "Collapse Transformations" switch)
+                // composites it straight into the parent comp's own render.
+                // Pass collapse:false to opt out.
+                if (params.collapse !== false) {
+                    try { newLayer.collapseTransformation = true; } catch (eColl) {}
+                }
                 // Bring the destination comp to the front so the placement is
                 // visible even if the panel had stolen focus.
                 try { destComp.openInViewer(); } catch (eView) {}
@@ -261,16 +274,26 @@ function _parseJson(txt) {
 // back to discovering folders).
 // Accepts ["A","B"] or { "categories": ["A","B"] } — same shape ZeusPack's
 // categories*.json files use.
+//
+// A file that EXISTS but fails to parse also returns null, which used to be
+// indistinguishable from "no manifest" — so a hand-edited categories.json with
+// a syntax error silently reopened unrestricted folder discovery (the exact
+// hole the manifest exists to close, including Auto-Save) with no sign
+// anything was wrong. _categoriesCorrupt lets a caller that cares
+// (zae_listPresets) tell the two apart and warn instead of staying silent.
+var _categoriesCorrupt = false;
+
 function _readCategories(rootFolder) {
+    _categoriesCorrupt = false;
     var f = new File(rootFolder.fsName + "/" + _CATEGORIES_FILE);
     if (!f.exists) return null;
     var txt = "";
-    try { f.open("r"); txt = f.read(); f.close(); } catch (e) { try { f.close(); } catch (e9) {} return null; }
+    try { f.open("r"); txt = f.read(); f.close(); } catch (e) { try { f.close(); } catch (e9) {} _categoriesCorrupt = true; return null; }
 
     var data = _parseJson(txt);
-    if (!data) return null;
+    if (!data) { _categoriesCorrupt = true; return null; }
     var arr = (data.length === undefined && data.categories) ? data.categories : data;
-    if (!arr || arr.length === undefined) return null;
+    if (!arr || arr.length === undefined) { _categoriesCorrupt = true; return null; }
 
     var out = [];
     for (var i = 0; i < arr.length; i++) {
@@ -295,6 +318,28 @@ function _writeCategories(rootFolder, list) {
     f.write(s);
     f.close();
     return true;
+}
+
+// Drop declared categories whose folder no longer exists.
+//
+// categories.json is what draws the rail, so a folder deleted in Explorer keeps
+// its (now empty) row until the manifest catches up. This is deliberately NOT
+// part of every scan: on a shared network root, a folder that is briefly
+// unreachable would otherwise be quietly dropped from a file the whole team
+// reads. The panel asks for it only when the user clicks Refresh.
+//
+// Returns null when nothing changed, so the file is only rewritten when it must
+// be.
+function _pruneCategories(rootFolder, declared) {
+    var kept = [], gone = [];
+    for (var i = 0; i < declared.length; i++) {
+        var n = declared[i];
+        if (new Folder(rootFolder.fsName + "/" + n).exists) kept.push(n);
+        else gone.push(n);
+    }
+    if (!gone.length) return null;
+    _writeCategories(rootFolder, kept);
+    return { categories: kept, removed: gone };
 }
 
 function _inList(list, name) {
@@ -405,6 +450,47 @@ function _stripExt(name) {
 function _isPreviewExt(ext) {
     for (var i = 0; i < _PREVIEW_EXTS.length; i++) if (_PREVIEW_EXTS[i] === ext) return true;
     return false;
+}
+
+// Is this path on disk RIGHT NOW?
+//
+// ExtendScript File objects cache their filesystem state, and a file written by
+// After Effects *through* the object — saveFrameToPng, the render queue — does
+// not reliably refresh it. Reusing the object that was used to delete the old
+// file left `exists` reporting the state from before the write, so a successful
+// export was announced as "Render finished but no file was written".
+//
+// A freshly constructed File re-stats. If even that says no, read the directory,
+// which cannot be answered from a stale per-file cache.
+function _fileAppeared(path) {
+    var f;
+    try {
+        f = new File(path);
+        if (f.exists) return true;
+    } catch (e) { return false; }
+
+    var dir = null, want = "";
+    try { dir = f.parent; want = _baseName(f).toLowerCase(); } catch (e2) { return false; }
+    if (!dir || !dir.exists || !want) return false;
+
+    var entries;
+    try { entries = dir.getFiles(); } catch (e3) { return false; }
+    if (!entries) return false;
+    for (var i = 0; i < entries.length; i++) {
+        if (entries[i] instanceof Folder) continue;
+        if (_baseName(entries[i]).toLowerCase() === want) return true;
+    }
+    return false;
+}
+
+// Delete `file`, reporting whether it is gone rather than what remove() said.
+// remove() returns false for a file that was already deleted, and the same
+// caching that breaks `exists` can make it lie — so the disk gets the last word.
+function _removedFile(file) {
+    var ok = false;
+    try { ok = file.remove(); } catch (e) { ok = false; }
+    if (ok) return true;
+    return !_fileAppeared(file.fsName);
 }
 
 // Both an .mp4 and a .png preview can exist for the same asset now that each
@@ -530,7 +616,11 @@ function _bundlePreview(folder, base) {
 // Non-null means categories.json declared the list, so anything else — most
 // importantly After Effects' Auto-Save folder — is skipped entirely.
 function _walkPresets(folder, depth, relPrefix, acc, allowed) {
-    if (depth > _MAX_DEPTH || acc.presets.length >= _MAX_PRESETS) return;
+    // Both caps cut the scan short of what's actually on disk, so both must
+    // mark the result truncated — only the count cap used to, which left a
+    // folder tree deeper than _MAX_DEPTH silently missing cards with no
+    // "list truncated" notice anywhere in the panel.
+    if (depth > _MAX_DEPTH || acc.presets.length >= _MAX_PRESETS) { acc.truncated = true; return; }
 
     var entries;
     try { entries = folder.getFiles(); } catch (e) { return; }
@@ -643,7 +733,13 @@ function _walkPresets(folder, depth, relPrefix, acc, allowed) {
         // Only the top level is gated — once inside a declared category, its
         // own subfolders are walked normally.
         if (depth === 0 && allowed && !_inList(allowed, nm)) continue;
-        _walkPresets(sub, depth + 1, relPrefix ? (relPrefix + "/" + nm) : nm, acc, allowed);
+        var subPath = relPrefix ? (relPrefix + "/" + nm) : nm;
+        // Record the folder itself, not just what's in it — otherwise a
+        // subcategory with nothing inside it yet (freshly made with New
+        // Folder…) leaves no trace in `presets` and never appears in the rail,
+        // unlike a declared top-level category, which shows even when empty.
+        acc.folders.push(subPath);
+        _walkPresets(sub, depth + 1, subPath, acc, allowed);
     }
 }
 
@@ -655,7 +751,16 @@ function zae_listPresets(params) {
         if (!folder.exists) return _result(false, "Folder not found: " + dir);
 
         var declared = _readCategories(folder);   // null when there is no manifest
-        var acc = { presets: [], truncated: false };
+        var manifestBroken = _categoriesCorrupt;  // file exists but wouldn't parse
+
+        // Refresh only — see _pruneCategories for why this isn't automatic.
+        var pruned = null;
+        if (params && params.prune && declared !== null) {
+            pruned = _pruneCategories(folder, declared);
+            if (pruned) declared = pruned.categories;
+        }
+
+        var acc = { presets: [], truncated: false, folders: [] };
         _walkPresets(folder, 0, "", acc, declared);
 
         acc.presets.sort(function (a, b) {
@@ -666,15 +771,33 @@ function zae_listPresets(params) {
         var withPreview = 0;
         for (var i = 0; i < acc.presets.length; i++) if (acc.presets[i].preview) withPreview++;
 
-        return _result(true, acc.presets.length + " preset" + (acc.presets.length === 1 ? "" : "s"), {
+        var msg = acc.presets.length + " preset" + (acc.presets.length === 1 ? "" : "s");
+        if (pruned) {
+            msg += " — dropped " + pruned.removed.length + " missing categor"
+                 + (pruned.removed.length === 1 ? "y" : "ies") + " from categories.json";
+        }
+        if (manifestBroken) {
+            msg += " — categories.json exists but could not be read (invalid JSON?); "
+                 + "showing all folders until it's fixed";
+        }
+
+        return _result(true, msg, {
             path: folder.fsName,
             presets: acc.presets,
             withPreview: withPreview,
             truncated: acc.truncated,
+            manifestBroken: manifestBroken,
+            // Names removed from the manifest by this scan, so the panel can say
+            // what changed on a file the whole team shares.
+            removedCategories: pruned ? pruned.removed : [],
             // Declared categories drive the sidebar list, so an empty category
             // still shows and can be filled. null = no manifest yet.
             categories: declared,
-            hasManifest: declared !== null
+            hasManifest: declared !== null,
+            // Every subfolder the walk actually visited, whether or not it held
+            // anything — subcategories are discovered rather than declared, so
+            // this is the only record of an empty one existing at all.
+            folders: acc.folders
         });
     } catch (e) {
         return _result(false, "Exception: " + e.toString());
@@ -765,6 +888,65 @@ function _deselectAllKeys(comp) {
             }
         }, 0);
     }
+}
+
+// Expressions travel inside a .ffx the same way keyframes do — nothing in this
+// panel writes or strips them. But an expression can arrive in one of three
+// states, and two of them are indistinguishable from "it was never applied":
+//
+//   live      — applied and evaluating
+//   disabled  — AE switched it off, usually because it errored the moment it
+//               landed; the property sits at its static value
+//   erroring  — enabled but throwing, so the property holds its last good
+//               value and AE flags the layer with a yellow warning
+//
+// The usual cause is a reference the destination cannot resolve — a preset
+// written against thisComp.layer("Null 1") applied in a comp that has no such
+// layer — or an expression-engine mismatch between the project the preset was
+// authored in and this one (File ▸ Project Settings ▸ Expressions).
+//
+// So: re-enable what can be re-enabled, and REPORT the rest by name. A silent
+// no-op becomes a message that says which property failed and why.
+//
+// `repair` is false for a read-only audit (the save path, which runs outside
+// any undo group and must not mutate the layer).
+function _auditExpressions(layers, repair) {
+    var out = { total: 0, reenabled: 0, broken: 0, errors: [] };
+    for (var i = 0; i < layers.length; i++) {
+        _walkProps(layers[i], "L" + i, function (p) {
+            var expr = "";
+            // Properties that cannot hold an expression throw on read.
+            try { expr = p.expression || ""; } catch (e) { return; }
+            if (!expr) return;
+            out.total++;
+
+            var on = true;
+            try { on = p.expressionEnabled; } catch (e2) {}
+            if (!on && repair) {
+                try { p.expressionEnabled = true; } catch (e3) {}
+                try { on = p.expressionEnabled; } catch (e4) { on = false; }
+                if (on) out.reenabled++;
+            }
+
+            var err = "";
+            try { err = p.expressionError || ""; } catch (e5) {}
+            if (err) {
+                out.broken++;
+                // Two is enough to see the pattern without burying the message.
+                if (out.errors.length < 2) {
+                    out.errors.push(String(p.name || "property") + ": "
+                                  + String(err).replace(/[\r\n]+/g, " "));
+                }
+            }
+        }, 0);
+    }
+    return out;
+}
+
+function _expressionEngine() {
+    var eng = "";
+    try { eng = app.project.expressionEngine || ""; } catch (e) {}
+    return eng;
 }
 
 // Apply an animation preset to the selected layer(s).
@@ -864,6 +1046,10 @@ function zae_applyPreset(params) {
             }
         }
 
+        // After everything has settled — an expression that errors does so
+        // against the final keyframe state, not the state mid-trim.
+        var expr = _auditExpressions(layers, true);
+
         app.endUndoGroup();
 
         var msg = "Applied to " + applied + " layer" + (applied === 1 ? "" : "s");
@@ -871,6 +1057,16 @@ function zae_applyPreset(params) {
             msg += ", dropped the exit from " + trimmedProps + " propert"
                  + (trimmedProps === 1 ? "y" : "ies")
                  + " (" + trimmedKeys + " keyframe" + (trimmedKeys === 1 ? "" : "s") + ")";
+        }
+        if (expr.total) {
+            msg += ", " + expr.total + " expression" + (expr.total === 1 ? "" : "s");
+            if (expr.reenabled) {
+                msg += " (" + expr.reenabled + " re-enabled)";
+            }
+            if (expr.broken) {
+                msg += " — " + expr.broken + " erroring [engine: "
+                     + (_expressionEngine() || "unknown") + "] " + expr.errors.join("; ");
+            }
         }
         if (reverse) {
             if (!reversedProps)   msg += " — no keyframes to reverse (static preset)";
@@ -882,7 +1078,10 @@ function zae_applyPreset(params) {
         return _result(reverse ? (!reversedProps || !!cmdId) : true, msg, {
             applied: applied, comp: comp.name,
             trimmedProps: trimmedProps, trimmedKeys: trimmedKeys,
-            reversed: reversedProps, reverseApplied: !!cmdId
+            reversed: reversedProps, reverseApplied: !!cmdId,
+            expressions: expr.total, expressionsReenabled: expr.reenabled,
+            expressionsBroken: expr.broken, expressionErrors: expr.errors,
+            expressionEngine: _expressionEngine()
         });
     } catch (e) {
         try { app.endUndoGroup(); } catch (e7) {}
@@ -1063,9 +1262,20 @@ function zae_exportPreview(params) {
 
         // AE refuses to render onto an existing file, so clear the previous
         // preview. Deterministic target: <name>.mp4 in the preset's own folder.
+        //
+        // remove() RETURNS false on failure — it does not throw. Ignoring that
+        // let a locked file survive the delete, and since the success check
+        // below is existence, the STALE preview was then reported as a fresh
+        // export. Bail out instead: a wrong preview is worse than no export.
         var out = new File(dir.fsName + "/" + name + ".mp4");
         var replaced = false;
-        if (out.exists) { try { out.remove(); replaced = true; } catch (e1) {} }
+        if (_fileAppeared(out.fsName)) {
+            if (!_removedFile(out)) {
+                return _result(false, 'Could not replace "' + name + '.mp4" — the file is open '
+                             + "somewhere else. Close it and try again.");
+            }
+            replaced = true;
+        }
 
         var rq = proj.renderQueue;
         // Leave anything already queued alone, but don't render it with us.
@@ -1134,8 +1344,10 @@ function zae_exportPreview(params) {
         // visible rather than swallowed.
         rq.render();
 
-        var ok = out.exists;
-        if (!ok) return _result(false, "Render finished but no file was written.");
+        // Re-stat rather than trusting `out` — see _fileAppeared.
+        if (!_fileAppeared(out.fsName)) {
+            return _result(false, "Render finished but no file appeared at " + out.fsName);
+        }
 
         // Say what actually happened rather than what was requested — the size
         // and bitrate both depend on APIs older AE versions do not expose.
@@ -1161,6 +1373,63 @@ function zae_exportPreview(params) {
     } catch (e) {
         return _result(false, "Exception: " + e.toString());
     }
+}
+
+// Which composition to render for a preview.
+//
+// Requiring the comp to share the asset's file name broke the moment anyone
+// renamed the comp inside the project. Order now:
+//   1. Whatever is ACTIVE in the project — "render what I'm looking at". When
+//      the asset's project is already open this is the comp on screen.
+//   2. A comp matching the asset name (the old rule, kept as a fallback).
+//   3. The only comp, when there is only one.
+//   4. The "main" comp: the one top-level comp not used as a layer inside any
+//      other. Precomps are nested, so this finds what the project is about.
+// Nothing matching leaves the choice to the user rather than guessing.
+//
+// activeItem can be null when the CEP panel has focus, which is exactly when
+// this runs — hence the fallbacks rather than relying on it alone.
+function _pickExportComp(proj, name) {
+    var i, it;
+
+    var active = null;
+    try { active = proj.activeItem; } catch (eA) {}
+    if (active && (active instanceof CompItem)) return { comp: active, how: "active" };
+
+    var comps = [];
+    for (i = 1; i <= proj.numItems; i++) {
+        it = proj.item(i);
+        if (it instanceof CompItem) comps.push(it);
+    }
+    if (!comps.length) return { comp: null, how: "none", comps: comps };
+
+    for (i = 0; i < comps.length; i++) {
+        if (comps[i].name === name) return { comp: comps[i], how: "name" };
+    }
+    if (comps.length === 1) return { comp: comps[0], how: "only" };
+
+    var nested = {};
+    for (i = 0; i < comps.length; i++) {
+        var c = comps[i];
+        var n = 0;
+        try { n = c.numLayers; } catch (eN) { n = 0; }
+        for (var L = 1; L <= n; L++) {
+            var src = null;
+            try { src = c.layer(L).source; } catch (eL) {}
+            if (src && (src instanceof CompItem)) nested[src.id] = true;
+        }
+    }
+    var top = [];
+    for (i = 0; i < comps.length; i++) if (!nested[comps[i].id]) top.push(comps[i]);
+    if (top.length === 1) return { comp: top[0], how: "main" };
+
+    return { comp: null, how: "ambiguous", comps: top.length ? top : comps };
+}
+
+function _compNames(list) {
+    var out = [];
+    for (var i = 0; i < list.length; i++) out.push(list[i].name);
+    return out.join(", ");
 }
 
 // Single-frame PNG preview, as an alternative to the mp4.
@@ -1191,23 +1460,30 @@ function zae_exportImagePreview(params) {
         }
         var proj = app.project;
 
-        var comp = null, compCount = 0, firstComp = null;
-        for (var i = 1; i <= proj.numItems; i++) {
-            var it = proj.item(i);
-            if (!(it instanceof CompItem)) continue;
-            compCount++;
-            if (!firstComp) firstComp = it;
-            if (it.name === name) comp = it;
+        // The active comp wins — the comp inside the project does not have to be
+        // named after the file.
+        var pick = _pickExportComp(proj, name);
+        var comp = pick.comp;
+        if (!comp) {
+            if (pick.how === "none") {
+                return _result(false, "No composition in " + name + ".aep.");
+            }
+            return _result(false, "Several comps in " + name + ".aep and none is open — "
+                         + "open the one you want, then try again. (" + _compNames(pick.comps) + ")");
         }
-        if (!comp) comp = (compCount === 1 ? firstComp : null);
-        if (!comp) return _result(false, 'No composition named "' + name + '" in the project.');
 
         var targetW = params.width  ? Number(params.width)  : 480;
         var targetH = params.height ? Number(params.height) : 270;
 
         var out = new File(dir.fsName + "/" + name + ".png");
         var replaced = false;
-        if (out.exists) { try { out.remove(); replaced = true; } catch (e1) {} }
+        if (_fileAppeared(out.fsName)) {
+            if (!_removedFile(out)) {
+                return _result(false, 'Could not replace "' + name + '.png" — the file is open '
+                             + "somewhere else. Close it and try again.");
+            }
+            replaced = true;
+        }
 
         var t = 0;
         try { t = comp.time || 0; } catch (e2) {}
@@ -1227,12 +1503,21 @@ function zae_exportImagePreview(params) {
             app.endUndoGroup();
         }
 
-        if (!out.exists) return _result(false, "Render finished but no file was written.");
+        // Re-stat rather than trusting `out` — it was used to delete the previous
+        // file, and AE wrote the new one through it. See _fileAppeared.
+        if (!_fileAppeared(out.fsName)) {
+            return _result(false, "Render finished but no file appeared at " + out.fsName);
+        }
+
+        // Name the comp when it isn't the file's own name — otherwise there is
+        // no way to tell which of several comps ended up as the thumbnail.
+        var fromNote = (comp.name === name) ? "" : ' from "' + comp.name + '"';
 
         return _result(true, "Exported " + name + ".png at " + targetW + "x" + targetH
-                     + (replaced ? " (replaced)" : "")
+                     + (replaced ? " (replaced)" : "") + fromNote
                      + " — frame at " + (Math.round(t * 100) / 100) + "s", {
-            path: out.fsName, width: targetW, height: targetH, time: t, replaced: replaced
+            path: out.fsName, width: targetW, height: targetH, time: t, replaced: replaced,
+            comp: comp.name, pickedBy: pick.how
         });
     } catch (e) {
         try { app.endUndoGroup(); } catch (e9) {}
@@ -1327,7 +1612,7 @@ function zae_moveAsset(params) {
 
         var removed = 0;
         for (i = 0; i < moves.length; i++) {
-            try { if (moves[i].file.remove()) removed++; } catch (e4) {}
+            if (_removedFile(moves[i].file)) removed++;
         }
 
         var msg = "Moved " + name + " → " + (to || "root");
@@ -1444,7 +1729,10 @@ function zae_deleteCategory(params) {
 
         var ok = false;
         try { ok = dir.remove(); } catch (e2) { ok = false; }
-        if (!ok) return _result(false, "Could not delete " + name + ".");
+        // Same cached-state caution as _removedFile: believe the disk.
+        if (!ok && new Folder(dir.fsName).exists) {
+            return _result(false, "Could not delete " + name + ".");
+        }
 
         // Top-level categories are declared; drop it from the manifest too, or
         // the rail would keep showing a row for a folder that is gone.
@@ -1468,13 +1756,102 @@ function zae_deleteCategory(params) {
     }
 }
 
+// Delete an asset: the .ffx/.aep and its previews, or the whole folder when it
+// is a collected bundle.
+//
+// No emptiness guard like zae_deleteCategory has — the panel arms the menu item
+// and requires a second click, and the files here are exactly the set the grid
+// draws as one card. Only known extensions are touched, so an unrelated file
+// that happens to share the base name survives.
+function zae_deleteAsset(params) {
+    try {
+        var root   = params && params.root   ? String(params.root)   : "";
+        var folder = params && params.folder ? String(params.folder) : "";
+        var name   = params && params.name   ? String(params.name)   : "";
+        var bundle = params && params.bundle ? String(params.bundle) : "";
+
+        if (!root || !name) return _result(false, "Nothing to delete.");
+        if (folder.indexOf("..") !== -1 || bundle.indexOf("..") !== -1) {
+            return _result(false, "Invalid path.");
+        }
+
+        var rootFolder = new Folder(root);
+        if (!rootFolder.exists) return _result(false, "Folder not found: " + root);
+
+        // A collected project is a folder — the tree goes, footage included.
+        if (bundle) {
+            var bdir = new Folder(rootFolder.fsName + "/" + bundle);
+            if (!bdir.exists) return _result(false, "Folder not found: " + bundle);
+            if (!_removeTree(bdir)) {
+                return _result(false, "Could not fully delete " + name
+                             + " — some files are open somewhere else.");
+            }
+            return _result(true, 'Deleted "' + name + '" and its collected folder',
+                           { deleted: 1, bundle: bundle });
+        }
+
+        var dir = folder ? new Folder(rootFolder.fsName + "/" + folder) : rootFolder;
+        if (!dir.exists) return _result(false, "Folder not found: " + folder);
+
+        var i, wanted = ["ffx", "aep"];
+        for (i = 0; i < _PREVIEW_EXTS.length; i++) wanted.push(_PREVIEW_EXTS[i]);
+
+        var entries = dir.getFiles() || [], targets = [], lower = name.toLowerCase();
+        for (i = 0; i < entries.length; i++) {
+            var e = entries[i];
+            if (e instanceof Folder) continue;
+            var n = _baseName(e);
+            if (_stripExt(n).toLowerCase() !== lower) continue;
+            if (!_inList(wanted, _extOf(n))) continue;
+            targets.push({ file: e, name: n });
+        }
+        if (!targets.length) return _result(false, "No files found for " + name + ".");
+
+        // remove() returns false rather than throwing, so a preview still held
+        // open would otherwise be reported as deleted. A delete cannot be rolled
+        // back, so a partial result is reported as the partial result it is.
+        var gone = [], stuck = [];
+        for (i = 0; i < targets.length; i++) {
+            if (_removedFile(targets[i].file)) gone.push(targets[i].name);
+            else stuck.push(targets[i].name);
+        }
+
+        if (stuck.length) {
+            return _result(false, "Deleted " + gone.length + " of " + targets.length
+                         + " file(s) — " + stuck.join(", ") + " is open somewhere else.",
+                         { deleted: gone.length, stuck: stuck });
+        }
+        return _result(true, 'Deleted "' + name + '" (' + gone.length + " file"
+                     + (gone.length === 1 ? "" : "s") + ")",
+                     { deleted: gone.length, files: gone });
+    } catch (e) {
+        return _result(false, "Exception: " + e.toString());
+    }
+}
+
 // ── Folder trees ─────────────────────────────────────────────────────────────
 // ExtendScript has no cross-folder move, and a collected bundle can be hundreds
 // of megabytes, so ask the OS first — instant on the same volume — and fall
 // back to a copy-then-delete walk only when that isn't available.
+//
+// The path is embedded in a shell command string, and wrapping it in double
+// quotes does not neutralize everything: cmd.exe still expands %VAR% inside
+// quotes, and a bare & can start a second command even when quoted. All of
+// these characters are legal in Windows filenames and show up in real AE
+// project names ("Q&A Intro", "50% Reveal"). Rather than try to escape two
+// different shells correctly, refuse the shell move for a path containing any
+// of them — _moveTree falls back to the copy+delete walk below, which is pure
+// ExtendScript and never touches a shell. Only the same-volume "instant move"
+// optimization is lost for those paths.
+var _UNSAFE_WIN_SHELL   = /[&|<>^%!"]/;
+var _UNSAFE_POSIX_SHELL = /[$`"\\!]/;
+
 function _nativeMove(srcPath, dstPath) {
+    var isWin  = String($.os).indexOf("Windows") !== -1;
+    var unsafe = isWin ? _UNSAFE_WIN_SHELL : _UNSAFE_POSIX_SHELL;
+    if (unsafe.test(srcPath) || unsafe.test(dstPath)) return false;
     try {
-        var cmd = String($.os).indexOf("Windows") !== -1
+        var cmd = isWin
             ? 'cmd.exe /c move /Y "' + srcPath + '" "' + dstPath + '"'
             : 'mv "' + srcPath + '" "' + dstPath + '"';
         system.callSystem(cmd);
@@ -1509,11 +1886,12 @@ function _removeTree(folder) {
     if (entries) {
         for (var i = 0; i < entries.length; i++) {
             var e = entries[i], ok = false;
-            try { ok = (e instanceof Folder) ? _removeTree(e) : e.remove(); } catch (e2) { ok = false; }
+            try { ok = (e instanceof Folder) ? _removeTree(e) : _removedFile(e); } catch (e2) { ok = false; }
             if (!ok) return false;
         }
     }
-    try { return folder.remove(); } catch (e3) { return false; }
+    try { if (folder.remove()) return true; } catch (e3) {}
+    return !new Folder(folder.fsName).exists;
 }
 
 function _moveTree(src, dst) {
@@ -1698,6 +2076,34 @@ function zae_saveAnimationPreset(params) {
             return _result(false, "Select a layer — or just the properties/effects you want saved.");
         }
 
+        // What AE is about to be asked to save.
+        //
+        // The panel cannot influence the CONTENTS of the .ffx: Save Animation
+        // Preset is a menu command with no arguments, and AE alone decides what
+        // goes in (it does include expressions). What the panel CAN do is say
+        // what was on the layer beforehand, so "the preset never contained an
+        // expression" is distinguishable from "the expression didn't survive
+        // being applied".
+        //
+        // Read-only — this runs outside any undo group, so nothing is touched.
+        var srcExpr = _auditExpressions(layers, false);
+
+        // AE saves the SELECTED PROPERTIES when any are selected, and the whole
+        // layer only when none are. That is the usual reason an expression goes
+        // missing from a preset: it sits on a property outside the selection, so
+        // it was never in the file to begin with.
+        var narrowed = 0;
+        try { narrowed = comp.selectedProperties ? comp.selectedProperties.length : 0; } catch (eSP) {}
+
+        var exprNote = srcExpr.total
+            ? " — " + srcExpr.total + " expression" + (srcExpr.total === 1 ? "" : "s") + " on the selection"
+            : " — no expressions on the selection";
+        if (srcExpr.total && narrowed) {
+            exprNote += "; only the " + narrowed + " selected propert"
+                      + (narrowed === 1 ? "y is" : "ies are") + " saved — deselect properties "
+                      + "(click the layer name) to save the whole layer";
+        }
+
         // Menu strings differ by build and locale; try the likely spellings.
         var cmdId = 0;
         var names = ["Save Animation Preset...", "Save Animation Preset…", "Save Animation Preset"];
@@ -1737,7 +2143,10 @@ function zae_saveAnimationPreset(params) {
 
         // Dialog already pointed at the category — nothing to move.
         if (src.fsName === destPath) {
-            return _result(true, "Saved " + _stripExt(fileName), { path: destPath, moved: false });
+            return _result(true, "Saved " + _stripExt(fileName) + exprNote, {
+                path: destPath, moved: false,
+                expressions: srcExpr.total, selectedProperties: narrowed
+            });
         }
 
         var dest = new File(destPath);
@@ -1747,14 +2156,168 @@ function zae_saveAnimationPreset(params) {
         if (!src.copy(destPath)) {
             return _result(false, "Saved, but could not move it. It is at: " + src.fsName);
         }
-        try { src.remove(); } catch (e3) {}
+        // Same unchecked-remove trap as the exports: a failure here leaves the
+        // preset in BOTH places, and claiming a clean move would hide the
+        // duplicate. Say so instead.
+        var movedOut = _removedFile(src);
 
-        return _result(true, "Saved " + _stripExt(fileName) + " → " + (category || "root"), {
-            path: destPath, moved: true, from: src.fsName
+        return _result(true, "Saved " + _stripExt(fileName) + " → " + (category || "root")
+                     + (movedOut ? "" : " (the original is also still at " + src.fsName + ")")
+                     + exprNote, {
+            path: destPath, moved: true, removedOriginal: movedOut, from: src.fsName,
+            expressions: srcExpr.total, selectedProperties: narrowed
         });
     } catch (e) {
         return _result(false, "Exception: " + e.toString());
     }
+}
+
+// Immediate subfolders of `folder`, keyed by path. Used to spot the folder
+// Collect Files just wrote.
+function _subFolderMap(folder, map) {
+    if (!folder || !folder.exists) return;
+    var entries;
+    try { entries = folder.getFiles(); } catch (e) { return; }
+    if (!entries) return;
+    for (var i = 0; i < entries.length; i++) {
+        if (entries[i] instanceof Folder) map[entries[i].fsName] = true;
+    }
+}
+
+// Save the whole open project as a collected asset, into the chosen category.
+//
+// Like Save Animation Preset, "Collect Files" is a MENU COMMAND — there is no
+// app.project.collectFiles() and no way to pass it arguments. So its two
+// settings cannot be scripted:
+//   * "Collect Source Files: All" is a dropdown in the dialog. AE remembers the
+//     last choice, so it is a one-time setup rather than a per-run chore.
+//   * The destination is a folder chooser. The panel logs the exact path to aim
+//     at, and if the user lands somewhere else this function moves the result
+//     into the category afterwards.
+//
+// Everything either side of the dialog IS automated: the category folder is
+// created, the collected folder is found, relocated if needed, and renamed from
+// AE's "<name> folder" to plain "<name>".
+function zae_saveCompAsPreset(params) {
+    try {
+        var root     = params && params.root ? String(params.root) : "";
+        var category = params && params.category ? String(params.category) : "";
+        if (!root) return _result(false, "No preset folder selected.");
+
+        var proj = app.project;
+        if (!proj) return _result(false, "No project open in After Effects.");
+        // Collect Files works from the project ON DISK, and names its output
+        // after the project file — an unsaved project has neither.
+        if (!proj.file) return _result(false, "Save the project first — Collect Files needs a project file.");
+
+        var name = _stripExt(_baseName(proj.file));
+        if (!name) return _result(false, "Could not read the project name.");
+
+        var target = _targetFolder(root, category);
+        if (!target) return _result(false, "Could not open the target folder.");
+
+        // Refuse up front rather than collecting into a collision: with a folder
+        // of this name already there, "which one is new" becomes a guess.
+        if (new Folder(target.fsName + "/" + name).exists) {
+            return _result(false, '"' + name + '" already exists in ' + (category || "root") + ".");
+        }
+
+        var cmdId = 0;
+        var names = ["Collect Files...", "Collect Files…", "Collect Files"];
+        for (var i = 0; i < names.length && !cmdId; i++) {
+            try { cmdId = app.findMenuCommandId(names[i]); } catch (e) {}
+        }
+        if (!cmdId) {
+            return _result(false, "Could not find the Collect Files menu command on this AE version.");
+        }
+
+        // Where the collected folder might land: the category we want, the
+        // preset root, and the project's own folder — AE's chooser opens at the
+        // last used location, and the project's folder is the common default.
+        var watched = [target, new Folder(root)];
+        try { if (proj.file.parent) watched.push(proj.file.parent); } catch (eP) {}
+
+        var before = {}, after = {}, w;
+        for (w = 0; w < watched.length; w++) _subFolderMap(watched[w], before);
+
+        app.executeCommand(cmdId);        // modal — returns once collected or cancelled
+
+        for (w = 0; w < watched.length; w++) _subFolderMap(watched[w], after);
+
+        // A collected folder is one that appeared AND holds a project.
+        var found = null, fallback = null;
+        for (var k in after) {
+            if (!after.hasOwnProperty(k) || before.hasOwnProperty(k)) continue;
+            var cand = new Folder(k);
+            if (!_folderHasAep(cand)) continue;
+            var cn = _baseName(cand).toLowerCase();
+            // Prefer the one named after the project; anything else is a guess.
+            if (cn === name.toLowerCase() || cn === (name + " folder").toLowerCase()) { found = cand; break; }
+            if (!fallback) fallback = cand;
+        }
+        if (!found) found = fallback;
+        if (!found) {
+            return _result(false, "No collected folder found — cancelled, or collected outside "
+                         + (category || "the preset root") + ". Expected it in: " + target.fsName);
+        }
+
+        // Relocate if the dialog pointed elsewhere.
+        var moved = false;
+        if (String(found.parent ? found.parent.fsName : "") !== target.fsName) {
+            var dstPath = target.fsName + "/" + _baseName(found);
+            if (new Folder(dstPath).exists) {
+                return _result(false, "Collected to " + found.fsName
+                             + ", but " + (category || "root") + " already has a folder of that name.");
+            }
+            var mv = _moveTree(found, new Folder(dstPath));
+            if (!mv.ok) {
+                return _result(false, "Collected to " + found.fsName + ", but could not move it: " + mv.message);
+            }
+            found = new Folder(dstPath);
+            moved = true;
+        }
+
+        // AE always appends " folder". Drop it — but only if the result is still
+        // recognisable as a bundle, since that suffix is one of the three signals
+        // _bundleAep looks for. Renaming a folder out of the grid would be worse
+        // than leaving AE's name on it.
+        var renamed = "";
+        var current = _baseName(found);
+        if (current !== name && !new Folder(target.fsName + "/" + name).exists) {
+            var ok = false;
+            try { ok = found.rename(name); } catch (eR) { ok = false; }
+            if (ok) {
+                if (_bundleAep(found)) {
+                    renamed = name;
+                } else {
+                    // No (Footage) and no report to fall back on — put it back.
+                    try { found.rename(current); } catch (eR2) {}
+                }
+            }
+        }
+
+        var finalName = renamed || _baseName(found);
+        var rel = (category ? category + "/" : "") + finalName;
+        return _result(true, "Collected " + name + " → " + (category || "root")
+                     + (moved ? " (moved from " + (proj.file.parent ? proj.file.parent.fsName : "elsewhere") + ")" : "")
+                     + (renamed ? "" : ' — kept AE\'s folder name "' + finalName + '"'), {
+            path: target.fsName + "/" + finalName, bundle: rel,
+            name: finalName, moved: moved, renamed: !!renamed
+        });
+    } catch (e) {
+        return _result(false, "Exception: " + e.toString());
+    }
+}
+
+function _folderHasAep(folder) {
+    var entries;
+    try { entries = folder.getFiles(); } catch (e) { return false; }
+    if (!entries) return false;
+    for (var i = 0; i < entries.length; i++) {
+        if (entries[i] instanceof Folder) continue;
+        if (_extOf(_baseName(entries[i])) === "aep") return true;
+    }
+    return false;
 }
 
 // New asset: a full-size project + comp in the chosen category, ready to build

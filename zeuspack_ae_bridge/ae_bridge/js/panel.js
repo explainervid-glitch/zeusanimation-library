@@ -29,9 +29,11 @@
   var presetsEl  = document.getElementById("presets");
   var pathSelect = document.getElementById("pathSelect");
   var refreshBtn = document.getElementById("refreshBtn");
-  var promptRow   = document.getElementById("promptRow");
-  var promptInput = document.getElementById("promptInput");
-  var promptOk    = document.getElementById("promptOk");
+  var promptRow    = document.getElementById("promptRow");
+  var promptInput  = document.getElementById("promptInput");
+  var promptOk     = document.getElementById("promptOk");
+  var promptMsg    = document.getElementById("promptMsg");
+  var promptCancel = document.getElementById("promptCancel");
   var listEl     = document.getElementById("list");
   var applyBtn    = document.getElementById("applyBtn");
   var applyOutBtn = document.getElementById("applyOutBtn");
@@ -44,13 +46,22 @@
 
   var connected = null;   // tri-state so the first result always renders
 
+  // The status row carries asset names, folder names and host messages, any of
+  // which can contain "<". Written as TEXT, never markup — a card named
+  // "<img src=x onerror=…>" would otherwise run as script in a panel that holds
+  // local file access. Emphasis is a class instead of a <b>.
+  function setStatus(text, isErr) {
+    stateEl.textContent = String(text);
+    stateEl.className = "state " + (isErr ? "err" : "msg");
+  }
+
   function setConnected(isUp) {
     if (connected === isUp) return;
     connected = isUp;
     dot.className = "dot " + (isUp ? "ok" : "err");
-    stateEl.innerHTML = isUp
-      ? "<b>Connected</b>"
-      : "<b>ZeusPack not running</b>";
+    // Disconnected is not an error state — the red dot says it, and the panel's
+    // preset browser works regardless.
+    setStatus(isUp ? "Connected" : "ZeusPack not running", false);
     stateEl.title = isUp
       ? "Listening for jobs on 127.0.0.1:8771"
       : "Start ZeusPack, then keep this panel open";
@@ -68,7 +79,7 @@
   // Briefly show the last action in the status row, so the log can stay closed.
   var flashTimer = null;
   function flash(msg, isErr) {
-    stateEl.innerHTML = (isErr ? '<b style="color:#f85149">' : "<b>") + msg + "</b>";
+    setStatus(msg, isErr);
     if (flashTimer) clearTimeout(flashTimer);
     flashTimer = setTimeout(function () {
       var was = connected; connected = null; setConnected(was);
@@ -211,6 +222,8 @@
   var presets     = [];   // everything the scan found
   var view        = [];   // what the grid is showing (presets, filtered by folder)
   var declaredCats = null; // categories.json contents, or null when absent
+  var knownFolders = [];  // every subfolder the scan visited, even empty ones
+  var collapsedCats = {}; // folder path -> true while its children are hidden
   var activeFolder = null; // null = all folders
   var selectedIdx = -1;   // index into `view`
   var dragIndex   = -1;   // card being dragged onto a category, or -1
@@ -360,6 +373,11 @@
     nodes[""] = true;                              // root is always a drop target
     for (f in counts) if (counts.hasOwnProperty(f)) addPath(f);
     if (declaredCats) for (i = 0; i < declaredCats.length; i++) addPath(declaredCats[i]);
+    // Subcategories are discovered, not declared, so an empty one (freshly made
+    // with New Folder…, nothing dropped into it yet) has no entry in `counts`
+    // and would otherwise never get a row — knownFolders is every subfolder the
+    // scan actually visited, empty or not.
+    for (i = 0; i < knownFolders.length; i++) addPath(knownFolders[i]);
 
     var order = [];
     for (f in nodes) if (nodes.hasOwnProperty(f)) order.push(f);
@@ -384,12 +402,37 @@
     }
 
     // Plain path sort puts children directly under their parent, because a
-    // parent string is a prefix of its children.
+    // parent string is a prefix of its children. The root row sorts LAST: it
+    // is the leftovers bucket, not a category, so it belongs under the real
+    // ones rather than above them.
     order.sort(function (a, b) {
-      if (a === "") return -1;
-      if (b === "") return 1;
+      if (a === "") return 1;
+      if (b === "") return -1;
       return a.toLowerCase() < b.toLowerCase() ? -1 : 1;
     });
+
+    // Only a row with at least one other row nested under it gets a live
+    // toggle; everything else gets an invisible spacer so labels still align.
+    var hasKids = {};
+    for (i = 0; i < order.length; i++) {
+      f = order[i];
+      if (!f) continue;
+      for (var j = 0; j < order.length; j++) {
+        if (j !== i && order[j].indexOf(f + "/") === 0) { hasKids[f] = true; break; }
+      }
+    }
+
+    // Hidden when any ANCESTOR (never the row itself) is collapsed, so
+    // collapsing a folder hides everything nested under it at any depth.
+    function hiddenByCollapse(path) {
+      if (!path) return false;
+      var parts = path.split("/"), acc = "";
+      for (var k = 0; k < parts.length - 1; k++) {
+        acc = acc ? acc + "/" + parts[k] : parts[k];
+        if (collapsedCats[acc]) return true;
+      }
+      return false;
+    }
 
     var html = '<div class="cat' + (activeFolder === null ? " sel" : "") + '" data-all="1">'
              +   '<span class="cn">All presets</span>'
@@ -397,12 +440,21 @@
              + "</div>";
     for (i = 0; i < order.length; i++) {
       f = order[i];
+      if (hiddenByCollapse(f)) continue;
       var parts = f ? f.split("/") : [];
       var depth = parts.length ? parts.length - 1 : 0;
-      var label = parts.length ? parts[parts.length - 1] : "(root)";
-      html += '<div class="cat' + (activeFolder === f ? " sel" : "") + '" data-f="' + esc(f) + '"'
-            +   ' title="' + esc(f || "(root)") + '"'
+      // The root row holds whatever was never filed into a category, so it is
+      // labelled for what it contains rather than for where it sits.
+      var label = parts.length ? parts[parts.length - 1] : "(Uncategorize)";
+      var toggle = hasKids[f]
+        ? '<span class="catToggle" data-toggle="' + esc(f) + '" title="'
+          + (collapsedCats[f] ? "Expand" : "Collapse") + '">' + (collapsedCats[f] ? "▸" : "▾") + "</span>"
+        : '<span class="catToggle spacer"></span>';
+      html += '<div class="cat' + (f === "" ? " root" : "")
+            +   (activeFolder === f ? " sel" : "") + '" data-f="' + esc(f) + '"'
+            +   ' title="' + esc(f || "Assets loose in the preset root") + '"'
             +   ' style="padding-left:' + (6 + depth * 10) + 'px">'
+            +   toggle
             +   '<span class="cn">' + esc(label) + "</span>"
             +   '<span class="cc">' + total(f) + "</span>"
             + "</div>";
@@ -412,6 +464,18 @@
 
     var rows = catsEl.getElementsByClassName("cat");
     for (i = 0; i < rows.length; i++) {
+      // The toggle owns its own click: expand/collapse only, never the active
+      // filter — stopPropagation keeps it from also selecting the row.
+      var tgl = rows[i].getElementsByClassName("catToggle")[0];
+      if (tgl && tgl.getAttribute("data-toggle") !== null) {
+        tgl.addEventListener("click", function (ev) {
+          ev.stopPropagation();
+          var path = this.getAttribute("data-toggle");
+          collapsedCats[path] = !collapsedCats[path];
+          renderCats();
+        });
+      }
+
       rows[i].addEventListener("click", function () {
         activeFolder = this.getAttribute("data-all") ? null : this.getAttribute("data-f");
         closeMenu();
@@ -577,9 +641,13 @@
     }
   }
 
-  function loadPresets(dir) {
+  // `prune` drops declared categories whose folder is gone. Passed only by the
+  // Refresh button: it rewrites categories.json, which everyone on the shared
+  // root reads, so it stays an explicit user action rather than a side effect
+  // of every rename/move/delete reload.
+  function loadPresets(dir, prune) {
     showMessage("Scanning…");
-    callHost("zae_listPresets", { path: dir }, function (r) {
+    callHost("zae_listPresets", { path: dir, prune: !!prune }, function (r) {
       if (!r.ok) {
         presets = [];
         showMessage(esc(r.message), true);
@@ -591,12 +659,29 @@
       renderRoots(currentRootId());
       presets = r.data.presets || [];
       declaredCats = r.data.categories || null;
+      knownFolders = r.data.folders || [];
       // A folder selected in the previous directory means nothing here.
       activeFolder = null;
       renderCats();
       applyFilter();
       log("Presets → " + r.message + " (" + r.data.withPreview + " with preview)"
           + (r.data.truncated ? " — list truncated" : ""), "ok");
+
+      // Say what was removed by name — this edited a shared file.
+      var dropped = r.data.removedCategories || [];
+      if (dropped.length) {
+        log("categories.json → removed " + dropped.join(", ") + " (folder no longer on disk)", "ok");
+        flash("Dropped " + dropped.length + " missing categor" + (dropped.length === 1 ? "y" : "ies"));
+      }
+
+      // A manifest that exists but won't parse used to fall back to scanning
+      // every top-level folder — including Auto-Save — with nothing said about
+      // it. Flag it loudly instead of letting it ride along in the "ok" line.
+      if (r.data.manifestBroken) {
+        log("categories.json is present but could not be parsed — check it for a syntax error. "
+            + "Showing all folders (including Auto-Save) until it's fixed.", "err");
+        flash("categories.json is broken — see log", true);
+      }
     });
   }
 
@@ -689,7 +774,8 @@
   loopBtn.addEventListener("click", function () { setAutoplay(!autoplayAll, true); });
 
   refreshBtn.addEventListener("click", function () {
-    if (currentDir) loadPresets(currentDir);
+    // The one path that prunes categories.json — see loadPresets.
+    if (currentDir) loadPresets(currentDir, true);
     else { presetsLoaded = false; initPresets(); }
   });
 
@@ -708,17 +794,52 @@
 
   function closePrompt() {
     promptRow.className = "row addcat";
+    promptOk.className = "btn";
+    promptOk.disabled = false;
+    // Cleared so a stale mode can't make a later Escape or Enter act on a
+    // confirmation that is no longer on screen.
+    promptMode = "";
+    promptDelete = null;
     syncHeight();
   }
 
-  // opts: { idx } for an asset rename, { path } for folder create/rename.
+  // The delete target is captured when the confirmation opens, not read back
+  // from view[] when it is accepted: a rescan between the two would silently
+  // repoint the index at a different asset, and this is the one action where
+  // that means destroyed files.
+  var promptDelete = null;
+
+  // opts: { idx } for an asset rename or delete, { path } for folder
+  // create/rename.
   function openPrompt(mode, opts) {
     if (!currentDir) { flash("Pick a preset folder first", true); return; }
     opts = opts || {};
     promptMode = mode;
     promptIdx  = (opts.idx === undefined) ? -1 : opts.idx;
     promptPath = (opts.path === undefined) ? "" : opts.path;
+    promptDelete = null;
 
+    // Confirmation, not input: the message replaces the field, and focus lands
+    // on Cancel so a reflexive Enter backs out instead of deleting.
+    if (mode === "confirmdelete") {
+      var d = view[promptIdx];
+      if (!d) return;
+      promptDelete = {
+        idx: promptIdx, name: d.name, folder: d.folder || "",
+        bundle: d.bundle || "", path: d.path
+      };
+      promptMsg.textContent = 'Delete "' + d.name + '"'
+        + (d.bundle ? " and its whole folder" : "") + "? No undo.";
+      promptMsg.title = d.bundle ? d.path + "  (the whole folder)" : d.path;
+      promptOk.textContent = "Delete";
+      promptOk.className = "btn danger";
+      promptRow.className = "row addcat open ask";
+      syncHeight();
+      try { promptCancel.focus(); } catch (eF) {}
+      return;
+    }
+
+    promptOk.className = "btn";
     var lastSegment = promptPath ? promptPath.split("/").pop() : "";
     var current = "";
     if (mode === "rename" && view[promptIdx]) current = view[promptIdx].name;
@@ -744,6 +865,14 @@
   }
 
   function submitPrompt() {
+    // Confirm mode has no input to read — check it before the name guard.
+    if (promptMode === "confirmdelete") {
+      var target = promptDelete;
+      closePrompt();                 // clears promptDelete
+      if (target) deleteAsset(target);
+      return;
+    }
+
     var name = promptInput.value.replace(/^\s+|\s+$/g, "");
     if (!name || !currentDir) return;
     promptOk.disabled = true;
@@ -815,6 +944,7 @@
   }
 
   promptOk.addEventListener("click", submitPrompt);
+  promptCancel.addEventListener("click", closePrompt);
   promptInput.addEventListener("keydown", function (ev) {
     if (ev.keyCode === 13) { ev.preventDefault(); submitPrompt(); }
     else if (ev.keyCode === 27) { ev.preventDefault(); ev.stopPropagation(); closePrompt(); }
@@ -829,6 +959,27 @@
       root: currentDir, category: targetCategory()
     }, function (r) {
       log("Save preset → " + r.message, r.ok ? "ok" : "err");
+      flash(r.message, !r.ok);
+      if (r.ok && currentDir) loadPresets(currentDir);
+    });
+  }
+
+  // ── Save the whole open project as a collected asset ─────────
+  // Collect Files is a menu command with no arguments, so its two settings —
+  // "Collect Source Files" and the destination — belong to AE's dialog and
+  // cannot be scripted. Spell out both in the log BEFORE the modal opens,
+  // because once it is up the panel can't say anything.
+  function saveCompAsPreset() {
+    if (!currentDir) { flash("Pick a preset folder first", true); return; }
+    var cat = targetCategory();
+    var dest = currentDir + (cat ? "\\" + cat.split("/").join("\\") : "");
+    flash("Waiting for AE's Collect Files dialog…");
+    log("Save comp → opening After Effects' Collect Files dialog…");
+    log('  1. Set "Collect Source Files: All"  (AE remembers this)');
+    log("  2. Point it at:  " + dest);
+    log("  If you save it somewhere else, the panel will move it here afterwards.");
+    callHost("zae_saveCompAsPreset", { root: currentDir, category: cat }, function (r) {
+      log("Save comp → " + r.message, r.ok ? "ok" : "err");
       flash(r.message, !r.ok);
       if (r.ok && currentDir) loadPresets(currentDir);
     });
@@ -1014,6 +1165,24 @@
     });
   }
 
+  // `t` is the target captured by the confirmation, not a live index — see
+  // promptDelete.
+  function deleteAsset(t) {
+    if (!t || !currentDir) return;
+    // Loop mode keeps every .mp4 open; on Windows the delete fails against a
+    // live handle, so let go of this card's preview first.
+    releasePreview(t.idx);
+    flash("Deleting " + t.name + "…");
+    callHost("zae_deleteAsset", {
+      root: currentDir, folder: t.folder, name: t.name, bundle: t.bundle
+    }, function (r) {
+      log("Delete " + t.name + " → " + r.message, r.ok ? "ok" : "err");
+      flash(r.message, !r.ok);
+      // Rescan either way: a partial delete still changed what is on disk.
+      loadPresets(currentDir);
+    });
+  }
+
   function revealPreset(i) {
     var p = view[i];
     if (!p) return;
@@ -1036,6 +1205,20 @@
     if (tip) b.title = tip;
     if (enabled) b.addEventListener("click", function () { closeMenu(); fn(); });
     else b.className = "off";
+    menuEl.appendChild(b);
+    return b;
+  }
+
+  // Red menu entry for a destructive action. It never acts on click — it only
+  // opens the confirmation bar. ExtendScript's remove() is a hard delete with no
+  // recycle bin and no undo, on files that usually live on a shared drive, so
+  // the action needs a second, explicit yes.
+  function dangerItem(label, fn, tip) {
+    var b = document.createElement("button");
+    b.className = "danger";
+    b.textContent = label;
+    if (tip) b.title = tip;
+    b.addEventListener("click", function () { closeMenu(); fn(); });
     menuEl.appendChild(b);
     return b;
   }
@@ -1086,6 +1269,12 @@
     item("Rename…", true, function () { openPrompt("rename", { idx: i }); },
       "Renames the .ffx/.aep and its preview together");
     item("Reveal in Explorer", true, function () { revealPreset(i); }, p.path);
+
+    sep();
+    dangerItem("Delete Asset…",
+      function () { openPrompt("confirmdelete", { idx: i }); },
+      p.bundle ? "Deletes the whole collected folder, footage included — no undo"
+               : "Deletes the .ffx/.aep and its preview — no undo");
 
     // Show it before measuring, then clamp so it never runs off the panel.
     menuEl.className = "menu open";
@@ -1148,14 +1337,41 @@
     menuEl.style.top  = Math.max(2, Math.min(y, vh - mh - 2)) + "px";
   }
 
-  // Empty space in the rail targets the root.
-  catsEl.addEventListener("contextmenu", function (ev) {
+  // Walks up from an event's target to the .cat row that owns it, or null when
+  // the event landed on the rail's empty space below the last row.
+  function rowFromEvent(ev) {
     var n = ev.target;
     while (n && n !== catsEl) {
-      if (n.className && String(n.className).indexOf("cat") !== -1) return;  // a row handles it
+      if (n.className && String(n.className).indexOf("cat") !== -1) return n;
       n = n.parentNode;
     }
+    return null;
+  }
+
+  // Clicking the empty space clears the category filter, the same way clicking
+  // "All presets" does — the rail's background is not part of any folder, so
+  // leaving a row highlighted there would contradict what the grid is showing.
+  catsEl.addEventListener("click", function (ev) {
+    if (rowFromEvent(ev)) return;        // a row's own handler deals with it
+    if (activeFolder === null) return;   // already unfiltered — nothing to redraw
+    activeFolder = null;
+    closeMenu();
+    renderCats();
+    applyFilter();
+  });
+
+  // Empty space in the rail targets the root.
+  //
+  // stopPropagation matters: the document-level contextmenu handler below
+  // closes any menu opened outside the grid, and it runs AFTER this one on the
+  // way up. Without it the menu opened here was shut again in the same event,
+  // so right-clicking the rail's empty space appeared to do nothing. The row
+  // handler has always stopped propagation, which is why rows worked and the
+  // background did not.
+  catsEl.addEventListener("contextmenu", function (ev) {
+    if (rowFromEvent(ev)) return;        // a row handles it
     ev.preventDefault();
+    ev.stopPropagation();
     openCatMenu("", ev.clientX, ev.clientY);
   });
 
@@ -1165,10 +1381,13 @@
     menuEl.innerHTML = "";
 
     var into = targetLabel();
-    item("Save Animation as Preset…", !!currentDir, saveAnimationPreset,
+    item("Save Animation (.ffx) ", !!currentDir, saveAnimationPreset,
       "AE selection → " + into);
 
-    item("Add Asset…", !!currentDir, function () { openPrompt("asset"); },
+    item("Save Animation Comp (.aep)", !!currentDir, saveCompAsPreset,
+      "Collect Files: the whole open project → " + into);
+
+    item("Add Asset (New Project)", !!currentDir, function () { openPrompt("asset"); },
       ASSET_W + "×" + ASSET_H + " @ " + ASSET_FPS + "fps → " + into);
 
     sep();
@@ -1201,7 +1420,11 @@
     if (menuEl.className.indexOf("open") !== -1 && !menuEl.contains(ev.target)) closeMenu();
   });
   document.addEventListener("keydown", function (ev) {
-    if (ev.keyCode === 27) closeMenu();
+    if (ev.keyCode !== 27) return;
+    closeMenu();
+    // The confirmation bar hides the input, so there is no focused field to
+    // catch Escape the way the other prompt modes do.
+    if (promptMode === "confirmdelete") closePrompt();
   });
   // A menu pinned to viewport coords would detach from its card on scroll.
   listEl.addEventListener("scroll", closeMenu);
@@ -1282,7 +1505,7 @@
 
   if (typeof fetch !== "function") {
     setConnected(false);
-    stateEl.innerHTML = "<b>No fetch() in this CEP host</b>";
+    setStatus("No fetch() in this CEP host", true);
     return;
   }
 
