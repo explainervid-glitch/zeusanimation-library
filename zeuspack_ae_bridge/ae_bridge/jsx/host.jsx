@@ -3391,14 +3391,6 @@ function zae_groupLayers(params) {
                 // AE compensates the child's transform, so nothing jumps.
                 try { roots[i].parent = nul; } catch (e3) {}
             }
-
-            if (params.collapse) {
-                for (i = 0; i < members.length; i++) {
-                    try { members[i].shy = true; } catch (e4) {}
-                }
-                // Shy only hides anything while the comp-wide switch is on.
-                try { comp.hideShyLayers = true; } catch (e5) {}
-            }
         } finally {
             app.endUndoGroup();
         }
@@ -3416,7 +3408,6 @@ function zae_groupLayers(params) {
             if (ctr.skipped.length > 3) shown += " and " + (ctr.skipped.length - 3) + " more";
             msg += "; not counted toward the centre: " + shown + " (3D or no rect)";
         }
-        if (params.collapse) msg += "; children shy";
 
         return _result(true, msg, {
             name: name, centerX: ctr.x, centerY: ctr.y, centredFrom: ctr.from,
@@ -3470,7 +3461,6 @@ function zae_ungroupLayers(params) {
                 for (j = 0; j < kids.length; j++) {
                     // AE preserves the world transform on both sides of this.
                     try { kids[j].parent = up; freed++; } catch (e2) {}
-                    try { kids[j].shy = false; } catch (e3) {}
                 }
                 try { control.remove(); removed++; } catch (e4) {}
             }

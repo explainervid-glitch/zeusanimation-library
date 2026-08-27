@@ -171,16 +171,6 @@
   .tbtn.pri { color:var(--accent); border-color:var(--accent); }
   .tbtn.pri:hover:not(:disabled) { background:var(--accent); color:#fff; }
 
-  /* Checkbox rows: small enough to survive a 240px docked panel. */
-  .chk {
-    display:flex; align-items:center; gap:4px;
-    font-size:10px; color:var(--muted); cursor:pointer; white-space:nowrap;
-  }
-  .chk:hover { color:var(--text); }
-  .chk input[type=checkbox] { margin:0; width:11px; height:11px; cursor:pointer; }
-  /* Pinned to the bottom of the strip, below the actions. */
-  .tools .chk { margin-top:auto; padding:3px 1px 1px; justify-content:center; }
-
   /* ── Preset browser — hidden until the wand button is toggled ── */
   /* min-width:0 matters now that this is a flex item in a ROW: without it the
      grid's content sets a floor and the tool strip cannot be dragged wider. */
@@ -528,10 +518,6 @@
              stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="1"/><path d="M14 4h6M17 1v6M14 20h6M17 17v6M4 14v6h6" stroke-dasharray="0"/><path d="M13 13l7 7"/></svg>
         <span>UnPrecomp</span>
       </button>
-
-      <label class="chk" title="Shy the grouped layers so they collapse out of the timeline. Note that the shy switch is comp-wide.">
-        <input type="checkbox" id="collapseChk" /><span>Shy</span>
-      </label>
     </div>
   </div>
 

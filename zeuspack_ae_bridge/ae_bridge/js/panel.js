@@ -50,7 +50,6 @@
   var ungroupBtn  = document.getElementById("ungroupBtn");
   var recenterBtn = document.getElementById("recenterBtn");
   var unprecompBtn = document.getElementById("unprecompBtn");
-  var collapseChk = document.getElementById("collapseChk");
   var toolGrip    = document.getElementById("toolGrip");
   var mainEl      = document.getElementById("main");
 
@@ -1593,7 +1592,6 @@
   // These act on After Effects' own selection, so there is nothing to pick in
   // the panel — the buttons just fire and report.
   var TOOLS_KEY    = "zae.toolsOpen";
-  var COLLAPSE_KEY = "zae.groupCollapse";
 
   var toolButtons = [groupBtn, ungroupBtn, recenterBtn, unprecompBtn];
 
@@ -1609,9 +1607,7 @@
   }
 
   groupBtn.addEventListener("click", function () {
-    runTool("zae_groupLayers", "Group", {
-      collapse: !!(collapseChk && collapseChk.checked)
-    });
+    runTool("zae_groupLayers", "Group", {});
   });
   ungroupBtn.addEventListener("click", function () {
     runTool("zae_ungroupLayers", "Ungroup", {});
@@ -1622,14 +1618,6 @@
   unprecompBtn.addEventListener("click", function () {
     runTool("zae_unPrecomp", "UnPrecomp", {});
   });
-
-  // Persisted — it is a per-taste setting, not a per-group one.
-  if (collapseChk) {
-    try { collapseChk.checked = localStorage.getItem(COLLAPSE_KEY) === "1"; } catch (e) {}
-    collapseChk.addEventListener("change", function () {
-      try { localStorage.setItem(COLLAPSE_KEY, this.checked ? "1" : "0"); } catch (e2) {}
-    });
-  }
 
   // ── Tool strip width (drag handle) ───────────────────────────
   // Mirrors the category rail, but the strip is on the RIGHT, so dragging left

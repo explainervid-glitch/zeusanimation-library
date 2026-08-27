@@ -375,7 +375,6 @@ Effects' own selection, so there is nothing to pick in the panel.
 | **Clear** | Releases a group's layers and deletes its null |
 | **Recenter** | Moves a group's null back to the centre of its layers, without moving them |
 | **UnPrecomp** | Lifts a precomp's layers back into the comp around it |
-| Shy | Whether *Parent* also shys the layers it collects |
 
 ### Group without a pre-comp
 
@@ -640,8 +639,7 @@ Host constants in `jsx/host.jsx`:
 | `_CEP_SYSTEM_DIR` | `C:\Program Files (x86)\…\CEP\extensions` | Where updates install |
 
 Persisted in `localStorage`: card size, rail width, tool strip width, the chosen
-root, Loop/Hover, which panels are open, the status-text toggle and the Shy
-checkbox.
+root, Loop/Hover, which panels are open, and the status-text toggle.
 
 ---
 
@@ -805,11 +803,6 @@ never documented a getter. It does not matter in practice — AE's own preset
 format carries the list, so `applyPreset()` restores it — but it does mean the
 panel must never try to write one back. See
 [Dropdown Menu Control items](#dropdown-menu-control-items).
-
-**The shy switch is comp-wide.** *Group* can shy the layers it collects, but
-`hideShyLayers` is a property of the composition, not of a group. So you can
-collapse one group, but not have group A collapsed while group B stays expanded
-and an unrelated shy layer stays visible.
 
 **Moving a bundle can be slow.** ExtendScript has no cross-folder move, so the
 panel asks the OS first (`move` / `mv`), which is instant on the same volume.
