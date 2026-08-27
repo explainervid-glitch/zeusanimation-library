@@ -49,9 +49,42 @@
   var groupBtn    = document.getElementById("groupBtn");
   var ungroupBtn  = document.getElementById("ungroupBtn");
   var recenterBtn = document.getElementById("recenterBtn");
+  var unprecompBtn = document.getElementById("unprecompBtn");
   var collapseChk = document.getElementById("collapseChk");
+  var toolGrip    = document.getElementById("toolGrip");
+  var mainEl      = document.getElementById("main");
 
   var connected = null;   // tri-state so the first result always renders
+
+  // ── Status text visibility ───────────────────────────────────
+  // Collapsed to just the dot by default. The dot's colour already carries the
+  // connection state and its tooltip carries the words, so the row only needs
+  // to spell things out when asked — clicking the dot toggles it.
+  var dotBtn     = document.getElementById("dotBtn");
+  var STATUS_KEY = "zae.statusText";
+  var statusShown = false;
+  try { statusShown = localStorage.getItem(STATUS_KEY) === "1"; } catch (e) {}
+
+  var stateCls = "";   // "msg" | "err" — kept so the toggle can repaint it
+
+  function paintState() {
+    stateEl.className = "state " + stateCls + (statusShown ? "" : " off");
+  }
+
+  // The dot is the only thing left when the text is hidden, so the message has
+  // to reach its tooltip or it would be unreachable without opening the log.
+  function syncDotTitle() {
+    var msg = stateEl.textContent || "";
+    dotBtn.title = msg + (statusShown ? "  —  click to hide status text"
+                                      : "  —  click to show status text");
+  }
+
+  function setStatusShown(on) {
+    statusShown = !!on;
+    paintState();
+    syncDotTitle();
+    try { localStorage.setItem(STATUS_KEY, statusShown ? "1" : "0"); } catch (e2) {}
+  }
 
   // The status row carries asset names, folder names and host messages, any of
   // which can contain "<". Written as TEXT, never markup — a card named
@@ -59,7 +92,9 @@
   // local file access. Emphasis is a class instead of a <b>.
   function setStatus(text, isErr) {
     stateEl.textContent = String(text);
-    stateEl.className = "state " + (isErr ? "err" : "msg");
+    stateCls = isErr ? "err" : "msg";
+    paintState();
+    syncDotTitle();
   }
 
   function setConnected(isUp) {
@@ -72,7 +107,10 @@
     stateEl.title = isUp
       ? "Listening for jobs on 127.0.0.1:8771"
       : "Start ZeusPack, then keep this panel open";
+    syncDotTitle();
   }
+
+  dotBtn.addEventListener("click", function () { setStatusShown(!statusShown); });
 
   function log(msg, cls) {
     var line = document.createElement("div");
@@ -1557,11 +1595,14 @@
   var TOOLS_KEY    = "zae.toolsOpen";
   var COLLAPSE_KEY = "zae.groupCollapse";
 
+  var toolButtons = [groupBtn, ungroupBtn, recenterBtn, unprecompBtn];
+
   function runTool(fn, label, params) {
-    groupBtn.disabled = true; ungroupBtn.disabled = true; recenterBtn.disabled = true;
+    var i;
+    for (i = 0; i < toolButtons.length; i++) toolButtons[i].disabled = true;
     flash(label + "…");
     callHost(fn, params || {}, function (r) {
-      groupBtn.disabled = false; ungroupBtn.disabled = false; recenterBtn.disabled = false;
+      for (i = 0; i < toolButtons.length; i++) toolButtons[i].disabled = false;
       log(label + " → " + r.message, r.ok ? "ok" : "err");
       flash(r.ok ? (r.message || label + " ✓") : r.message, !r.ok);
     });
@@ -1578,6 +1619,9 @@
   recenterBtn.addEventListener("click", function () {
     runTool("zae_recenterGroup", "Recenter", {});
   });
+  unprecompBtn.addEventListener("click", function () {
+    runTool("zae_unPrecomp", "UnPrecomp", {});
+  });
 
   // Persisted — it is a per-taste setting, not a per-group one.
   if (collapseChk) {
@@ -1587,12 +1631,70 @@
     });
   }
 
+  // ── Tool strip width (drag handle) ───────────────────────────
+  // Mirrors the category rail, but the strip is on the RIGHT, so dragging left
+  // has to widen it — hence the inverted delta.
+  var TOOLS_MIN = 46, TOOLS_MAX = 170, TOOLS_DEFAULT = 74;
+  var TOOLS_W_KEY = "zae.toolsWidth";
+  var PRESETS_MIN = 120;   // the browser never gets squeezed below this
+
+  function applyToolsWidth(w) {
+    w = Math.max(TOOLS_MIN, Math.min(TOOLS_MAX, Math.round(Number(w) || TOOLS_DEFAULT)));
+    // Cap against the panel so dragging can't swallow the browser. The grip
+    // sits between them, so its width comes out of the budget too.
+    var avail = mainEl ? mainEl.clientWidth : 0;
+    var presetsOpen = presetsEl.className.indexOf("open") !== -1;
+    if (avail && presetsOpen) {
+      w = Math.min(w, Math.max(TOOLS_MIN, avail - PRESETS_MIN - GRIP_W));
+    }
+    document.documentElement.style.setProperty("--tools-w", w + "px");
+    return w;
+  }
+
+  function initToolsWidth() {
+    var saved = null;
+    try { saved = localStorage.getItem(TOOLS_W_KEY); } catch (e) {}
+    applyToolsWidth(saved === null ? TOOLS_DEFAULT : saved);
+
+    toolGrip.addEventListener("pointerdown", function (ev) {
+      ev.preventDefault();
+      closeMenu();
+      var startX = ev.clientX;
+      var startW = toolsEl.getBoundingClientRect().width;
+      toolGrip.className = "toolgrip open drag";
+
+      function onMove(e) { applyToolsWidth(startW - (e.clientX - startX)); }
+      function onUp() {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        toolGrip.className = "toolgrip open";
+        try {
+          localStorage.setItem(TOOLS_W_KEY, String(Math.round(toolsEl.getBoundingClientRect().width)));
+        } catch (e2) {}
+      }
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    });
+  }
+
+  // The wrapper is shown only while something inside it is open — an empty
+  // flex:1 row would otherwise hold the panel open at full height.
+  function syncMain() {
+    var presetsOpen = presetsEl.className.indexOf("open") !== -1;
+    var toolsOpen   = toolsEl.className.indexOf("open") !== -1;
+    mainEl.className = (presetsOpen || toolsOpen) ? "main open" : "main";
+  }
+
   function setToolsOpen(open) {
     toolsEl.className = open ? "tools open" : "tools";
+    toolGrip.className = open ? "toolgrip open" : "toolgrip";
     toolsBtn.className = open ? "ico lbl on" : "ico lbl";
     toolsBtn.title = open ? "Hide layer tools" : "Layer tools — group, ungroup, recenter";
     try { localStorage.setItem(TOOLS_KEY, open ? "1" : "0"); } catch (e) {}
+    syncMain();
     syncHeight();
+    // Re-clamp: the space available to the strip changed with the layout.
+    applyToolsWidth(toolsEl.getBoundingClientRect().width || TOOLS_DEFAULT);
   }
 
   toolsBtn.addEventListener("click", function () {
@@ -1609,18 +1711,19 @@
 
   // Height is driven by whichever sections are open; the browser is the tall
   // one, so it sets the baseline and the fixed-height rows add to it.
-  // One row of icon buttons now that the actions carry their labels in
-  // tooltips, so the section costs a single row's height.
-  var TOOLS_H = 32;
+  // The tool strip sits BESIDE the browser now, so it costs no height when the
+  // browser is open — it only sets the floor when it is the only thing showing.
+  var TOOLS_ONLY_H = 200;
 
   function syncHeight() {
     var presetsOpen = presetsEl.className.indexOf("open") !== -1;
     var toolsOpen   = toolsEl.className.indexOf("open") !== -1;
     var logOpen     = logEl.className.indexOf("open") !== -1;
 
-    var h = presetsOpen ? PRESETS_H : COLLAPSED_H;
-    if (toolsOpen) h += TOOLS_H;
-    if (logOpen)   h += presetsOpen ? 100 : (EXPANDED_H - COLLAPSED_H);
+    var h = presetsOpen ? PRESETS_H
+          : toolsOpen   ? TOOLS_ONLY_H
+          :               COLLAPSED_H;
+    if (logOpen) h += presetsOpen ? 100 : (EXPANDED_H - COLLAPSED_H);
     setPanelHeight(h);
   }
 
@@ -1641,7 +1744,10 @@
     presetsEl.className = open ? "presets open" : "presets";
     presetBtn.className = open ? "ico lbl on" : "ico lbl";
     presetBtn.title = open ? "Hide presets" : "Browse .ffx presets and .aep compositions";
+    syncMain();
     syncHeight();
+    // The strip shares the row with the browser, so its ceiling moved.
+    applyToolsWidth(toolsEl.getBoundingClientRect().width || TOOLS_DEFAULT);
     try { localStorage.setItem(PRESETS_KEY, open ? "1" : "0"); } catch (e) {}
     if (!open) return;
     if (deferScan) setTimeout(initPresets, 200);
@@ -1660,6 +1766,8 @@
 
   initCardSize();
   initCatsWidth();
+  initToolsWidth();
+  setStatusShown(statusShown);   // paints the saved choice onto the row
   setAutoplay(autoplayAll, false);
 
   // Tools start closed — the browser is the panel's main job. Set before the

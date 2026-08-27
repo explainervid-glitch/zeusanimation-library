@@ -31,6 +31,7 @@
        rendered preview fills the tile with nothing cropped. */
     --card-w:96px; --thumb-h:54px;
     --cats-w:84px;              /* category rail, dragged by its right edge */
+    --tools-w:74px;             /* tool strip, dragged by its left edge */
   }
 
   /* The grid's scrollbar is subtracted from the track area, so a fat default
@@ -60,9 +61,24 @@
   /* One compact status row: dot + state + actions. flex:0 0 auto so the row
      never stretches — collapsed, the body is exactly this tall. */
   .bar { flex:0 0 auto; display:flex; align-items:center; gap:7px; height:22px; }
+
+  /* Hit area for the dot. Transparent and borderless so the bar still reads as
+     "a dot", while giving the click something to land on. */
+  .dotbtn {
+    width:16px; height:16px; padding:0; flex-shrink:0;
+    display:inline-flex; align-items:center; justify-content:center;
+    background:transparent; border:0; cursor:pointer;
+  }
   .dot { width:8px; height:8px; border-radius:50%; background:var(--muted); flex-shrink:0; }
   .dot.ok { background:var(--ok); } .dot.err { background:var(--err); }
+  .dotbtn:hover .dot { box-shadow:0 0 0 3px rgba(108,140,255,.25); }
+
   .state { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--muted); }
+  /* Hidden by default: the dot's colour already carries connection state, and
+     its tooltip carries the words. `visibility` rather than `display` keeps the
+     element as the flex spacer, so hiding the text does not slide the toolbar
+     buttons left — the bar looks identical either way. */
+  .state.off { visibility:hidden; }
   .state b { color:var(--text); font-weight:600; }
   /* The row's text is set with textContent, never markup — it carries asset and
      folder names — so emphasis comes from these classes instead of a <b>. */
@@ -104,26 +120,71 @@
   .log .ok  { color:var(--ok); }
   .log .err { color:var(--err); }
 
-  /* ── Layer tools — collapsed until the Tools button is toggled ── */
-  .tools { display:none; flex:0 0 auto; flex-direction:column; gap:5px; }
-  .tools.open { display:flex; }
-  /* The primary action of the group, tinted so the eye lands on it first —
-     distinct from .ico.on, which means a toggle is currently switched on. */
-  .ico.pri { color:var(--accent); border-color:var(--accent); }
-  .ico.pri:hover { background:var(--accent); color:#fff; }
+  /* Preset browser + tool strip, side by side. Hidden outright when both are
+     closed — an empty flex:1 row would otherwise hold the panel open. */
+  .main { display:none; }
+  .main.open { display:flex; flex:1; min-height:0; min-width:0; gap:0; }
 
-  /* Checkbox / number rows: small enough to survive a 240px docked panel. */
+  /* ── Layer tools — a vertical strip on the right ── */
+  .tools {
+    display:none; flex:0 0 var(--tools-w); min-width:0;
+    flex-direction:column; gap:4px; overflow-y:auto;
+    background:#151515; border:1px solid var(--border); border-radius:5px;
+    padding:4px;
+  }
+  .tools.open { display:flex; }
+  .tools::-webkit-scrollbar { width:6px; }
+  .tools::-webkit-scrollbar-track { background:transparent; }
+  .tools::-webkit-scrollbar-thumb { background:#3f3f46; border-radius:99px; }
+
+  /* Drag handle on the strip's LEFT edge — wider than it looks so it is
+     actually grabbable, matching .catgrip. */
+  .toolgrip { display:none; flex:0 0 7px; position:relative; cursor:col-resize; }
+  .toolgrip.open { display:block; }
+  .toolgrip::after {
+    content:""; position:absolute; top:0; bottom:0; left:3px; width:1px;
+    background:transparent;
+  }
+  .toolgrip:hover::after, .toolgrip.drag::after { background:var(--accent); }
+
+  /* Tool buttons: icon over label, filling the strip's width so they grow with
+     it. Far bigger targets than the old 22px icons, and the label survives
+     because it is stacked rather than sitting beside the icon. */
+  .tbtn {
+    flex:0 0 auto; width:100%; min-height:42px;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    background:transparent; border:1px solid var(--border); border-radius:5px;
+    color:var(--muted); cursor:pointer; font:inherit; padding:5px 3px;
+  }
+  .tbtn:hover:not(:disabled) { color:var(--text); border-color:var(--accent); }
+  .tbtn:disabled { opacity:.4; cursor:default; }
+  .tbtn svg { width:18px; height:18px; display:block; }
+  /* margin rather than flex `gap` — that only landed in Chrome 84 and the
+     manifest still claims CEP 9. */
+  .tbtn span {
+    margin-top:3px; max-width:100%;
+    font-size:9px; font-weight:600; line-height:1;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  /* The primary action, tinted so the eye lands on it first — distinct from
+     .ico.on, which means a toggle is currently switched on. */
+  .tbtn.pri { color:var(--accent); border-color:var(--accent); }
+  .tbtn.pri:hover:not(:disabled) { background:var(--accent); color:#fff; }
+
+  /* Checkbox rows: small enough to survive a 240px docked panel. */
   .chk {
     display:flex; align-items:center; gap:4px;
     font-size:10px; color:var(--muted); cursor:pointer; white-space:nowrap;
   }
   .chk:hover { color:var(--text); }
   .chk input[type=checkbox] { margin:0; width:11px; height:11px; cursor:pointer; }
-  /* Pushed to the far end so the action icons stay grouped together. */
-  .tools .chk { margin-left:auto; }
+  /* Pinned to the bottom of the strip, below the actions. */
+  .tools .chk { margin-top:auto; padding:3px 1px 1px; justify-content:center; }
 
   /* ── Preset browser — hidden until the wand button is toggled ── */
-  .presets { display:none; flex:1; min-height:0; flex-direction:column; gap:5px; }
+  /* min-width:0 matters now that this is a flex item in a ROW: without it the
+     grid's content sets a floor and the tool strip cannot be dragged wider. */
+  .presets { display:none; flex:1; min-height:0; min-width:0; flex-direction:column; gap:5px; }
   .presets.open { display:flex; }
 
   .row { display:flex; align-items:center; gap:5px; flex:0 0 auto; }
@@ -346,8 +407,13 @@
 </head>
 <body>
   <div class="bar">
-    <span class="dot" id="dot"></span>
-    <span class="state" id="state">Connecting…</span>
+    <!-- The dot is the toggle for the status text beside it. Wrapped in a
+         button purely for the hit area: an 8px circle is too small to click,
+         but a bigger circle would shout louder than it deserves to. -->
+    <button class="dotbtn" id="dotBtn" title="Show status text">
+      <span class="dot" id="dot"></span>
+    </button>
+    <span class="state off" id="state">Connecting…</span>
 
     <!-- Test connection (icon only) -->
     <button class="ico" id="testBtn" title="Test: read active project">
@@ -384,32 +450,10 @@
     </button>
   </div>
 
-  <!-- ── Layer tools ── -->
-  <div class="tools" id="tools">
-    <div class="row">
-      <!-- Icon-only: the actions are few and their tooltips carry the detail,
-           which keeps the whole tools panel to a single row. -->
-      <button class="ico pri" id="groupBtn"
-              title="Quick Parent: Parent the selected layers to a null placed at their center">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-             stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" stroke-dasharray="4 3"/><rect x="8.5" y="8.5" width="7" height="7" rx="1"/></svg>
-      </button>
-      <button class="ico" id="ungroupBtn"
-              title="Clear Parent: Release the group's layers and delete its null">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-             stroke-linecap="round" stroke-linejoin="round"><rect x="8.5" y="8.5" width="7" height="7" rx="1"/><path d="M4 4l3 3M20 4l-3 3M4 20l3-3M20 20l-3-3"/></svg>
-      </button>
-      <button class="ico" id="recenterBtn"
-              title="Recenter: Move the group's null back to the center of its layers">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-             stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
-      </button>
-
-      <label class="chk" title="Shy the grouped layers so they collapse out of the timeline. Note that the shy switch is comp-wide.">
-        <input type="checkbox" id="collapseChk" /><span>Shy</span>
-      </label>
-    </div>
-  </div>
+  <!-- Preset browser and the tool strip sit side by side; the grip between
+       them resizes the strip. The wrapper is hidden outright when both are
+       closed, so an empty flex:1 row cannot hold the panel open. -->
+  <div class="main" id="main">
 
   <!-- ── Preset browser ── -->
   <div class="presets" id="presets">
@@ -453,6 +497,41 @@
               title="Apply the preset — entrance keyframes only">Apply In</button>
       <button class="btn" id="applyOutBtn" disabled
               title="Apply the entrance keyframes, then time-reverse them">Apply Out</button>
+    </div>
+  </div>
+
+    <!-- ── Layer tools ── -->
+    <div class="toolgrip" id="toolGrip" title="Drag to resize"></div>
+    <div class="tools" id="tools">
+      <button class="tbtn pri" id="groupBtn"
+              title="Quick Parent: Parent the selected layers to a null placed at their center">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+             stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" stroke-dasharray="4 3"/><rect x="8.5" y="8.5" width="7" height="7" rx="1"/></svg>
+        <span>Parent</span>
+      </button>
+      <button class="tbtn" id="ungroupBtn"
+              title="Clear Parent: Release the group's layers and delete its null">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+             stroke-linecap="round" stroke-linejoin="round"><rect x="8.5" y="8.5" width="7" height="7" rx="1"/><path d="M4 4l3 3M20 4l-3 3M4 20l3-3M20 20l-3-3"/></svg>
+        <span>UnParent</span>
+      </button>
+      <button class="tbtn" id="recenterBtn"
+              title="Recenter: Move the group's null back to the center of its layers">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+             stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
+        <span>Recenter</span>
+      </button>
+
+      <button class="tbtn" id="unprecompBtn"
+              title="UnPrecomp: Lift a precomp's layers back into this comp, keeping them where they looked. Each layer comes across whole — its own effects, masks, keyframes and expressions included. Only things applied TO the precomp layer (effects, masks, blend mode) cannot follow, because they act on the flattened result; those are named in the log.">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+             stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="1"/><path d="M14 4h6M17 1v6M14 20h6M17 17v6M4 14v6h6" stroke-dasharray="0"/><path d="M13 13l7 7"/></svg>
+        <span>UnPrecomp</span>
+      </button>
+
+      <label class="chk" title="Shy the grouped layers so they collapse out of the timeline. Note that the shy switch is comp-wide.">
+        <input type="checkbox" id="collapseChk" /><span>Shy</span>
+      </label>
     </div>
   </div>
 

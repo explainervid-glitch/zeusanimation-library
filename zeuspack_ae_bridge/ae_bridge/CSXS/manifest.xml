@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<ExtensionManifest Version="5.0" ExtensionBundleId="com.zeus.zeuspackaebridge" ExtensionBundleVersion="1.0.2"
+<ExtensionManifest Version="5.0" ExtensionBundleId="com.zeus.zeuspackaebridge" ExtensionBundleVersion="1.0.3"
     ExtensionBundleName="ZeusPack AE Bridge" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
     <ExtensionList>
-        <Extension Id="com.zeus.zeuspackaebridge.panel" Version="1.0.2" />
+        <Extension Id="com.zeus.zeuspackaebridge.panel" Version="1.0.3" />
     </ExtensionList>
     <ExecutionEnvironment>
         <HostList>

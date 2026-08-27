@@ -3546,6 +3546,639 @@ function zae_recenterGroup(params) {
     }
 }
 
+// ── UnPrecomp ────────────────────────────────────────────────────────────────
+// Lift a precomp's layers back into the comp around it, keeping them exactly
+// where they looked before.
+//
+// Two APIs carry this, and both are load-bearing:
+//
+//   copyToComp()        — moves a layer to another comp WITH its keyframes,
+//                         effects, masks and expressions intact. Rebuilding a
+//                         layer by hand cannot reproduce shape or text data, so
+//                         there is no fallback if this is unavailable.
+//
+//   setParentWithJump() — parents WITHOUT the transform compensation that
+//                         `layer.parent = x` applies. Normal parenting keeps a
+//                         layer visually still, which is exactly wrong here: the
+//                         inner layers hold precomp-space values that we WANT
+//                         reinterpreted through the precomp layer's transform.
+//                         Jumping is the whole mechanism.
+//
+// THE PRECOMP LAYER IS ALWAYS DELETED, and normally nothing replaces it:
+//
+//   identity + static  → nothing to do; the layers land where they were.
+//   static transform   → BAKED into the extracted layers' own values, so the
+//                        timeline is left completely clean. See the baking
+//                        block above for the maths.
+//   cannot bake exactly → a null carries the transform instead, and the log
+//                        says which of the three reasons applied: an animated
+//                        precomp transform, a 3D precomp layer, or a shear
+//                        (non-uniform precomp scale on a rotated layer). No
+//                        single AE layer transform can express those.
+function _transformProps(layer) {
+    var tg = _transformGroup(layer);
+    if (!tg) return [];
+    var out = [], names = ["ADBE Anchor Point", "ADBE Position", "ADBE Scale",
+                           "ADBE Rotate Z", "ADBE Rotate X", "ADBE Rotate Y",
+                           "ADBE Orientation", "ADBE Opacity",
+                           "ADBE Position_0", "ADBE Position_1", "ADBE Position_2"];
+    for (var i = 0; i < names.length; i++) {
+        var p = null;
+        try { p = tg.property(names[i]); } catch (e) { p = null; }
+        if (p) out.push({ name: names[i], prop: p });
+    }
+    return out;
+}
+
+// Copy one property's animation, or its static value, onto another.
+//
+// Ease is set BEFORE the interpolation type: setTemporalEaseAtKey() forces a key
+// to Bezier, so doing it the other way round silently discards Hold and Linear
+// keys. An expression is carried across rather than baked.
+function _copyPropAnimation(src, dst) {
+    var n = 0;
+    try { n = src.numKeys; } catch (e) { n = 0; }
+
+    var expr = "";
+    try { expr = src.expression || ""; } catch (e2) {}
+
+    if (!n) {
+        try { dst.setValue(src.value); } catch (e3) {}
+        if (expr) { try { dst.expression = expr; } catch (e4) {} }
+        return;
+    }
+
+    var spatial = false;
+    try {
+        var vt = src.propertyValueType;
+        spatial = (vt === PropertyValueType.TwoD_SPATIAL || vt === PropertyValueType.ThreeD_SPATIAL);
+    } catch (e5) {}
+
+    var i;
+    for (i = 1; i <= n; i++) {
+        try { dst.setValueAtTime(src.keyTime(i), src.keyValue(i)); } catch (e6) {}
+    }
+    var m = 0;
+    try { m = dst.numKeys; } catch (e7) { m = 0; }
+
+    for (i = 1; i <= n && i <= m; i++) {
+        try { dst.setTemporalEaseAtKey(i, src.keyInTemporalEase(i), src.keyOutTemporalEase(i)); } catch (e8) {}
+        try { dst.setInterpolationTypeAtKey(i, src.keyInInterpolationType(i), src.keyOutInterpolationType(i)); } catch (e9) {}
+        if (spatial) {
+            try { dst.setSpatialTangentsAtKey(i, src.keyInSpatialTangent(i), src.keyOutSpatialTangent(i)); } catch (eA) {}
+            try { dst.setRovingAtKey(i, src.keyRoving(i)); } catch (eB) {}
+            try { dst.setSpatialContinuousAtKey(i, src.keySpatialContinuous(i)); } catch (eC) {}
+            try { dst.setSpatialAutoBezierAtKey(i, src.keySpatialAutoBezier(i)); } catch (eD) {}
+        }
+        try { dst.setTemporalContinuousAtKey(i, src.keyTemporalContinuous(i)); } catch (eE) {}
+        try { dst.setTemporalAutoBezierAtKey(i, src.keyTemporalAutoBezier(i)); } catch (eF) {}
+    }
+    if (expr) { try { dst.expression = expr; } catch (eG) {} }
+}
+
+// ── Baking the precomp layer's transform into the layers themselves ─────────
+// The clean result: no null, no leftover layer, the extracted layers simply
+// carry the transform in their own values.
+//
+// AE composes a layer as  v -> p + L.(v - a),  L = R(rotation).S(scale).
+// Nesting gives:
+//     v -> Pp + L_P.(Cp - Pa)  +  L_P.L_C.(v - Ca)
+// which is a single layer transform with
+//     anchor   = Ca                    (unchanged)
+//     position = Pp + L_P.(Cp - Pa)
+//     rotation = Cr + Pr
+//     scale    = Cs * Ps / 100
+//
+// That identity only holds while L_P.L_C stays a rotation-and-scale. A
+// NON-UNIFORM precomp scale combined with a rotated child produces a shear,
+// which no single AE layer transform can express — that case, and an animated
+// precomp transform (where the composition is time-varying), fall back to a
+// null carrier instead of silently producing something wrong.
+//
+// Only ROOTS are baked: a layer parented to another extracted layer already
+// inherits the correction through its parent.
+function _bakeInfo(P, t) {
+    var Pa  = _v2(_propAt(P, "ADBE Anchor Point", t, [0, 0]), [0, 0]);
+    var Pp  = _positionAt(P, t);
+    var Ps  = _v2(_propAt(P, "ADBE Scale", t, [100, 100]), [100, 100]);
+    var Pr  = Number(_propAt(P, "ADBE Rotate Z", t, 0)) || 0;
+    var rad = Pr * Math.PI / 180;
+    return {
+        a: Pa, p: Pp, s: Ps, r: Pr,
+        cos: Math.cos(rad), sin: Math.sin(rad),
+        uniform: Math.abs(Ps[0] - Ps[1]) < 0.001
+    };
+}
+
+// Linear part only — for tangents and other direction vectors.
+function _mapVec(info, v) {
+    var x = (Number(v[0]) || 0) * info.s[0] / 100;
+    var y = (Number(v[1]) || 0) * info.s[1] / 100;
+    var out = [x * info.cos - y * info.sin, x * info.sin + y * info.cos];
+    if (v.length > 2) out.push(Number(v[2]) || 0);   // Z passes through untouched
+    return out;
+}
+
+function _mapPoint(info, v) {
+    var d = _mapVec(info, [(Number(v[0]) || 0) - info.a[0], (Number(v[1]) || 0) - info.a[1]]);
+    var out = [info.p[0] + d[0], info.p[1] + d[1]];
+    if (v.length > 2) out.push(Number(v[2]) || 0);
+    return out;
+}
+
+// Rewrite every value of a property through `fn`, keyframes included, keeping
+// the key times and their shaping. `vecFn` maps spatial tangents, which are
+// directions rather than points.
+function _bakeProp(prop, fn, vecFn) {
+    if (!prop) return;
+    var n = 0;
+    try { n = prop.numKeys; } catch (e) { return; }
+
+    if (!n) {
+        try { prop.setValue(fn(prop.value)); } catch (e2) {}
+        return;
+    }
+
+    // Read everything first: rewriting values in place can reset the shaping.
+    var keys = [], i;
+    for (i = 1; i <= n; i++) {
+        var k = {};
+        try { k.t = prop.keyTime(i); } catch (e3) { continue; }
+        try { k.v = fn(prop.keyValue(i)); } catch (e4) { continue; }
+        try { k.ie = prop.keyInTemporalEase(i);  k.oe = prop.keyOutTemporalEase(i); } catch (e5) {}
+        try { k.ii = prop.keyInInterpolationType(i); k.oi = prop.keyOutInterpolationType(i); } catch (e6) {}
+        if (vecFn) {
+            try { k.it = vecFn(prop.keyInSpatialTangent(i)); k.ot = vecFn(prop.keyOutSpatialTangent(i)); } catch (e7) {}
+            try { k.rov = prop.keyRoving(i); } catch (e8) {}
+        }
+        keys.push(k);
+    }
+
+    for (i = 0; i < keys.length; i++) {
+        try { prop.setValueAtTime(keys[i].t, keys[i].v); } catch (e9) {}
+    }
+    for (i = 0; i < keys.length; i++) {
+        var idx = i + 1;
+        try { if (keys[i].ie && keys[i].oe) prop.setTemporalEaseAtKey(idx, keys[i].ie, keys[i].oe); } catch (eA) {}
+        try { if (keys[i].ii !== undefined) prop.setInterpolationTypeAtKey(idx, keys[i].ii, keys[i].oi); } catch (eB) {}
+        if (vecFn) {
+            try { if (keys[i].it && keys[i].ot) prop.setSpatialTangentsAtKey(idx, keys[i].it, keys[i].ot); } catch (eC) {}
+            try { if (keys[i].rov !== undefined) prop.setRovingAtKey(idx, keys[i].rov); } catch (eD) {}
+        }
+    }
+}
+
+// Why this layer cannot be baked, or "" when it can.
+function _bakeBlocker(info, layer) {
+    var rot = 0, rotKeys = 0;
+    try { rot = Number(_propAt(layer, "ADBE Rotate Z", 0, 0)) || 0; } catch (e) {}
+    try {
+        var rp = _transformGroup(layer).property("ADBE Rotate Z");
+        rotKeys = rp ? rp.numKeys : 0;
+    } catch (e2) {}
+    var rotated = (Math.abs(rot) > 0.001) || rotKeys > 0;
+    if (!info.uniform && rotated) {
+        return "a non-uniform precomp scale combined with a rotated layer is a shear";
+    }
+    return "";
+}
+
+function _bakeLayer(info, layer) {
+    var tg = _transformGroup(layer);
+    if (!tg) return;
+
+    var sep = false;
+    try { sep = !!tg.property("ADBE Position").dimensionsSeparated; } catch (e) {}
+    if (sep) {
+        // Separated components cannot be mapped independently — the mapping
+        // mixes X and Y. Rejoin them so the composite can be rewritten.
+        try { tg.property("ADBE Position").dimensionsSeparated = false; } catch (e2) {}
+    }
+
+    _bakeProp(tg.property("ADBE Position"),
+              function (v) { return _mapPoint(info, v); },
+              function (v) { return _mapVec(info, v); });
+
+    if (Math.abs(info.r) > 0.001) {
+        _bakeProp(tg.property("ADBE Rotate Z"),
+                  function (v) { return (Number(v) || 0) + info.r; }, null);
+    }
+    if (Math.abs(info.s[0] - 100) > 0.001 || Math.abs(info.s[1] - 100) > 0.001) {
+        _bakeProp(tg.property("ADBE Scale"), function (v) {
+            var out = [(Number(v[0]) || 0) * info.s[0] / 100,
+                       (Number(v[1]) || 0) * info.s[1] / 100];
+            if (v.length > 2) out.push(Number(v[2]) || 0);
+            return out;
+        }, null);
+    }
+}
+
+// Reproduce the precomp layer's transform on a null, so the precomp layer can be
+// DELETED rather than left muted in the timeline.
+//
+// AE composes a layer as  M = T(position) . R(rotation) . S(scale) . T(-anchor),
+// and a child parented to N lands at  M_N . M_child. So M_N only has to equal
+// M_P: copying position, anchor, scale and rotation across is exact, and the
+// null's own 100x100 size never enters the maths.
+//
+// The trap that broke the first attempt: the transform group exposes BOTH the
+// composite "ADBE Position" and the separated "ADBE Position_0/1/2". Writing
+// them in sequence let the components overwrite the composite with meaningless
+// values, which is what put everything at the wrong place. Exactly one of the
+// two is written here, decided by dimensionsSeparated.
+function _carryTransform(P, N) {
+    try { N.threeDLayer = !!P.threeDLayer; } catch (e) {}
+
+    var src = _transformGroup(P), dst = _transformGroup(N);
+    if (!src || !dst) return false;
+
+    var sep = false;
+    try { sep = !!src.property("ADBE Position").dimensionsSeparated; } catch (e1) {}
+
+    if (sep) {
+        try { dst.property("ADBE Position").dimensionsSeparated = true; } catch (e2) {}
+        var comps = ["ADBE Position_0", "ADBE Position_1", "ADBE Position_2"];
+        for (var c = 0; c < comps.length; c++) {
+            var sc = null, dc = null;
+            try { sc = src.property(comps[c]); dc = dst.property(comps[c]); } catch (e3) {}
+            if (sc && dc) _copyPropAnimation(sc, dc);
+        }
+    } else {
+        var sp = null, dp = null;
+        try { sp = src.property("ADBE Position"); dp = dst.property("ADBE Position"); } catch (e4) {}
+        if (sp && dp) _copyPropAnimation(sp, dp);
+    }
+
+    // Opacity is deliberately absent: it is not inherited through parenting, so
+    // putting it on the carrier would do nothing. It is reported instead.
+    var names = ["ADBE Anchor Point", "ADBE Scale", "ADBE Rotate Z"];
+    var is3d = false;
+    try { is3d = !!P.threeDLayer; } catch (e5) {}
+    if (is3d) names = names.concat(["ADBE Rotate X", "ADBE Rotate Y", "ADBE Orientation"]);
+
+    for (var i = 0; i < names.length; i++) {
+        var s2 = null, d2 = null;
+        try { s2 = src.property(names[i]); d2 = dst.property(names[i]); } catch (e6) { continue; }
+        if (s2 && d2) _copyPropAnimation(s2, d2);
+    }
+    return true;
+}
+
+// Animated in any sense that a static copy would lose.
+function _transformAnimated(layer) {
+    var list = _transformProps(layer);
+    for (var i = 0; i < list.length; i++) {
+        var p = list[i].prop;
+        try { if (p.numKeys > 0) return true; } catch (e) {}
+        try { if (p.expression && p.expressionEnabled) return true; } catch (e2) {}
+    }
+    return false;
+}
+
+// Does this layer's transform map its source 1:1 into the parent comp?
+function _isIdentityTransform(layer, t) {
+    var eps = 0.001;
+    var pos = _positionAt(layer, t);
+    var anc = _v2(_propAt(layer, "ADBE Anchor Point", t, [0, 0]), [0, 0]);
+    var scl = _v2(_propAt(layer, "ADBE Scale", t, [100, 100]), [100, 100]);
+    var rot = Number(_propAt(layer, "ADBE Rotate Z", t, 0)) || 0;
+    var op  = Number(_propAt(layer, "ADBE Opacity", t, 100));
+    if (isNaN(op)) op = 100;
+
+    var is3d = false;
+    try { is3d = !!layer.threeDLayer; } catch (e) {}
+
+    return !is3d
+        && Math.abs(scl[0] - 100) < eps && Math.abs(scl[1] - 100) < eps
+        && Math.abs(rot) < eps
+        && Math.abs(op - 100) < eps
+        && Math.abs(pos[0] - anc[0]) < eps
+        && Math.abs(pos[1] - anc[1]) < eps;
+}
+
+// Copy one layer into `comp` and hand back the copy — located by MARKER, never
+// by index.
+//
+// copyToComp() does not document where the copy lands, and assuming index 1 is
+// what scrambled the layer order and left most layers unparented: the captured
+// references pointed at the wrong layers, so the reorder and the parenting were
+// both operating on the wrong things.
+//
+// Layer.comment is the marker because it is invisible in the timeline, is
+// carried by the copy, and is not something a layer's identity depends on. It
+// is restored on both sides immediately.
+function _copyLayerInto(src, comp) {
+    var marker = "__zp_copy_" + (new Date()).getTime() + "_" + Math.floor(Math.random() * 1e9);
+
+    var srcComment = "";
+    try { srcComment = String(src.comment || ""); } catch (e) {}
+    var tagged = false;
+    try { src.comment = marker; tagged = true; } catch (e2) {}
+
+    try { src.copyToComp(comp); }
+    catch (e3) {
+        if (tagged) { try { src.comment = srcComment; } catch (e4) {} }
+        return null;
+    }
+
+    var found = null;
+    for (var i = 1; i <= comp.numLayers; i++) {
+        var L = comp.layer(i), c = "";
+        try { c = String(L.comment || ""); } catch (e5) { continue; }
+        if (c === marker) { found = L; break; }
+    }
+
+    if (tagged) { try { src.comment = srcComment; } catch (e6) {} }
+    if (found)  { try { found.comment = srcComment; } catch (e7) {} }
+
+    // Marker missing means the comment did not survive the copy; fall back to
+    // the documented-by-convention position rather than giving up.
+    if (!found) { try { found = comp.layer(1); } catch (e8) { found = null; } }
+    return found;
+}
+
+// Everything about the precomp LAYER that cannot follow its contents out.
+//
+// To be clear about what this is NOT: effects and masks on the layers INSIDE
+// the precomp travel perfectly — copyToComp() brings each layer across whole.
+// What is listed here is only what was applied to the precomp layer itself.
+//
+// Those cannot be redistributed because they act on the FLATTENED result of
+// everything inside. Blurring the composite and blurring each layer before
+// compositing are different images; the same goes for a mask that clips the
+// composite, and for a blend mode or opacity that describes how that composite
+// meets the layers below. That is a compositing fact rather than a scripting
+// limit — it is the reason precomps exist — so the honest move is to name them.
+function _unPrecompWarnings(P, S, comp) {
+    var w = [];
+    function has(group) {
+        var g = null;
+        try { g = P.property(group); } catch (e) { return false; }
+        try { return !!g && g.numProperties > 0; } catch (e2) { return false; }
+    }
+    if (has("ADBE Effect Parade")) w.push("effects applied TO the precomp layer");
+    if (has("ADBE Mask Parade"))   w.push("masks applied TO the precomp layer");
+    if (has("ADBE Layer Styles"))  w.push("layer styles on the precomp layer");
+
+    try { if (P.blendingMode !== BlendingMode.NORMAL) w.push("blend mode"); } catch (e1) {}
+    try { if (P.trackMatteType && P.trackMatteType !== TrackMatteType.NO_TRACK_MATTE) w.push("track matte"); } catch (e2) {}
+    try { if (P.timeRemapEnabled) w.push("time remapping"); } catch (e3) {}
+    try { if (Math.abs(P.stretch - 100) > 0.001) w.push("time stretch"); } catch (e4) {}
+    try { if (Math.abs(P.startTime) > 0.0001) w.push("a shifted start time"); } catch (e5) {}
+    try { if (P.collapseTransformation) w.push("collapse transformations"); } catch (e6) {}
+    try {
+        var op = Number(_propAt(P, "ADBE Opacity", comp.time, 100));
+        if (!isNaN(op) && Math.abs(op - 100) > 0.001) w.push("layer opacity (not inherited by parenting)");
+    } catch (e7) {}
+    try {
+        if (Math.abs(S.frameRate - comp.frameRate) > 0.001) w.push("a different frame rate");
+    } catch (e8) {}
+    return w;
+}
+
+function _layerIndexIn(list, layer) {
+    if (!layer) return -1;
+    for (var i = 0; i < list.length; i++) {
+        if (list[i].index === layer.index) return i;
+    }
+    return -1;
+}
+
+// Track mattes, re-pointed at the copies.
+//
+// Two eras of the API, and both need handling:
+//
+//   AE 23+     the matte is an EXPLICIT layer reference (trackMatteLayer). A
+//              copy still points at the layer inside the precomp, or at nothing,
+//              so it has to be re-linked to the corresponding copy by hand.
+//   older AE   the matte is implicit — whatever layer sits directly above. The
+//              reordering above already reproduces that, so only the type needs
+//              setting.
+//
+// The video switch is restored last and separately. AE turns a matte layer's
+// video off when it becomes a matte, and flips it as mattes are assigned, so
+// copying the original's `enabled` beforehand would just be overwritten.
+function _restoreTrackMattes(inner, copies) {
+    var res = { linked: 0, failed: 0 };
+    var i;
+
+    for (i = 0; i < copies.length; i++) {
+        if (!copies[i]) continue;
+        var o = inner[i], c = copies[i];
+
+        var tt = null;
+        try { tt = o.trackMatteType; } catch (e1) { tt = null; }
+        if (tt === null || tt === undefined) continue;
+
+        var noMatte = false;
+        try { noMatte = (tt === TrackMatteType.NO_TRACK_MATTE); } catch (e2) {}
+        if (noMatte) continue;
+
+        // Explicit reference first, where the version offers one.
+        var ml = null;
+        try { ml = o.trackMatteLayer; } catch (e3) { ml = null; }
+        var mi = _layerIndexIn(inner, ml);
+
+        if (mi >= 0 && copies[mi]) {
+            var ok = false;
+            try { c.setTrackMatte(copies[mi], tt); ok = true; } catch (e4) {}
+            if (!ok) {
+                try { c.trackMatteLayer = copies[mi]; c.trackMatteType = tt; ok = true; } catch (e5) {}
+            }
+            if (ok) { res.linked++; continue; }
+            res.failed++;
+            continue;
+        }
+
+        // No explicit reference: adjacency carries it.
+        try { c.trackMatteType = tt; res.linked++; } catch (e6) { res.failed++; }
+    }
+
+    // Final pass so the switches end up as they were inside the precomp.
+    for (i = 0; i < copies.length; i++) {
+        if (!copies[i]) continue;
+        try { copies[i].enabled = inner[i].enabled; } catch (e7) {}
+    }
+    return res;
+}
+
+function zae_unPrecomp(params) {
+    try {
+        params = params || {};
+
+        var comp = app.project ? app.project.activeItem : null;
+        if (!(comp instanceof CompItem)) return _result(false, "Open a composition first.");
+
+        var sel = comp.selectedLayers;
+        if (!sel || !sel.length) return _result(false, "Select a precomp layer.");
+
+        // Snapshot the targets before anything is added to the comp.
+        var targets = [], i;
+        for (i = 0; i < sel.length; i++) {
+            var src = null;
+            try { src = sel[i].source; } catch (e) { src = null; }
+            if (src && (src instanceof CompItem)) targets.push(sel[i]);
+        }
+        if (!targets.length) {
+            return _result(false, "No precomp in the selection — select a layer whose source is a composition.");
+        }
+
+        var t = 0;
+        try { t = comp.time; } catch (eT) {}
+
+        app.beginUndoGroup("ZeusPack: UnPrecomp");
+        var totalOut = 0, done = [], warned = {}, carriers = [], empties = [];
+        var mattes = 0, matteFails = 0, baked = 0, bakeStops = {};
+        try {
+            for (var n = 0; n < targets.length; n++) {
+                var P = targets[n];
+                var S = P.source;
+                var pname = String(P.name || "");
+
+                var inner = [];
+                for (i = 1; i <= S.numLayers; i++) inner.push(S.layer(i));
+                if (!inner.length) { empties.push(pname); continue; }
+
+                var w = _unPrecompWarnings(P, S, comp);
+                for (i = 0; i < w.length; i++) warned[w[i]] = true;
+
+                // Pick the transform carrier.
+                var identity = _isIdentityTransform(P, t) && !_transformAnimated(P);
+                var animated = _transformAnimated(P);
+
+                // Copy TOP-DOWN, moving each copy into place immediately.
+                //
+                // Nothing here assumes where copyToComp drops the copy: it is
+                // located by a marker (below) and moved straight to just above
+                // P. Because each moveBefore() inserts directly above P, walking
+                // top-to-bottom rebuilds the original stacking exactly, and no
+                // index arithmetic compounds across iterations.
+                var copies = [];
+                for (i = 0; i < inner.length; i++) {
+                    var made = _copyLayerInto(inner[i], comp);
+                    copies[i] = made;
+                    if (made) { try { made.moveBefore(P); } catch (eO) {} }
+                }
+
+                // Rebuild parenting INSIDE the extracted set first. A layer
+                // parented to another extracted layer keeps that relationship
+                // and inherits the correction through it, so only the ROOTS need
+                // the precomp transform applied to them.
+                var roots = [];
+                for (i = 0; i < copies.length; i++) {
+                    if (!copies[i]) continue;
+                    var op = null;
+                    try { op = inner[i].parent; } catch (eP) { op = null; }
+                    var pi = _layerIndexIn(inner, op);
+                    if (pi >= 0 && copies[pi]) {
+                        try { copies[i].setParentWithJump(copies[pi]); } catch (eJ) {}
+                    } else {
+                        roots.push(copies[i]);
+                    }
+                    totalOut++;
+                }
+
+                // Now apply the precomp layer's transform to those roots.
+                //
+                // Preferred: BAKE it into their own values, which leaves nothing
+                // behind at all. A null is only built when baking cannot be
+                // exact — an animated precomp transform, a 3D precomp layer, or
+                // a shear — and the reason is reported rather than guessed at.
+                var carrier = null, bakeStop = "";
+                if (!identity) {
+                    var is3dP = false;
+                    try { is3dP = !!P.threeDLayer; } catch (e3d) {}
+
+                    if (animated)      bakeStop = "the precomp layer's transform is animated";
+                    else if (is3dP)    bakeStop = "the precomp layer is 3D";
+                    else {
+                        var info = _bakeInfo(P, t);
+                        for (i = 0; i < roots.length && !bakeStop; i++) {
+                            bakeStop = _bakeBlocker(info, roots[i]);
+                        }
+                        if (!bakeStop) {
+                            for (i = 0; i < roots.length; i++) _bakeLayer(info, roots[i]);
+                            baked++;
+                        }
+                    }
+
+                    if (bakeStop) {
+                        carrier = comp.layers.addNull(comp.duration);
+                        try { carrier.name = pname + " Transform"; } catch (eN) {}
+                        _carryTransform(P, carrier);
+                        for (i = 0; i < roots.length; i++) {
+                            try { roots[i].setParentWithJump(carrier); } catch (eK) {}
+                        }
+                        bakeStops[bakeStop] = true;
+                    }
+                }
+
+                var tm = _restoreTrackMattes(inner, copies);
+                mattes += tm.linked;
+                matteFails += tm.failed;
+
+                // Drop the carrier into the slot the precomp layer occupied, so
+                // the extracted block stays contiguous above it.
+                if (carrier) {
+                    try { carrier.moveBefore(P); } catch (eM) {}
+                    carriers.push(carrier.name);
+                }
+                try { P.remove(); } catch (eD) {}
+                done.push(pname);
+            }
+        } finally {
+            app.endUndoGroup();
+        }
+
+        if (!done.length) {
+            return _result(false, empties.length
+                ? "Nothing to extract — " + empties.join(", ") + " has no layers."
+                : "Nothing was extracted.");
+        }
+
+        var msg = "UnPrecomped " + done.join(", ") + " — " + totalOut + " layer"
+                + (totalOut === 1 ? "" : "s") + " lifted out in their original order";
+        if (mattes)     msg += ", " + mattes + " track matte" + (mattes === 1 ? "" : "s") + " relinked";
+        if (matteFails) msg += ", " + matteFails + " track matte" + (matteFails === 1 ? "" : "s") + " could not be relinked";
+        msg += "; precomp layer deleted";
+        if (baked) {
+            msg += ", its transform baked into the layers (nothing left behind)";
+        }
+        if (carriers.length) {
+            var stops = [];
+            for (var bs in bakeStops) if (bakeStops.hasOwnProperty(bs)) stops.push(bs);
+            msg += ", but " + carriers.join(", ") + " had to stay as a transform carrier"
+                 + (stops.length ? " because " + stops.join("; ") : "")
+                 + " — baking it into the layers would not have been exact";
+        }
+        if (!baked && !carriers.length) msg += ", no transform to carry";
+        if (empties.length) msg += "; skipped (empty): " + empties.join(", ");
+
+        var wlist = [];
+        for (var k in warned) if (warned.hasOwnProperty(k)) wlist.push(k);
+        if (wlist.length) {
+            msg += ". Effects and masks on the layers INSIDE came across intact"
+                 + " — but these were applied TO the precomp layer and could not follow: "
+                 + wlist.join(", ")
+                 + ". They act on the flattened result of everything inside, which has no"
+                 + " per-layer equivalent (blurring each layer is not the same as blurring"
+                 + " the composite). Re-apply by hand, or undo if the render changed.";
+        } else {
+            msg += ". Nothing was left behind — the precomp layer had no effects, masks or"
+                 + " blend mode of its own.";
+        }
+
+        return _result(true, msg, {
+            precomps: done, layers: totalOut, carriers: carriers,
+            empty: empties, notCarried: wlist,
+            trackMattes: mattes, trackMattesFailed: matteFails, baked: baked
+        });
+    } catch (e) {
+        try { app.endUndoGroup(); } catch (e9) {}
+        return _result(false, "Exception: " + e.toString());
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  SELF-UPDATE
 // ═══════════════════════════════════════════════════════════════

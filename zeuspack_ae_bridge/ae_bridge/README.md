@@ -1,14 +1,16 @@
 # ZeusPack AE Bridge
 
-A CEP panel for Adobe After Effects. It does two separate jobs:
+A CEP panel for Adobe After Effects. It does three separate jobs:
 
 1. **Bridge** — connects After Effects to the ZeusPack desktop app so the app can
    drive AE (import an `.aep`, list its comps, and so on).
 2. **Preset browser** — browses, previews, applies, authors and exports `.ffx`
-   animation presets and `.aep` compositions, with video thumbnails in a grid.
+   presets, `.zfx` presets and `.aep` compositions, with video thumbnails in a
+   grid.
+3. **Layer tools** — grouping without a pre-comp, and UnPrecomp.
 
-The bridge half runs whether or not you ever open the browser. The browser half
-works with After Effects alone and does not need ZeusPack running.
+The bridge half runs whether or not you ever open the browser. The browser and
+the tools work with After Effects alone and do not need ZeusPack running.
 
 ---
 
@@ -57,8 +59,9 @@ Intro Scene.aep  the composition               ← the asset
 Intro Scene.mp4  its preview
 ```
 
-Cards are badged by kind: amber **`FX`** for a preset, blue **`Comp`** for a
-composition, plus **`no preview`** when the preview file is missing.
+Cards are badged by kind: amber **`FX`** for a plain `.ffx` preset, green
+**`FX+`** for a [`.zfx`](#the-zfx-format), blue **`Comp`** for a composition,
+plus **`no preview`** when the preview file is missing.
 
 Preview files may be `.mp4`, `.webm`, `.png`, `.jpg`, `.jpeg` or `.gif`. Video
 previews loop in the grid.
@@ -143,6 +146,12 @@ categories.json → removed Text (folder no longer on disk)
 This is why folders deleted outside the panel need one Refresh to disappear from
 the rail.
 
+**Refresh keeps the category you had selected**, as does every rescan that
+follows a rename, move, delete or export — only a genuine root change clears it.
+The one exception is a category that has since gone from disk: leaving that
+selected would filter the grid to nothing with no highlighted row to explain
+why, so it falls back to *All presets*.
+
 It is deliberately *not* automatic. Every other reload — after a rename, move,
 delete or root switch — leaves the manifest untouched. On a shared network root a
 category that is momentarily unreachable would otherwise be silently dropped from
@@ -176,6 +185,11 @@ Transitions      1
 - **Clicking the rail's empty space clears the filter**, the same as clicking
   *All presets* — the background belongs to no folder, so nothing stays
   highlighted there.
+- **A row with children gets a ▾/▸ toggle** before its name; rows without get an
+  invisible spacer so the labels still line up. The toggle owns its own click,
+  so collapsing a folder never changes which category is selected. Collapsing
+  hides everything nested under it at any depth, and the count still rolls up,
+  so you can see something is in there without expanding.
 - Dropping a card on any row, at any depth, moves the asset there.
 
 ### Right-click the category rail
@@ -206,10 +220,20 @@ a top-level category removes it from `categories.json` too.
 
 | Control | What it does |
 |---|---|
-| ● dot + label | ZeusPack connection (polls `127.0.0.1:8771`) |
+| ● dot | ZeusPack connection (polls `127.0.0.1:8771`). **Click to toggle the status text** |
 | ▶ | Test: read the active AE project |
-| ✦ | Show/hide the preset browser |
-| ☰ | Show/hide the log |
+| ✦ Presets | Show/hide the preset browser |
+| ⧉ Tools | Show/hide the [layer tools](#layer-tools) |
+| ☰ Log | Show/hide the log |
+
+The status text is **hidden by default** — the dot's colour already carries the
+connection state, and its tooltip carries the words, so the last message is
+readable on hover without opening the log. Clicking the dot reveals the text;
+the choice persists.
+
+Hiding the text does not move the buttons. The row uses `visibility` rather than
+`display`, so the text still acts as the flex spacer and the toolbar stays put
+either way.
 
 ### Browser
 
@@ -293,9 +317,10 @@ directory ordering.
 
 | Item | Notes |
 |---|---|
-| Save Animation as Preset… | Saves the current AE selection into the selected category |
-| Save Comp as Preset… | Runs Collect Files on the open project and files the result as a bundle |
-| Add Asset… | New `<name>.aep` at 1920×1080 @ 30fps in the selected category |
+| Save Animation+ (.zfx) | The AE selection as a [`.zfx`](#the-zfx-format) — embeds AE’s own preset data and captures expressions on top |
+| Save Animation (.ffx) | The AE selection as a plain AE preset. No expression capture, but it opens in anyone’s After Effects |
+| Save Animation Comp (.aep) | Runs Collect Files on the open project and files the result as a bundle |
+| Add Asset (New Project) | New `<name>.aep` at 1920×1080 @ 30fps in the selected category |
 | Reveal in Explorer | Opens the current preset folder |
 
 Folder creation and renaming live on the rail's own right-click menu.
@@ -335,6 +360,127 @@ Notes:
   after the project file, so one project = one preset.
 - If the category already holds a folder of that name, the panel refuses before
   opening the dialog rather than guessing which folder is the new one.
+
+---
+
+## Layer tools
+
+A vertical strip to the right of the browser, toggled by **Tools** in the status
+bar. Drag its left edge to resize it; the width persists. These act on After
+Effects' own selection, so there is nothing to pick in the panel.
+
+| Button | What it does |
+|---|---|
+| **Parent** | Parents the selected layers to a null placed at their centre |
+| **Clear** | Releases a group's layers and deletes its null |
+| **Recenter** | Moves a group's null back to the centre of its layers, without moving them |
+| **UnPrecomp** | Lifts a precomp's layers back into the comp around it |
+| Shy | Whether *Parent* also shys the layers it collects |
+
+### Group without a pre-comp
+
+*Parent* is grouping that does not nest anything into another timeline: a null
+at the centre of the selection, with the selection parented to it. Scaling or
+rotating the null moves the whole set.
+
+The null is **tagged through `Layer.comment`**, which is a plain settable string
+that survives save/load and stays invisible unless the Comment column is shown.
+Membership is deliberately *not* stored — "who is parented to this null" **is**
+the membership, so it cannot drift out of sync the way a saved index list would.
+
+**Only the roots of the selection are reparented.** If A is parented to B and
+both are selected, only B moves under the null; otherwise grouping would flatten
+the hierarchy you already had.
+
+The centre comes from the **union bounding box**, not the average of the layers'
+origins — two layers of very different sizes centre on what you can see, not
+midway between their anchor points. `sourceRectAtTime()` gives each layer's rect
+in its own space, and every corner is walked through that layer's transform and
+all its parents to reach comp space. (`toComp()` is expression-language only;
+there is no ExtendScript equivalent, so the matrix walk is done by hand.)
+
+When nothing has a measurable rect — all-3D, cameras, lights — it falls back to
+averaging the layers' positions rather than failing, and the log says which
+route it used. 3D layers are still grouped; they just do not contribute to the
+box, and they are named in the log.
+
+*Recenter* exists because the null is placed **at group time**: move the children
+afterwards and the handle is left off to one side of what it controls. It
+detaches the children, moves the null, and reattaches — parenting preserves the
+world transform in both directions, so nothing of theirs moves.
+
+### UnPrecomp
+
+Lifts a precomp's layers back into the comp around it, keeping them exactly where
+they looked. **The precomp layer is always deleted**, and normally nothing
+replaces it.
+
+Two After Effects APIs carry this, and both are load-bearing:
+
+- **`copyToComp()`** moves a layer to another comp *with* its keyframes, effects,
+  masks and expressions. There is no fallback — a layer rebuilt by hand cannot
+  reproduce shape or text data.
+- **`setParentWithJump()`** parents *without* the compensation `layer.parent = x`
+  applies. Normal parenting keeps a layer visually still, which is exactly
+  backwards here: the inner layers hold precomp-space values that need
+  reinterpreting through the precomp layer's transform.
+
+#### Where the transform goes
+
+| Precomp layer transform | Result |
+|---|---|
+| Identity + static | Nothing to do — the layers land where they were |
+| Any other static transform | **Baked** into the extracted layers' own values. Timeline left clean |
+| Cannot be baked exactly | A null carries it instead, and the log says which of three reasons applied |
+
+Baking works because nesting composes to a single layer transform:
+
+```
+v → Pp + L_P·(Cp − Pa) + L_P·L_C·(v − Ca)          L = R(rotation)·S(scale)
+
+anchor   = Ca  (unchanged)      rotation = Cr + Pr
+position = Pp + L_P·(Cp − Pa)   scale    = Cs × Ps / 100
+```
+
+Only **roots** are baked — a layer parented to another extracted layer already
+inherits the correction through its parent. Keyframes are mapped individually,
+keeping their times, easing and interpolation; spatial tangents go through the
+linear part only, being directions rather than points.
+
+That identity holds only while `L_P·L_C` stays a rotation-and-scale. Three cases
+break it and fall back to a null rather than silently producing something wrong:
+
+- an **animated** precomp transform (the composition is time-varying),
+- a **3D** precomp layer (needs the camera),
+- a **shear** — non-uniform precomp scale on a *rotated* layer. Non-uniform scale
+  on an *unrotated* layer bakes fine.
+
+#### What survives, and what cannot
+
+Stacking order, track mattes and parenting between the extracted layers are all
+rebuilt. Copies are located by a temporary `Layer.comment` marker rather than by
+index — `copyToComp()` does not document where it drops the copy, and assuming a
+position scrambles the order and leaves layers unparented.
+
+Track mattes need both eras of the API: AE 23+ stores the matte as an explicit
+layer reference that must be re-pointed at the copy, while older versions infer
+it from the layer directly above, which the reordering reproduces. The video
+switch is restored in a final pass, because AE flips it as mattes are assigned.
+
+**Effects and masks on the layers inside travel intact.** What cannot follow is
+anything applied **to the precomp layer itself** — effects, masks, layer styles,
+blend mode, track matte, opacity, time remap, stretch, a shifted start time,
+collapse transformations, or a differing frame rate.
+
+Those act on the **flattened result** of everything inside, which has no
+per-layer equivalent: blurring the composite and blurring each layer before
+compositing are different images. That is a compositing fact rather than a
+scripting limit — it is the reason precomps exist — so they are named in the log
+instead of being dropped quietly. When the precomp layer has none of them, the
+log says that too.
+
+> If the precomp layer *does* carry an effect, UnPrecomp will change the render.
+> It runs in a single undo group, so Ctrl+Z backs the whole thing out.
 
 ---
 
@@ -447,10 +593,12 @@ preview project.
 
 ## Authoring workflow
 
-1. **Add Asset…** — creates a 1080p project in the chosen category and opens it.
+1. **Add Asset (New Project)** — creates a 1080p project in the chosen category
+   and opens it.
 2. Build the animation.
-3. Select the layer (or just the properties you want) and
-   **Save Animation as Preset…**.
+3. Select the layer — click the **layer name**, not individual properties, unless
+   you deliberately want to narrow what is saved — then
+   **Save Animation+ (.zfx)**.
 4. Right-click the new card ▸ **Export mp4 Preview** — renders the thumbnail.
    (Or **Export Image Preview** for a still, which is far cheaper and doesn't
    need H.264 at all — see below.)
@@ -475,6 +623,8 @@ Panel constants, top of the relevant block in `js/panel.js`:
 | `EXPORT_MBPS` | `8` | Target H.264 bitrate |
 | `CARD_MIN/MAX/DEFAULT` | `72 / 200 / 100` | Thumbnail size slider range |
 | `CATS_MIN/MAX/DEFAULT` | `56 / 240 / 84` | Category rail width range |
+| `TOOLS_MIN/MAX/DEFAULT` | `46 / 170 / 74` | Tool strip width range |
+| `PRESETS_MIN` | `120` | The browser is never squeezed below this by the tool strip |
 | `AUTOPLAY_KEY` | `zae.autoplay` | Stores the Loop/Hover choice |
 
 Host constants in `jsx/host.jsx`:
@@ -485,8 +635,13 @@ Host constants in `jsx/host.jsx`:
 | `_PREFERRED_TEMPLATE` | `ZeusPack Preview` | Output module template preferred on export |
 | `_MAX_PRESETS` | `600` | Scan cap |
 | `_MAX_DEPTH` | `4` | Scan recursion depth |
+| `_ZFX_EXT` / `_ZFX_VERSION` | `zfx` / `1` | Preset format extension and version |
+| `_GROUP_TAG` | `zeusgroup` | `Layer.comment` prefix marking a group null |
+| `_CEP_SYSTEM_DIR` | `C:\Program Files (x86)\…\CEP\extensions` | Where updates install |
 
-Card size, rail width and the chosen root persist in `localStorage`.
+Persisted in `localStorage`: card size, rail width, tool strip width, the chosen
+root, Loop/Hover, which panels are open, the status-text toggle and the Shy
+checkbox.
 
 ---
 
@@ -613,9 +768,9 @@ is the opposite: it always reports what happened.
 
 **Saving a preset can't be silent.** `Save Animation Preset` is an AE menu
 command with no path argument — ExtendScript cannot choose the destination. So
-*Save Animation as Preset…* snapshots every `.ffx` it can see, fires the command,
-waits on AE's modal dialog, then finds the new file and moves it into the
-selected category. Wherever you point the dialog, the file lands correctly. If
+both *Save Animation+ (.zfx)* and *Save Animation (.ffx)* snapshot every `.ffx`
+they can see, fire the command, wait on AE's modal dialog, then find the new file
+and file it into the selected category. Wherever you point the dialog, the file lands correctly. If
 you save somewhere unwatched (the Desktop, say), the panel says it couldn't
 locate it rather than claiming success.
 
@@ -643,6 +798,18 @@ was written"*, or a completed delete reported as *"open somewhere else"*. Every
 such check goes through `_fileAppeared()` / `_removedFile()`, which re-stat with
 a fresh object and fall back to reading the directory — a listing cannot be
 answered from a stale per-file cache.
+
+**A dropdown's item list cannot be read from script.** After Effects exposes
+`setPropertyParameters()` for writing a Dropdown Menu Control's items but has
+never documented a getter. It does not matter in practice — AE's own preset
+format carries the list, so `applyPreset()` restores it — but it does mean the
+panel must never try to write one back. See
+[Dropdown Menu Control items](#dropdown-menu-control-items).
+
+**The shy switch is comp-wide.** *Group* can shy the layers it collects, but
+`hideShyLayers` is a property of the composition, not of a group. So you can
+collapse one group, but not have group A collapsed while group B stays expanded
+and an unrelated shy layer stays visible.
 
 **Moving a bundle can be slow.** ExtendScript has no cross-folder move, so the
 panel asks the OS first (`move` / `mv`), which is instant on the same volume.
@@ -711,3 +878,26 @@ settings apply to that one queue item.
 **"Could not find the Save Animation Preset menu command"** — the menu string
 differs on this build or locale. Three spellings are tried; save the preset
 manually via **Animation ▸ Save Animation Preset** into the category folder.
+
+**A `.zfx` says it "was written by Quick Save"** — that command was removed. It
+rebuilt presets from JSON with no embedded `.ffx`, so it could not carry a
+dropdown's item list or anything else script cannot read. Re-save the preset with
+*Save Animation+*.
+
+**Dropdown Menu Control items come back wrong after applying a preset** — should
+no longer happen. `applyPreset()` restores them from AE's own preset data, and
+the panel no longer writes the list back on top;
+`setPropertyParameters()` rebuilds the effect rather than editing it, which drops
+the name you gave it and breaks expressions that reference it.
+
+**UnPrecomp left a null behind** — the precomp layer's transform could not be
+baked exactly. The log names which of the three reasons applied: an animated
+transform, a 3D precomp layer, or a shear. See [UnPrecomp](#unprecomp).
+
+**Layers moved or resized after UnPrecomp** — check the log for what was *not*
+carried. Anything applied **to** the precomp layer (effects, masks, blend mode,
+opacity) acts on the flattened result and has no per-layer equivalent. Ctrl+Z
+backs the whole operation out in one step.
+
+**The status row shows only a dot** — that is the default. Click the dot to show
+the text; hovering it shows the last message either way.
