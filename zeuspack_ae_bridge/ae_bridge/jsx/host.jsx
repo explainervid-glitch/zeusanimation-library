@@ -8,13 +8,40 @@
 // its comps must go through AE itself: app.project.importFile() on an .aep
 // pulls the whole project in as a folder (comps + their footage/precomps).
 
+// JSON string body, correctly escaped.
+//
+// Escaping only \ and " is not enough once EXPRESSIONS are being serialized:
+// they are routinely multi-line, and a raw newline inside a JSON string is a
+// syntax error, so a preset saved on a host using the shim below would not
+// parse back. Control characters go out as \uXXXX.
+function _escJsonStr(s) {
+    s = String(s);
+    var out = "", i, c, code, h;
+    for (i = 0; i < s.length; i++) {
+        c = s.charAt(i);
+        code = s.charCodeAt(i);
+        if      (c === '"')  out += '\\"';
+        else if (c === "\\") out += "\\\\";
+        else if (c === "\n") out += "\\n";
+        else if (c === "\r") out += "\\r";
+        else if (c === "\t") out += "\\t";
+        else if (code < 32 || code === 127) {
+            h = code.toString(16);
+            while (h.length < 4) h = "0" + h;
+            out += "\\u" + h;
+        }
+        else out += c;
+    }
+    return out;
+}
+
 // ── Minimal ES3 JSON.stringify (older ExtendScript has no JSON) ──
 if (typeof JSON === "undefined") { JSON = {}; }
 if (typeof JSON.stringify !== "function") {
     JSON.stringify = function (obj) {
         var t = typeof obj;
         if (t !== "object" || obj === null) {
-            if (t === "string") obj = '"' + obj.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
+            if (t === "string") obj = '"' + _escJsonStr(obj) + '"';
             return String(obj);
         } else {
             var json = [];
@@ -22,7 +49,7 @@ if (typeof JSON.stringify !== "function") {
             for (var k in obj) {
                 if (!obj.hasOwnProperty(k)) continue;
                 var v = obj[k]; t = typeof v;
-                if (t === "string") { v = '"' + v.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"'; }
+                if (t === "string") { v = '"' + _escJsonStr(v) + '"'; }
                 else if (t === "object" && v !== null) { v = JSON.stringify(v); }
                 json.push((isArray ? "" : '"' + k + '":') + String(v));
             }
@@ -573,7 +600,9 @@ function _bundleAep(folder) {
         }
         var ext = _extOf(n), base = _stripExt(n);
         if (ext === "aep") { aepCount++; aep = { file: e, base: base }; }
-        else if (ext === "ffx") ffxCount++;
+        // Either preset kind marks this as a preset directory rather than a
+        // collected bundle, so both disqualify it.
+        else if (ext === "ffx" || ext === _ZFX_EXT) ffxCount++;
         else if (ext === "txt" && / Report$/i.test(base)) {
             reports[base.replace(/ Report$/i, "").toLowerCase()] = true;
         }
@@ -627,10 +656,12 @@ function _walkPresets(folder, depth, relPrefix, acc, allowed) {
     if (!entries) return;
 
     var subFolders = [];
+    var zfx = [];             // [{ file, base }] — ZeusPack presets (.zfx)
     var ffx = [];             // [{ file, base }] — animation presets
     var aep = [];             // [{ file, base }] — projects
     var previews = {};        // base name (lowercased) → { path, ext }
     var projects = {};        // base name (lowercased) → .aep path
+    var legacy   = {};        // base name (lowercased) → sibling .ffx path
 
     for (var i = 0; i < entries.length; i++) {
         var e = entries[i];
@@ -638,7 +669,11 @@ function _walkPresets(folder, depth, relPrefix, acc, allowed) {
         var name = _baseName(e);
         var ext  = _extOf(name);
         var base = _stripExt(name);
-        if (ext === "ffx") ffx.push({ file: e, base: base });
+        if (ext === _ZFX_EXT) zfx.push({ file: e, base: base });
+        else if (ext === "ffx") {
+            ffx.push({ file: e, base: base });
+            legacy[base.toLowerCase()] = e.fsName;
+        }
         else if (ext === "aep") {
             aep.push({ file: e, base: base });
             projects[base.toLowerCase()] = e.fsName;
@@ -655,14 +690,36 @@ function _walkPresets(folder, depth, relPrefix, acc, allowed) {
         }
     }
 
-    // .ffx wins. An .aep sharing a preset's name is that preset's preview
-    // project, not an asset of its own — so it must not produce a second card.
+    // Precedence: .zfx > .ffx > .aep. A .zfx embeds the .ffx's bytes, so a
+    // same-named .ffx beside it is the legacy sibling the old command wrote,
+    // not a second asset — exactly as an .aep sharing a preset's name is that
+    // preset's preview project rather than a card of its own.
     var claimed = {};
     var j, key, pv;
+
+    for (j = 0; j < zfx.length; j++) {
+        if (acc.presets.length >= _MAX_PRESETS) { acc.truncated = true; return; }
+        key = zfx[j].base.toLowerCase();
+        claimed[key] = true;
+        pv = previews[key] || null;
+        acc.presets.push({
+            kind:        "presetplus",          // ZeusPack preset (.zfx)
+            name:        zfx[j].base,
+            path:        zfx[j].file.fsName,
+            folder:      relPrefix || "",
+            preview:     pv ? pv.path : "",
+            previewKind: pv ? (pv.ext === "mp4" || pv.ext === "webm" ? "video" : "image") : "",
+            previewMtime: pv ? pv.mtime : 0,
+            project:     projects[key] || "",
+            legacy:      legacy[key] || "",     // the .ffx sibling, if one is kept
+            bundle:      ""
+        });
+    }
 
     for (j = 0; j < ffx.length; j++) {
         if (acc.presets.length >= _MAX_PRESETS) { acc.truncated = true; return; }
         key = ffx[j].base.toLowerCase();
+        if (claimed[key]) continue;
         claimed[key] = true;
         pv = previews[key] || null;
         acc.presets.push({
@@ -949,6 +1006,266 @@ function _expressionEngine() {
     return eng;
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  .zfx — ZeusPack preset format
+// ═══════════════════════════════════════════════════════════════
+// A SUPERSET of .ffx, not a replacement. The file is JSON, and it embeds
+// After Effects' own animation-preset bytes verbatim (base64) alongside a
+// structured layer of everything AE's format has no room for.
+//
+// Embedding rather than reimplementing is the whole point. applyPreset() is
+// doing an enormous amount of work that cannot be reproduced from script:
+// effect instances and their parameters — including PropertyValueType
+// .CUSTOM_VALUE blobs (Gradient Ramp's ramp data, Curves, most custom-UI
+// effect params) that ExtendScript can neither read nor write — plus keyframe
+// interpolation types, temporal ease (speed + influence, per dimension),
+// spatial tangents, roving and hold keys, masks, text documents and layer
+// styles. A hand-rolled JSON format would silently drop exactly those.
+//
+// So .zfx keeps AE's payload intact and adds, on top:
+//   * expressions captured per property, addressed by matchName chain
+//   * the expression engine they were authored against
+//   * the external references each expression makes, so they can be reported
+//     (and later remapped) instead of silently erroring on apply
+//   * provenance: source comp/layer, AE version, timestamp
+//
+// Apply = decode the payload → applyPreset() → restore expressions on top.
+// Worst case it behaves exactly like the .ffx it contains.
+var _ZFX_EXT     = "zfx";
+var _ZFX_FORMAT  = "zeuspack-preset";
+var _ZFX_VERSION = 1;
+
+var _B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+function _b64encode(bin) {
+    var out = "", i = 0, n = bin.length, c1, c2, c3, e3, e4;
+    while (i < n) {
+        c1 = bin.charCodeAt(i++) & 0xff;
+        c2 = i < n ? (bin.charCodeAt(i++) & 0xff) : -1;
+        c3 = i < n ? (bin.charCodeAt(i++) & 0xff) : -1;
+        e3 = (c2 < 0) ? 64 : (((c2 & 15) << 2) | (c3 < 0 ? 0 : (c3 >> 6)));
+        e4 = (c3 < 0) ? 64 : (c3 & 63);
+        out += _B64.charAt(c1 >> 2)
+             + _B64.charAt(((c1 & 3) << 4) | (c2 < 0 ? 0 : (c2 >> 4)))
+             + (e3 === 64 ? "=" : _B64.charAt(e3))
+             + (e4 === 64 ? "=" : _B64.charAt(e4));
+    }
+    return out;
+}
+
+// Padding and any stray whitespace/newlines are stripped up front, so the
+// decode is driven purely by how many characters are actually left — no
+// indexOf("") === 0 trap on a short final group.
+function _b64decode(str) {
+    str = String(str).replace(/[^A-Za-z0-9\+\/]/g, "");
+    var out = "", i = 0, n = str.length, d1, d2, d3, d4;
+    while (i + 1 < n) {
+        d1 = _B64.indexOf(str.charAt(i++));
+        d2 = _B64.indexOf(str.charAt(i++));
+        out += String.fromCharCode(((d1 << 2) | (d2 >> 4)) & 0xff);
+        if (i < n) {
+            d3 = _B64.indexOf(str.charAt(i++));
+            out += String.fromCharCode((((d2 & 15) << 4) | (d3 >> 2)) & 0xff);
+            if (i < n) {
+                d4 = _B64.indexOf(str.charAt(i++));
+                out += String.fromCharCode((((d3 & 3) << 6) | d4) & 0xff);
+            }
+        }
+    }
+    return out;
+}
+
+function _readBinary(file) {
+    var s = null;
+    try {
+        file.encoding = "BINARY";
+        if (!file.open("r")) return null;
+        s = file.read();
+        file.close();
+    } catch (e) { try { file.close(); } catch (e2) {} return null; }
+    return s;
+}
+
+function _writeBinary(file, bin) {
+    try {
+        file.encoding = "BINARY";
+        if (!file.open("w")) return false;
+        file.write(bin);
+        file.close();
+        return true;
+    } catch (e) { try { file.close(); } catch (e2) {} return false; }
+}
+
+function _readText(file) {
+    var txt = null;
+    try {
+        file.encoding = "UTF-8";
+        if (!file.open("r")) return null;
+        txt = file.read();
+        file.close();
+    } catch (e) { try { file.close(); } catch (e2) {} return null; }
+    return txt;
+}
+
+function _writeText(file, txt) {
+    try {
+        file.encoding = "UTF-8";
+        if (!file.open("w")) return false;
+        file.write(txt);
+        file.close();
+        return true;
+    } catch (e) { try { file.close(); } catch (e2) {} return false; }
+}
+
+// Walk to leaf properties, tracking BOTH addressing schemes as we go.
+//
+// matchName chain ("ADBE Transform Group" → "ADBE Position") is the stable
+// one: it survives being applied to a different layer, and is locale-proof
+// where display names are not. The numeric index chain rides along purely as
+// a fallback for properties whose matchName lookup fails (duplicate effect
+// instances resolve to the first match by matchName alone).
+function _walkExprProps(group, chain, idxChain, visit, depth) {
+    if (!group || depth > 8) return;
+    var n = 0;
+    try { n = group.numProperties; } catch (e) { return; }
+
+    for (var i = 1; i <= n; i++) {
+        var p = null;
+        try { p = group.property(i); } catch (e2) { continue; }
+        if (!p) continue;
+
+        var mn = "";
+        try { mn = p.matchName || ""; } catch (e3) {}
+
+        var c2 = chain.concat([mn]);
+        var i2 = idxChain.concat([i]);
+
+        var t = null;
+        try { t = p.propertyType; } catch (e4) {}
+
+        if (t === PropertyType.PROPERTY) visit(p, c2, i2);
+        else _walkExprProps(p, c2, i2, visit, depth + 1);
+    }
+}
+
+// matchName chain first, index chain as the fallback. Returns null when
+// neither resolves — the destination layer simply has no such property (a
+// shape-layer preset dropped on a solid, say).
+function _resolveByChain(layer, chain, idxChain) {
+    var cur, i, next;
+
+    if (chain && chain.length) {
+        cur = layer;
+        for (i = 0; i < chain.length; i++) {
+            next = null;
+            try { next = cur.property(chain[i]); } catch (e) { next = null; }
+            if (!next) { cur = null; break; }
+            cur = next;
+        }
+        if (cur) return cur;
+    }
+
+    if (idxChain && idxChain.length) {
+        cur = layer;
+        for (i = 0; i < idxChain.length; i++) {
+            try { cur = cur.property(idxChain[i]); } catch (e2) { return null; }
+            if (!cur) return null;
+        }
+        return cur;
+    }
+    return null;
+}
+
+// External things an expression reaches for. Recorded at save time so apply
+// can say "this preset wants a layer called 'Null 1'" instead of leaving the
+// user to decode AE's own error text.
+function _expressionRefs(expr) {
+    var refs = [], seen = {}, m;
+    var patterns = [
+        /thisComp\s*\.\s*layer\s*\(\s*["']([^"']+)["']\s*\)/g,
+        /comp\s*\(\s*["']([^"']+)["']\s*\)/g,
+        /footage\s*\(\s*["']([^"']+)["']\s*\)/g
+    ];
+    for (var i = 0; i < patterns.length; i++) {
+        var re = patterns[i];
+        re.lastIndex = 0;
+        while ((m = re.exec(String(expr))) !== null) {
+            var key = i + ":" + m[1];
+            if (seen[key]) continue;
+            seen[key] = true;
+            refs.push({ kind: (i === 0 ? "layer" : i === 1 ? "comp" : "footage"), name: m[1] });
+        }
+    }
+    return refs;
+}
+
+// Every expression on the given layers, addressed for replay elsewhere.
+function _captureExpressions(layers) {
+    var out = [];
+    for (var i = 0; i < layers.length; i++) {
+        _walkExprProps(layers[i], [], [], function (p, chain, idxChain) {
+            var expr = "";
+            try { expr = p.expression || ""; } catch (e) { return; }
+            if (!expr) return;
+
+            var on = true;
+            try { on = p.expressionEnabled; } catch (e2) {}
+
+            out.push({
+                layer:      i,
+                name:       String(p.name || ""),
+                path:       chain,
+                index:      idxChain,
+                enabled:    !!on,
+                expression: expr,
+                refs:       _expressionRefs(expr)
+            });
+        }, 0);
+    }
+    return out;
+}
+
+// Put the captured expressions back after applyPreset() has run.
+//
+// Set unconditionally rather than only where one is missing: the embedded
+// .ffx may well carry the expression too, in which case this is a harmless
+// rewrite of identical text, and where it did NOT survive this is the whole
+// point of the format.
+function _restoreExpressions(layers, list) {
+    var out = { restored: 0, missing: 0, failed: 0, unresolved: [] };
+    if (!list || !list.length) return out;
+
+    for (var i = 0; i < list.length; i++) {
+        var rec = list[i];
+        if (!rec || !rec.expression) continue;
+
+        // Presets are captured from one layer but may be applied to several —
+        // replay every record onto every selected layer.
+        for (var L = 0; L < layers.length; L++) {
+            var p = _resolveByChain(layers[L], rec.path, rec.index);
+            if (!p) {
+                out.missing++;
+                if (out.unresolved.length < 3) {
+                    out.unresolved.push(String(rec.name || (rec.path || []).join(" ▸ ")));
+                }
+                continue;
+            }
+            var can = true;
+            try { can = p.canSetExpression; } catch (e) {}
+            if (!can) { out.missing++; continue; }
+
+            try {
+                p.expression = String(rec.expression);
+                if (rec.enabled === false) {
+                    try { p.expressionEnabled = false; } catch (eD) {}
+                }
+                out.restored++;
+            } catch (e2) { out.failed++; }
+        }
+    }
+    return out;
+}
+
 // Apply an animation preset to the selected layer(s).
 //
 // params.reverse — "Apply Out": run the preset, then time-reverse the keyframes
@@ -962,46 +1279,41 @@ function _expressionEngine() {
 // Only properties the preset itself animated are reversed. Properties that
 // already had keyframes are left alone — reversing a layer's pre-existing
 // animation because a preset happened to be dropped on it would be surprising.
-function zae_applyPreset(params) {
-    try {
-        var path = params && params.path ? String(params.path) : "";
-        if (!path) return _result(false, "No preset path given.");
-        var f = new File(path);
-        if (!f.exists) return _result(false, "Preset not found: " + path);
+// Shared by both entry points: .ffx applies the file directly, .zfx decodes
+// its embedded payload to a temp file and hands it here, then restores its
+// expressions through `opts.onApplied`. Everything after applyPreset() — the
+// trim, the reversal, the expression audit — is identical for both, so it
+// lives here once.
+//
+// Returns a plain object; the callers own the messaging.
+function _applyPresetCore(comp, layers, f, opts) {
+    opts = opts || {};
+    var reverse = !!opts.reverse;
+    var i;
 
-        var reverse = !!(params && params.reverse);
+    // Snapshot key counts so the newly-animated properties can be told apart
+    // from animation the layer already had.
+    var before = {};
+    for (i = 0; i < layers.length; i++) {
+        _walkProps(layers[i], "L" + i, function (p, key) {
+            var n = 0;
+            try { n = p.numKeys; } catch (e) {}
+            before[key] = n;
+        }, 0);
+    }
 
-        var comp = app.project ? app.project.activeItem : null;
-        if (!(comp instanceof CompItem)) return _result(false, "Open a composition first.");
+    var applied = 0;
+    for (i = 0; i < layers.length; i++) {
+        try { layers[i].applyPreset(f); applied++; } catch (e2) {}
+    }
+    if (!applied) return { applied: 0 };
 
-        var layers = comp.selectedLayers;
-        if (!layers || !layers.length) return _result(false, "Select at least one layer.");
+    // .zfx restores its expressions here — before the trim, so the audit at
+    // the end judges them against the final keyframe state.
+    var restored = null;
+    if (typeof opts.onApplied === "function") restored = opts.onApplied(layers);
 
-        var i, L;
-        app.beginUndoGroup(reverse ? "ZeusPack: Apply Preset (out)" : "ZeusPack: Apply Preset (in)");
-
-        // Snapshot key counts so the newly-animated properties can be told apart
-        // from animation the layer already had.
-        var before = {};
-        for (i = 0; i < layers.length; i++) {
-            _walkProps(layers[i], "L" + i, function (p, key) {
-                var n = 0;
-                try { n = p.numKeys; } catch (e) {}
-                before[key] = n;
-            }, 0);
-        }
-
-        var applied = 0;
-        for (i = 0; i < layers.length; i++) {
-            try { layers[i].applyPreset(f); applied++; } catch (e2) {}
-        }
-
-        if (!applied) {
-            app.endUndoGroup();
-            return _result(false, "Could not apply to the selected layer(s).");
-        }
-
-        var fresh = [];
+    var fresh = [];
         for (i = 0; i < layers.length; i++) {
             _walkProps(layers[i], "L" + i, function (p, key) {
                 var had = before.hasOwnProperty(key) ? before[key] : -1;
@@ -1013,67 +1325,107 @@ function zae_applyPreset(params) {
             }, 0);
         }
 
-        // Drop the exit half BEFORE any reversal, so Apply Out reverses the
-        // entrance rather than flipping an in+out pair back on itself.
-        var trimmedKeys = 0, trimmedProps = 0;
-        if (params.trim !== false) {
-            for (i = 0; i < fresh.length; i++) {
-                var t = _trimToIn(fresh[i]);
-                if (t) { trimmedKeys += t; trimmedProps++; }
+    // Drop the exit half BEFORE any reversal, so Apply Out reverses the
+    // entrance rather than flipping an in+out pair back on itself.
+    var trimmedKeys = 0, trimmedProps = 0;
+    if (opts.trim !== false) {
+        for (i = 0; i < fresh.length; i++) {
+            var t = _trimToIn(fresh[i]);
+            if (t) { trimmedKeys += t; trimmedProps++; }
+        }
+    }
+
+    var reversedProps = 0, cmdId = 0;
+    if (reverse && fresh.length) {
+        _deselectAllKeys(comp);
+        for (i = 0; i < fresh.length; i++) {
+            var p = fresh[i];
+            for (var k = 1; k <= p.numKeys; k++) {
+                try { p.setSelectedAtKey(k, true); } catch (e3) {}
             }
+            reversedProps++;
         }
 
-        var reversedProps = 0, cmdId = 0;
-        if (reverse) {
-            if (fresh.length) {
-                _deselectAllKeys(comp);
-                for (i = 0; i < fresh.length; i++) {
-                    var p = fresh[i];
-                    for (var k = 1; k <= p.numKeys; k++) {
-                        try { p.setSelectedAtKey(k, true); } catch (e3) {}
-                    }
-                    reversedProps++;
-                }
+        // Keyframe Assistant commands read the front-most comp viewer.
+        try { comp.openInViewer(); } catch (e4) {}
 
-                // Keyframe Assistant commands read the front-most comp viewer.
-                try { comp.openInViewer(); } catch (e4) {}
-
-                var names = ["Time-Reverse Keyframes", "Time Reverse Keyframes"];
-                for (i = 0; i < names.length && !cmdId; i++) {
-                    try { cmdId = app.findMenuCommandId(names[i]); } catch (e5) {}
-                }
-                if (cmdId) { try { app.executeCommand(cmdId); } catch (e6) { cmdId = 0; } }
-            }
+        var names = ["Time-Reverse Keyframes", "Time Reverse Keyframes"];
+        for (i = 0; i < names.length && !cmdId; i++) {
+            try { cmdId = app.findMenuCommandId(names[i]); } catch (e5) {}
         }
+        if (cmdId) { try { app.executeCommand(cmdId); } catch (e6) { cmdId = 0; } }
+    }
 
-        // After everything has settled — an expression that errors does so
-        // against the final keyframe state, not the state mid-trim.
-        var expr = _auditExpressions(layers, true);
+    // After everything has settled — an expression that errors does so
+    // against the final keyframe state, not the state mid-trim.
+    var expr = _auditExpressions(layers, true);
 
+    return {
+        applied: applied, fresh: fresh.length,
+        trimmedProps: trimmedProps, trimmedKeys: trimmedKeys,
+        reversedProps: reversedProps, cmdId: cmdId,
+        expr: expr, restored: restored
+    };
+}
+
+// Message fragment shared by both apply paths.
+function _applyMsgTail(r, reverse) {
+    var msg = "";
+    if (r.trimmedProps) {
+        msg += ", dropped the exit from " + r.trimmedProps + " propert"
+             + (r.trimmedProps === 1 ? "y" : "ies")
+             + " (" + r.trimmedKeys + " keyframe" + (r.trimmedKeys === 1 ? "" : "s") + ")";
+    }
+    if (r.expr && r.expr.total) {
+        msg += ", " + r.expr.total + " expression" + (r.expr.total === 1 ? "" : "s");
+        if (r.expr.reenabled) msg += " (" + r.expr.reenabled + " re-enabled)";
+        if (r.expr.broken) {
+            msg += " — " + r.expr.broken + " erroring [engine: "
+                 + (_expressionEngine() || "unknown") + "] " + r.expr.errors.join("; ");
+        }
+    }
+    if (reverse) {
+        if (!r.reversedProps)  msg += " — no keyframes to reverse (static preset)";
+        else if (!r.cmdId)     msg += " — but Time-Reverse Keyframes was not found on this AE version";
+        else                   msg += ", reversed " + r.reversedProps + " animated propert"
+                                    + (r.reversedProps === 1 ? "y" : "ies");
+    }
+    return msg;
+}
+
+function zae_applyPreset(params) {
+    try {
+        var path = params && params.path ? String(params.path) : "";
+        if (!path) return _result(false, "No preset path given.");
+        var f = new File(path);
+        if (!f.exists) return _result(false, "Preset not found: " + path);
+
+        // A .zfx dropped on this entry point routes itself — the panel may be
+        // an older build that only knows the one call.
+        if (_extOf(_baseName(f)) === _ZFX_EXT) return zae_applyPresetPlus(params);
+
+        var reverse = !!(params && params.reverse);
+
+        var comp = app.project ? app.project.activeItem : null;
+        if (!(comp instanceof CompItem)) return _result(false, "Open a composition first.");
+
+        var layers = comp.selectedLayers;
+        if (!layers || !layers.length) return _result(false, "Select at least one layer.");
+
+        app.beginUndoGroup(reverse ? "ZeusPack: Apply Preset (out)" : "ZeusPack: Apply Preset (in)");
+        var r = _applyPresetCore(comp, layers, f, {
+            reverse: reverse, trim: params.trim !== false
+        });
         app.endUndoGroup();
 
-        var msg = "Applied to " + applied + " layer" + (applied === 1 ? "" : "s");
-        if (trimmedProps) {
-            msg += ", dropped the exit from " + trimmedProps + " propert"
-                 + (trimmedProps === 1 ? "y" : "ies")
-                 + " (" + trimmedKeys + " keyframe" + (trimmedKeys === 1 ? "" : "s") + ")";
-        }
-        if (expr.total) {
-            msg += ", " + expr.total + " expression" + (expr.total === 1 ? "" : "s");
-            if (expr.reenabled) {
-                msg += " (" + expr.reenabled + " re-enabled)";
-            }
-            if (expr.broken) {
-                msg += " — " + expr.broken + " erroring [engine: "
-                     + (_expressionEngine() || "unknown") + "] " + expr.errors.join("; ");
-            }
-        }
-        if (reverse) {
-            if (!reversedProps)   msg += " — no keyframes to reverse (static preset)";
-            else if (!cmdId)      msg += " — but Time-Reverse Keyframes was not found on this AE version";
-            else                  msg += ", reversed " + reversedProps + " animated propert"
-                                       + (reversedProps === 1 ? "y" : "ies");
-        }
+        if (!r.applied) return _result(false, "Could not apply to the selected layer(s).");
+
+        var applied = r.applied;
+        var expr = r.expr;
+        var msg = "Applied to " + applied + " layer" + (applied === 1 ? "" : "s")
+                + _applyMsgTail(r, reverse);
+        var reversedProps = r.reversedProps, cmdId = r.cmdId,
+            trimmedProps = r.trimmedProps, trimmedKeys = r.trimmedKeys;
 
         return _result(reverse ? (!reversedProps || !!cmdId) : true, msg, {
             applied: applied, comp: comp.name,
@@ -1085,6 +1437,456 @@ function zae_applyPreset(params) {
         });
     } catch (e) {
         try { app.endUndoGroup(); } catch (e7) {}
+        return _result(false, "Exception: " + e.toString());
+    }
+}
+
+// ── Property walk with occurrence-aware addressing ───────────────────────────
+// Records where each property sits as a matchName chain. Occurrence rides along
+// because matchName alone is ambiguous the moment a layer carries two of the
+// same effect — property("ADBE Gaussian Blur 2") always returns the first one.
+//
+// `ancestorSel` propagates timeline selection down, so selecting an effect
+// group counts as selecting everything inside it.
+function _walkNative(group, segs, ancestorSel, visit, depth) {
+    if (!group || depth > 8) return;
+    var n = 0;
+    try { n = group.numProperties; } catch (e) { return; }
+
+    var occ = {};
+    for (var i = 1; i <= n; i++) {
+        var p = null;
+        try { p = group.property(i); } catch (e2) { continue; }
+        if (!p) continue;
+
+        var mn = "";
+        try { mn = p.matchName || ""; } catch (e3) {}
+        occ[mn] = (occ[mn] || 0) + 1;
+
+        var s2 = segs.concat([{ mn: mn, occ: occ[mn] }]);
+
+        var sel = ancestorSel;
+        if (!sel) { try { sel = !!p.selected; } catch (e4) { sel = false; } }
+
+        var t = null;
+        try { t = p.propertyType; } catch (e5) {}
+
+        if (t === PropertyType.PROPERTY) visit(p, s2, sel);
+        else _walkNative(p, s2, sel, visit, depth + 1);
+    }
+}
+
+
+// ── Dropdown Menu Control items ──────────────────────────────────────────────
+// RECORDED AS METADATA ONLY — never replayed on apply.
+//
+// A Dropdown Menu Control keeps its item list as part of the effect rather than
+// as a property value, and AE's own preset format carries it. So applyPreset()
+// already restores the list correctly, with the effects' custom names intact,
+// and there is nothing for this panel to put back.
+//
+// Writing the list back with setPropertyParameters() is actively harmful: it
+// does not edit the dropdown in place, it rebuilds the effect, and the rebuilt
+// effect loses the name the user gave it. Two dropdowns named "Cursor Default"
+// and "Cursor Hover" returned as "Cursor Hover" and "Cursor Hover 2" — AE
+// uniquing a lost name — which broke every expression referencing them. Two
+// Glow effects survived the same round trip untouched, because no dropdown code
+// ran on them. That contrast is what identified the cause.
+//
+// Reading is kept because it costs nothing and makes the saved file
+// self-describing. It is a PROBE: setPropertyParameters() writes the list
+// (AE 17.0.1+) but no getter has ever been documented, so when nothing answers
+// only the item COUNT is recorded, which maxValue does report.
+function _dropdownItems(p) {
+    var out = { names: null, count: 0 };
+    try {
+        var mx = Number(p.maxValue);
+        if (mx > 0) out.count = Math.round(mx);
+    } catch (e) {}
+
+    var tries = ["getPropertyParameters", "propertyParameters", "dropdownItems"];
+    for (var i = 0; i < tries.length; i++) {
+        var k = tries[i];
+        try {
+            var v = (typeof p[k] === "function") ? p[k]() : p[k];
+            if (v && v.length) {
+                var names = [];
+                for (var j = 0; j < v.length; j++) names.push(String(v[j]));
+                out.names = names;
+                if (!out.count) out.count = names.length;
+                return out;
+            }
+        } catch (e2) {}
+    }
+    return out;
+}
+
+function _captureDropdowns(layer) {
+    var out = [];
+    _walkNative(layer, [], false, function (p, segs) {
+        var isDrop = false;
+        try { isDrop = !!p.isDropdownEffect; } catch (e) { return; }
+        if (!isDrop) return;
+
+        var d = _dropdownItems(p);
+        var nm = "", val = 0;
+        try { nm = String(p.name || ""); } catch (e2) {}
+        try { val = Number(p.value) || 0; } catch (e3) {}
+        out.push({ path: segs, name: nm, names: d.names, count: d.count, value: val });
+    }, 0);
+    return out;
+}
+
+function _nowIso() {
+    var d = new Date();
+    function p(n) { var s = String(n); return s.length < 2 ? "0" + s : s; }
+    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate())
+         + "T" + p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds());
+}
+
+function _layerNames(layers) {
+    var out = [];
+    for (var i = 0; i < layers.length; i++) {
+        try { out.push(String(layers[i].name)); } catch (e) {}
+    }
+    return out;
+}
+
+// Layers an expression reaches for that this comp does not have. THE reason a
+// restored expression still errors, and something no storage format can fix on
+// its own — the reference has to resolve against the destination.
+function _missingRefs(comp, exprs) {
+    var missing = [], seen = {};
+    if (!exprs) return missing;
+    for (var i = 0; i < exprs.length; i++) {
+        // ffx-payload records carry `refs` from capture time; native-payload
+        // records are plain properties, so derive them from the text.
+        var refs = exprs[i].refs;
+        if (!refs) refs = exprs[i].expression ? _expressionRefs(exprs[i].expression) : [];
+        for (var j = 0; j < refs.length; j++) {
+            if (refs[j].kind !== "layer") continue;
+            var nm = String(refs[j].name);
+            if (seen[nm]) continue;
+            seen[nm] = true;
+            var found = false;
+            try { found = !!comp.layer(nm); } catch (e) { found = false; }
+            if (!found) missing.push(nm);
+        }
+    }
+    return missing;
+}
+
+// Run AE's own Save Animation Preset dialog and report which .ffx appeared.
+//
+// Shared by both save commands: the legacy one moves that file into the
+// category, the .zfx one swallows its bytes. Neither can choose the
+// destination — the command takes no arguments — so both snapshot every .ffx
+// in reach, fire the modal, and diff.
+function _runSavePresetDialog(root, target) {
+    var cmdId = 0;
+    var names = ["Save Animation Preset...", "Save Animation Preset…", "Save Animation Preset"];
+    for (var i = 0; i < names.length && !cmdId; i++) {
+        try { cmdId = app.findMenuCommandId(names[i]); } catch (e) {}
+    }
+    if (!cmdId) {
+        return { ok: false, message: "Could not find the Save Animation Preset menu command on this AE version." };
+    }
+
+    // Watch the target, the preset root and the user's own presets folder —
+    // between them they cover where the dialog is likely to be pointing.
+    var watched = [target, new Folder(root)];
+    var userRoots = _findUserPresetFolders();
+    for (var u = 0; u < userRoots.length; u++) watched.push(new Folder(userRoots[u].path));
+
+    var before = {}, after = {}, w;
+    for (w = 0; w < watched.length; w++) _collectFfx(watched[w], 0, before);
+
+    app.executeCommand(cmdId);        // modal — returns once saved or cancelled
+
+    for (w = 0; w < watched.length; w++) _collectFfx(watched[w], 0, after);
+
+    var newest = null, newestTime = -1, isNew = false;
+    for (var k in after) {
+        if (!after.hasOwnProperty(k)) continue;
+        var existed = before.hasOwnProperty(k);
+        if (existed && after[k] === before[k]) continue;
+        if (after[k] > newestTime) { newestTime = after[k]; newest = k; isNew = !existed; }
+    }
+    if (!newest) {
+        return { ok: false, message: "No new preset found — cancelled, or saved outside the watched folders." };
+    }
+    return { ok: true, file: new File(newest), isNew: isNew };
+}
+
+// ── Save the selection as a .zfx ─────────────────────────────────────────────
+// AE's dialog still runs — it is the only way to get animation-preset bytes,
+// and those bytes are what makes this format lossless. What is different is
+// what happens either side of it: the expressions are captured from the live
+// layer BEFORE the dialog (so they are recorded whether or not AE's own format
+// keeps them), and the resulting .ffx is swallowed into the .zfx afterwards.
+function zae_savePresetPlus(params) {
+    try {
+        var root     = params && params.root ? String(params.root) : "";
+        var category = params && params.category ? String(params.category) : "";
+        var keepFfx  = !!(params && params.keepFfx);
+        if (!root) return _result(false, "No preset folder selected.");
+
+        var target = _targetFolder(root, category);
+        if (!target) return _result(false, "Could not open the target folder.");
+
+        var comp = app.project ? app.project.activeItem : null;
+        if (!(comp instanceof CompItem)) return _result(false, "Open a composition first.");
+        var layers = comp.selectedLayers;
+        if (!layers || !layers.length) {
+            return _result(false, "Select a layer — or just the properties/effects you want saved.");
+        }
+
+        // Captured from the SOURCE layer, independent of what AE decides to put
+        // in the .ffx. This is the whole reason the format exists.
+        var exprs = _captureExpressions(layers);
+        // Belt and braces: if AE's own preset carries the dropdown lists this is
+        // a harmless rewrite of the same items, and if it does not, this is what
+        // saves them.
+        var drops = _captureDropdowns(layers[0]);
+
+        var narrowed = 0;
+        try { narrowed = comp.selectedProperties ? comp.selectedProperties.length : 0; } catch (eSP) {}
+
+        var dlg = _runSavePresetDialog(root, target);
+        if (!dlg.ok) return _result(false, dlg.message);
+
+        var src  = dlg.file;
+        var base = _stripExt(_baseName(src));
+
+        var bin = _readBinary(src);
+        if (bin === null || !bin.length) {
+            return _result(false, "Saved, but could not read the preset back: " + src.fsName);
+        }
+
+        var zfx = new File(target.fsName + "/" + base + "." + _ZFX_EXT);
+        if (zfx.exists) {
+            return _result(false, '"' + base + "." + _ZFX_EXT + '" already exists in '
+                         + (category || "root") + ". The .ffx is at " + src.fsName);
+        }
+
+        var doc = {
+            format:  _ZFX_FORMAT,
+            version: _ZFX_VERSION,
+            name:    base,
+            created: _nowIso(),
+            app: {
+                name:             "After Effects",
+                version:          String(app.version || ""),
+                expressionEngine: _expressionEngine()
+            },
+            source: {
+                comp:               String(comp.name || ""),
+                layers:             _layerNames(layers),
+                selectedProperties: narrowed
+            },
+            // AE's own bytes, verbatim — effects, keyframes, easing, spatial
+            // tangents and the custom-value blobs script cannot touch.
+            payload: {
+                kind:     "ffx",
+                encoding: "base64",
+                bytes:    bin.length,
+                data:     _b64encode(bin)
+            },
+            expressions: exprs,
+            dropdowns:   drops
+        };
+
+        if (!_writeText(zfx, JSON.stringify(doc))) {
+            return _result(false, "Could not write " + zfx.fsName);
+        }
+
+        // The .ffx was scaffolding; its bytes now live inside the .zfx. Only
+        // remove one this run created — an existing preset AE overwrote is the
+        // user's file, not ours to delete.
+        var cleaned = false;
+        if (!keepFfx && dlg.isNew) cleaned = _removedFile(src);
+
+        var msg = "Saved " + base + "." + _ZFX_EXT + " → " + (category || "root")
+                + " — " + exprs.length + " expression" + (exprs.length === 1 ? "" : "s")
+                + (drops.length ? ", " + drops.length + " dropdown" + (drops.length === 1 ? "" : "s") : "")
+                + ", " + bin.length + " bytes of preset data";
+        if (exprs.length && narrowed) {
+            msg += "; only the " + narrowed + " selected propert"
+                 + (narrowed === 1 ? "y was" : "ies were") + " in AE's save — deselect "
+                 + "properties (click the layer name) to capture the whole layer";
+        }
+        if (!cleaned && !keepFfx && dlg.isNew) msg += " (the .ffx is also still at " + src.fsName + ")";
+        if (keepFfx) msg += " (.ffx kept at " + src.fsName + ")";
+
+        return _result(true, msg, {
+            path: zfx.fsName, name: base, expressions: exprs.length,
+            payloadBytes: bin.length, ffxRemoved: cleaned,
+            ffxPath: src.fsName, selectedProperties: narrowed
+        });
+    } catch (e) {
+        return _result(false, "Exception: " + e.toString());
+    }
+}
+
+// ── Apply a .zfx ─────────────────────────────────────────────────────────────
+// Decode the embedded preset to a temp file, hand it to the same core the
+// legacy path uses, then lay the expressions back on top.
+function zae_applyPresetPlus(params) {
+    try {
+        var path = params && params.path ? String(params.path) : "";
+        if (!path) return _result(false, "No preset path given.");
+        var f = new File(path);
+        if (!f.exists) return _result(false, "Preset not found: " + path);
+
+        var reverse = !!(params && params.reverse);
+
+        var txt = _readText(f);
+        if (txt === null) return _result(false, "Could not read " + _baseName(f) + ".");
+
+        var doc = _parseJson(txt);
+        if (!doc || doc.format !== _ZFX_FORMAT) {
+            return _result(false, _baseName(f) + " is not a ZeusPack preset.");
+        }
+        if (Number(doc.version) > _ZFX_VERSION) {
+            return _result(false, _baseName(f) + " was written by a newer build (format v"
+                         + doc.version + "; this one reads v" + _ZFX_VERSION + ").");
+        }
+        if (!doc.payload) return _result(false, _baseName(f) + " has no preset payload.");
+
+        // Quick Save wrote these: rebuilt from JSON with no embedded .ffx. It
+        // was removed because script cannot read everything an .ffx carries —
+        // a Dropdown Menu Control's item list most visibly — so those presets
+        // can no longer be applied. Say so plainly instead of failing on a
+        // missing payload.
+        if (String(doc.payload.kind) === "native") {
+            return _result(false, _baseName(f) + " was written by Quick Save, which has been "
+                         + "removed (it could not carry dropdown item lists or effect data that "
+                         + "only AE's own preset format holds). Re-save it with Save Animation+.");
+        }
+        if (!doc.payload.data) {
+            return _result(false, _baseName(f) + " has no preset payload.");
+        }
+
+        var comp = app.project ? app.project.activeItem : null;
+        if (!(comp instanceof CompItem)) return _result(false, "Open a composition first.");
+        var layers = comp.selectedLayers;
+        if (!layers || !layers.length) return _result(false, "Select at least one layer.");
+
+        // applyPreset() needs a real file, so the payload is staged in temp and
+        // removed again whatever happens.
+        var bin = _b64decode(doc.payload.data);
+        if (!bin.length) return _result(false, _baseName(f) + " has an empty preset payload.");
+
+        var tmp = new File(Folder.temp.fsName + "/zeuspack_"
+                         + (new Date()).getTime() + "_" + Math.floor(Math.random() * 1e6) + ".ffx");
+        if (!_writeBinary(tmp, bin)) return _result(false, "Could not stage the preset payload.");
+
+        var restored = null, r = null;
+        app.beginUndoGroup(reverse ? "ZeusPack: Apply Preset+ (out)" : "ZeusPack: Apply Preset+ (in)");
+        try {
+            r = _applyPresetCore(comp, layers, tmp, {
+                reverse: reverse,
+                trim: params.trim !== false,
+                onApplied: function (ls) {
+                    // Dropdown item lists are deliberately NOT replayed here.
+                    //
+                    // applyPreset() has already restored them from AE's own
+                    // preset data, correctly and with the effects' custom names
+                    // intact. Calling setPropertyParameters() on top does not
+                    // edit the dropdown in place — it rebuilds the effect, which
+                    // loses the name the user gave it. Two dropdowns named
+                    // "Cursor Default" and "Cursor Hover" came back as
+                    // "Cursor Hover" and "Cursor Hover 2", breaking every
+                    // expression that referenced them by name. Two Glows were
+                    // unaffected precisely because no dropdown code touched them.
+                    //
+                    // The captured list is kept in the file as metadata only.
+                    restored = _restoreExpressions(ls, doc.expressions);
+                    return restored;
+                }
+            });
+        } finally {
+            app.endUndoGroup();
+            try { tmp.remove(); } catch (eT) {}
+        }
+
+        if (!r || !r.applied) return _result(false, "Could not apply to the selected layer(s).");
+
+        var name = String(doc.name || _stripExt(_baseName(f)));
+        var msg  = "Applied " + name + " to " + r.applied + " layer"
+                 + (r.applied === 1 ? "" : "s") + _applyMsgTail(r, reverse);
+
+        if (restored && restored.restored) {
+            msg += ", restored " + restored.restored + " expression"
+                 + (restored.restored === 1 ? "" : "s");
+        }
+        if (restored && restored.missing) {
+            msg += " — " + restored.missing + " had no matching property here"
+                 + (restored.unresolved.length ? " (" + restored.unresolved.join(", ") + ")" : "");
+        }
+
+        // The one failure a format cannot fix: the expression is intact but
+        // points at something this comp does not have.
+        var missingRefs = _missingRefs(comp, doc.expressions);
+        if (missingRefs.length) {
+            msg += " — expects layer" + (missingRefs.length === 1 ? "" : "s")
+                 + " not in this comp: " + missingRefs.join(", ");
+        }
+
+        var srcEngine = (doc.app && doc.app.expressionEngine) ? String(doc.app.expressionEngine) : "";
+        var curEngine = _expressionEngine();
+        if (srcEngine && curEngine && srcEngine !== curEngine) {
+            msg += " — authored for expression engine " + srcEngine + ", this project uses "
+                 + curEngine + " (File ▸ Project Settings ▸ Expressions)";
+        }
+
+        return _result(true, msg, {
+            applied: r.applied, comp: comp.name, name: name,
+            trimmedProps: r.trimmedProps, trimmedKeys: r.trimmedKeys,
+            reversed: r.reversedProps, reverseApplied: !!r.cmdId,
+            expressionsRestored: restored ? restored.restored : 0,
+            expressionsMissing:  restored ? restored.missing : 0,
+            expressionsFailed:   restored ? restored.failed : 0,
+            expressionsBroken:   r.expr ? r.expr.broken : 0,
+            missingRefs: missingRefs,
+            sourceEngine: srcEngine, engine: curEngine
+        });
+    } catch (e) {
+        try { app.endUndoGroup(); } catch (e9) {}
+        return _result(false, "Exception: " + e.toString());
+    }
+}
+
+// Read a .zfx's metadata without applying it — used for the card tooltip.
+function zae_readPresetPlus(params) {
+    try {
+        var path = params && params.path ? String(params.path) : "";
+        if (!path) return _result(false, "No preset path given.");
+        var f = new File(path);
+        if (!f.exists) return _result(false, "Preset not found: " + path);
+
+        var doc = _parseJson(_readText(f) || "");
+        if (!doc || doc.format !== _ZFX_FORMAT) {
+            return _result(false, _baseName(f) + " is not a ZeusPack preset.");
+        }
+        // `properties[]` only appears in presets written by the removed Quick
+        // Save; still counted so an old file reports honestly rather than as
+        // having nothing in it.
+        var nExpr = (doc.expressions || []).length;
+        var props = doc.properties || [];
+        for (var i = 0; i < props.length; i++) if (props[i].expression) nExpr++;
+
+        return _result(true, "ok", {
+            name: doc.name || "", version: doc.version || 0,
+            created: doc.created || "", app: doc.app || null,
+            source: doc.source || null,
+            kind: (doc.payload && doc.payload.kind) || "ffx",
+            expressions: nExpr,
+            effects: (doc.effects || []).length,
+            properties: props.length,
+            payloadBytes: (doc.payload && doc.payload.bytes) || 0
+        });
+    } catch (e) {
         return _result(false, "Exception: " + e.toString());
     }
 }
@@ -1568,7 +2370,7 @@ function zae_moveAsset(params) {
         }
 
         var i;
-        var wanted = ["ffx", "aep"];
+        var wanted = [_ZFX_EXT, "ffx", "aep"];
         for (i = 0; i < _PREVIEW_EXTS.length; i++) wanted.push(_PREVIEW_EXTS[i]);
 
         var entries = src.getFiles() || [];
@@ -1793,7 +2595,7 @@ function zae_deleteAsset(params) {
         var dir = folder ? new Folder(rootFolder.fsName + "/" + folder) : rootFolder;
         if (!dir.exists) return _result(false, "Folder not found: " + folder);
 
-        var i, wanted = ["ffx", "aep"];
+        var i, wanted = [_ZFX_EXT, "ffx", "aep"];
         for (i = 0; i < _PREVIEW_EXTS.length; i++) wanted.push(_PREVIEW_EXTS[i]);
 
         var entries = dir.getFiles() || [], targets = [], lower = name.toLowerCase();
@@ -1931,7 +2733,7 @@ function zae_renameAsset(params) {
                 : rootFolder;
         if (!dir.exists) return _result(false, "Folder not found: " + (bundle || folder));
 
-        var i, wanted = ["ffx", "aep"];
+        var i, wanted = [_ZFX_EXT, "ffx", "aep"];
         for (i = 0; i < _PREVIEW_EXTS.length; i++) wanted.push(_PREVIEW_EXTS[i]);
 
         var entries = dir.getFiles() || [], targets = [], lower = from.toLowerCase();
@@ -2104,40 +2906,10 @@ function zae_saveAnimationPreset(params) {
                       + "(click the layer name) to save the whole layer";
         }
 
-        // Menu strings differ by build and locale; try the likely spellings.
-        var cmdId = 0;
-        var names = ["Save Animation Preset...", "Save Animation Preset…", "Save Animation Preset"];
-        for (var i = 0; i < names.length && !cmdId; i++) {
-            try { cmdId = app.findMenuCommandId(names[i]); } catch (e) {}
-        }
-        if (!cmdId) {
-            return _result(false, "Could not find the Save Animation Preset menu command on this AE version.");
-        }
+        var dlg = _runSavePresetDialog(root, target);
+        if (!dlg.ok) return _result(false, dlg.message);
 
-        // Watch the target root and the user's own presets folder — between them
-        // they cover where the dialog is likely to be pointing.
-        var watched = [target, new Folder(root)];
-        var userRoots = _findUserPresetFolders();
-        for (var u = 0; u < userRoots.length; u++) watched.push(new Folder(userRoots[u].path));
-
-        var before = {}, after = {}, w;
-        for (w = 0; w < watched.length; w++) _collectFfx(watched[w], 0, before);
-
-        app.executeCommand(cmdId);        // modal — returns once saved or cancelled
-
-        for (w = 0; w < watched.length; w++) _collectFfx(watched[w], 0, after);
-
-        var newest = null, newestTime = -1;
-        for (var k in after) {
-            if (!after.hasOwnProperty(k)) continue;
-            var changed = !before.hasOwnProperty(k) || after[k] !== before[k];
-            if (changed && after[k] > newestTime) { newestTime = after[k]; newest = k; }
-        }
-        if (!newest) {
-            return _result(false, "No new preset found — cancelled, or saved outside the watched folders.");
-        }
-
-        var src = new File(newest);
+        var src = dlg.file;
         var fileName = _baseName(src);
         var destPath = target.fsName + "/" + fileName;
 
@@ -2354,6 +3126,553 @@ function zae_addAsset(params) {
         return _result(true, "Created " + name + ".aep (" + w + "x" + h + " @ " + fps + "fps)", {
             path: aep.fsName, width: w, height: h, fps: fps, category: category
         });
+    } catch (e) {
+        return _result(false, "Exception: " + e.toString());
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  LAYER TOOLS — Group / Ungroup
+// ═══════════════════════════════════════════════════════════════
+// "Group" without a pre-comp: a control layer sized to the selection's
+// bounding box, with the selection parented to it. Scaling or rotating the
+// control moves the whole set, and nothing is nested into another timeline.
+//
+// The control is tagged through Layer.comment, which is a plain settable
+// string that survives save/load and stays invisible unless the Comment column
+// is shown. MEMBERSHIP is deliberately not stored: "who is parented to this
+// control" is the membership, so it cannot drift out of sync the way a saved
+// index list would.
+var _GROUP_TAG = "zeusgroup";
+var _GROUP_VER = "1";
+
+function _isGroupControl(layer) {
+    var c = "";
+    try { c = String(layer.comment || ""); } catch (e) {}
+    return c.indexOf(_GROUP_TAG + ":") === 0;
+}
+
+function _childrenOf(comp, control) {
+    var out = [], idx = control.index;
+    for (var i = 1; i <= comp.numLayers; i++) {
+        var L = comp.layer(i), p = null;
+        if (i === idx) continue;
+        try { p = L.parent; } catch (e) { continue; }
+        if (p && p.index === idx) out.push(L);
+    }
+    return out;
+}
+
+// ── Bounding box ─────────────────────────────────────────────────────────────
+// sourceRectAtTime() reports the rect in the LAYER's own space, so each corner
+// has to be pushed through that layer's transform and every transform above it
+// to land in comp space. toComp() is expression-language only — there is no
+// ExtendScript equivalent — so the matrix walk is done by hand.
+//
+// 2D only. A 3D layer needs the active camera and a perspective projection to
+// place its corners, which is a different (and much larger) job; those layers
+// still get parented, they just do not contribute to the box.
+
+function _transformGroup(layer) {
+    try { return layer.property("ADBE Transform Group"); } catch (e) { return null; }
+}
+
+function _propAt(layer, matchName, t, dflt) {
+    try {
+        var tg = _transformGroup(layer);
+        if (!tg) return dflt;
+        var p = tg.property(matchName);
+        if (!p) return dflt;
+        var v = p.valueAtTime(t, false);
+        return (v === undefined || v === null) ? dflt : v;
+    } catch (e) { return dflt; }
+}
+
+// Position needs its own reader: with dimensions separated the composite
+// "ADBE Position" stops returning a usable value.
+function _positionAt(layer, t) {
+    try {
+        var tg = _transformGroup(layer);
+        if (!tg) return [0, 0];
+        var p = tg.property("ADBE Position");
+        var sep = false;
+        try { sep = !!p.dimensionsSeparated; } catch (eS) {}
+        if (sep) {
+            var x = 0, y = 0;
+            try { x = tg.property("ADBE Position_0").valueAtTime(t, false); } catch (eX) {}
+            try { y = tg.property("ADBE Position_1").valueAtTime(t, false); } catch (eY) {}
+            return [Number(x) || 0, Number(y) || 0];
+        }
+        var v = p.valueAtTime(t, false);
+        return [Number(v[0]) || 0, Number(v[1]) || 0];
+    } catch (e) { return [0, 0]; }
+}
+
+function _v2(v, dflt) {
+    if (v === undefined || v === null) return dflt;
+    if (typeof v === "number") return [v, v];
+    if (v.length === undefined) return dflt;
+    return [Number(v[0]) || 0, Number(v[1]) || 0];
+}
+
+// One layer's transform: layer space → its parent's space (comp space when
+// the layer has no parent).
+function _applyXform(layer, pt, t) {
+    var a = _v2(_propAt(layer, "ADBE Anchor Point", t, [0, 0]), [0, 0]);
+    var s = _v2(_propAt(layer, "ADBE Scale", t, [100, 100]), [100, 100]);
+    var P = _positionAt(layer, t);
+    var rot = Number(_propAt(layer, "ADBE Rotate Z", t, 0)) || 0;
+
+    var x = (pt[0] - a[0]) * (s[0] / 100);
+    var y = (pt[1] - a[1]) * (s[1] / 100);
+
+    var rad = rot * Math.PI / 180;
+    var c = Math.cos(rad), sn = Math.sin(rad);
+    return [P[0] + x * c - y * sn, P[1] + x * sn + y * c];
+}
+
+function _layerPointToComp(layer, pt, t) {
+    var cur = layer, p = [pt[0], pt[1]], guard = 0;
+    while (cur && guard++ < 32) {
+        p = _applyXform(cur, p, t);
+        var nxt = null;
+        try { nxt = cur.parent; } catch (e) { nxt = null; }
+        cur = nxt;
+    }
+    return p;
+}
+
+// The four transformed corners, or null when the layer has no measurable rect.
+function _layerCorners(layer, t) {
+    var r = null;
+    try { r = layer.sourceRectAtTime(t, true); } catch (e) { return null; }
+    if (!r || r.width === undefined) return null;
+
+    var pts = [
+        [r.left, r.top],
+        [r.left + r.width, r.top],
+        [r.left + r.width, r.top + r.height],
+        [r.left, r.top + r.height]
+    ];
+    var out = [];
+    for (var i = 0; i < 4; i++) out.push(_layerPointToComp(layer, pts[i], t));
+    return out;
+}
+
+function _unionBounds(layers, t) {
+    var minX = null, minY = null, maxX = null, maxY = null, used = 0, skipped = [];
+
+    for (var i = 0; i < layers.length; i++) {
+        var L = layers[i];
+        var is3d = false;
+        try { is3d = !!L.threeDLayer; } catch (e) {}
+        if (is3d) { skipped.push(String(L.name || "?")); continue; }
+        if (!(L instanceof AVLayer)) { skipped.push(String(L.name || "?")); continue; }
+
+        var c = _layerCorners(L, t);
+        if (!c) { skipped.push(String(L.name || "?")); continue; }
+
+        for (var k = 0; k < c.length; k++) {
+            var x = c[k][0], y = c[k][1];
+            if (minX === null || x < minX) minX = x;
+            if (maxX === null || x > maxX) maxX = x;
+            if (minY === null || y < minY) minY = y;
+            if (maxY === null || y > maxY) maxY = y;
+        }
+        used++;
+    }
+    if (!used) return { ok: false, skipped: skipped };
+    return {
+        ok: true, used: used, skipped: skipped,
+        minX: minX, minY: minY, maxX: maxX, maxY: maxY,
+        w: maxX - minX, h: maxY - minY,
+        cx: (minX + maxX) / 2, cy: (minY + maxY) / 2
+    };
+}
+
+// Where the selection sits, in comp space.
+//
+// Preferred: the centre of the union bounding box, so the null lands in the
+// visual middle of what is selected rather than the average of their origins.
+//
+// Fallback: the average of the layers own anchor positions, mapped to comp
+// space. _layerPointToComp(layer, anchor) collapses to exactly the layer's
+// position, so this works for 3D layers, cameras and anything else with no
+// measurable rect — the cases that make the bounding box unavailable.
+function _selectionCenter(layers, t) {
+    var b = _unionBounds(layers, t);
+    if (b.ok) {
+        return { x: b.cx, y: b.cy, from: "bounds", w: b.w, h: b.h, skipped: b.skipped };
+    }
+
+    var sx = 0, sy = 0, n = 0;
+    for (var i = 0; i < layers.length; i++) {
+        var a = _v2(_propAt(layers[i], "ADBE Anchor Point", t, [0, 0]), [0, 0]);
+        var p = _layerPointToComp(layers[i], a, t);
+        sx += p[0]; sy += p[1]; n++;
+    }
+    if (!n) return null;
+    return { x: sx / n, y: sy / n, from: "positions", w: 0, h: 0, skipped: b.skipped };
+}
+
+// A plain After Effects null, centred on the selection.
+//
+// A null is always 100x100 and its content runs from its top-left, so the
+// anchor is moved to the middle: that makes the layer POSITION the centre of
+// the square, which is both where we want it placed and the point it scales
+// and rotates about.
+function _makeGroupNull(comp, name) {
+    var n = comp.layers.addNull(comp.duration);
+    try { n.name = name; } catch (eN) {}
+    try { n.property("ADBE Transform Group").property("ADBE Anchor Point").setValue([50, 50]); } catch (eA) {}
+    return n;
+}
+
+function _setControlPos(control, cx, cy) {
+    try { control.property("ADBE Transform Group").property("ADBE Position").setValue([cx, cy]); } catch (e) {}
+}
+
+function zae_groupLayers(params) {
+    try {
+        params = params || {};
+
+        var comp = app.project ? app.project.activeItem : null;
+        if (!(comp instanceof CompItem)) return _result(false, "Open a composition first.");
+
+        var sel = comp.selectedLayers;
+        if (!sel || !sel.length) return _result(false, "Select the layers you want to group.");
+
+        // Grouping a control would nest groups by accident; that is what
+        // dragging one onto another is for.
+        var members = [], i;
+        for (i = 0; i < sel.length; i++) members.push(sel[i]);
+
+        var t = 0;
+        try { t = comp.time; } catch (eT) {}
+
+        var ctr = _selectionCenter(members, t);
+        if (!ctr) return _result(false, "Could not work out where the selection is.");
+
+        // Only reparent the ROOTS of the selection — a layer already parented to
+        // another selected layer keeps its existing hierarchy.
+        var roots = [];
+        for (i = 0; i < members.length; i++) {
+            var p = null;
+            try { p = members[i].parent; } catch (e2) { p = null; }
+            var inSel = false;
+            if (p) {
+                for (var j = 0; j < members.length; j++) {
+                    if (members[j].index === p.index) { inSel = true; break; }
+                }
+            }
+            if (!inSel) roots.push(members[i]);
+        }
+        if (!roots.length) return _result(false, "Nothing to group — every selected layer is already parented inside the selection.");
+
+        // Index of the topmost member, read before anything is added.
+        var topIndex = members[0].index;
+        for (i = 1; i < members.length; i++) if (members[i].index < topIndex) topIndex = members[i].index;
+        var topLayer = comp.layer(topIndex);
+
+        var name = params.name ? String(params.name) : "Group";
+
+        app.beginUndoGroup("ZeusPack: Group");
+        var nul = null;
+        try {
+            nul = _makeGroupNull(comp, name);
+            _setControlPos(nul, ctr.x, ctr.y);
+
+            try {
+                nul.comment = _GROUP_TAG + ":" + _GROUP_VER + ":" + (new Date()).getTime();
+            } catch (eC) {}
+            try { nul.moveBefore(topLayer); } catch (eM) {}
+
+            for (i = 0; i < roots.length; i++) {
+                // AE compensates the child's transform, so nothing jumps.
+                try { roots[i].parent = nul; } catch (e3) {}
+            }
+
+            if (params.collapse) {
+                for (i = 0; i < members.length; i++) {
+                    try { members[i].shy = true; } catch (e4) {}
+                }
+                // Shy only hides anything while the comp-wide switch is on.
+                try { comp.hideShyLayers = true; } catch (e5) {}
+            }
+        } finally {
+            app.endUndoGroup();
+        }
+
+        var msg = "Grouped " + roots.length + " layer" + (roots.length === 1 ? "" : "s")
+                + " under \"" + name + "\" — null centred at "
+                + Math.round(ctr.x) + "," + Math.round(ctr.y);
+        if (ctr.from === "positions") {
+            // No measurable rect anywhere (3D layers, cameras, lights), so the
+            // centre is the average of their positions rather than of a box.
+            msg += " (averaged from layer positions — nothing had a measurable rect)";
+        }
+        if (ctr.skipped && ctr.skipped.length) {
+            var shown = ctr.skipped.slice(0, 3).join(", ");
+            if (ctr.skipped.length > 3) shown += " and " + (ctr.skipped.length - 3) + " more";
+            msg += "; not counted toward the centre: " + shown + " (3D or no rect)";
+        }
+        if (params.collapse) msg += "; children shy";
+
+        return _result(true, msg, {
+            name: name, centerX: ctr.x, centerY: ctr.y, centredFrom: ctr.from,
+            parented: roots.length, skipped: ctr.skipped || []
+        });
+    } catch (e) {
+        try { app.endUndoGroup(); } catch (e9) {}
+        return _result(false, "Exception: " + e.toString());
+    }
+}
+
+// Ungroup: hand the children back to whatever the control was parented to
+// (null = comp), then delete the control. Reparenting to the control's own
+// parent rather than to nothing is what keeps nested groups intact.
+function zae_ungroupLayers(params) {
+    try {
+        var comp = app.project ? app.project.activeItem : null;
+        if (!(comp instanceof CompItem)) return _result(false, "Open a composition first.");
+
+        var sel = comp.selectedLayers;
+        if (!sel || !sel.length) return _result(false, "Select a group (or a layer inside one).");
+
+        // Accept either the control itself or any child of one.
+        var controls = [], i, j;
+        for (i = 0; i < sel.length; i++) {
+            var cand = null;
+            if (_isGroupControl(sel[i])) cand = sel[i];
+            else {
+                var p = null;
+                try { p = sel[i].parent; } catch (e) { p = null; }
+                if (p && _isGroupControl(p)) cand = p;
+            }
+            if (!cand) continue;
+            var dup = false;
+            for (j = 0; j < controls.length; j++) if (controls[j].index === cand.index) { dup = true; break; }
+            if (!dup) controls.push(cand);
+        }
+        if (!controls.length) {
+            return _result(false, "No ZeusPack group in the selection — select the group layer itself, or one of its children.");
+        }
+
+        app.beginUndoGroup("ZeusPack: Ungroup");
+        var freed = 0, removed = 0;
+        try {
+            for (i = 0; i < controls.length; i++) {
+                var control = controls[i];
+                var kids = _childrenOf(comp, control);
+                var up = null;
+                try { up = control.parent; } catch (eP) { up = null; }
+
+                for (j = 0; j < kids.length; j++) {
+                    // AE preserves the world transform on both sides of this.
+                    try { kids[j].parent = up; freed++; } catch (e2) {}
+                    try { kids[j].shy = false; } catch (e3) {}
+                }
+                try { control.remove(); removed++; } catch (e4) {}
+            }
+        } finally {
+            app.endUndoGroup();
+        }
+
+        return _result(true, "Ungrouped " + removed + " group" + (removed === 1 ? "" : "s")
+                     + " — released " + freed + " layer" + (freed === 1 ? "" : "s"),
+                     { groups: removed, released: freed });
+    } catch (e) {
+        try { app.endUndoGroup(); } catch (e9) {}
+        return _result(false, "Exception: " + e.toString());
+    }
+}
+
+// Move a group's null back to the centre of its children.
+//
+// The null is placed at the selection centre when the group is made, but that
+// is a snapshot: move the children afterwards and the handle is left behind,
+// off to one side of what it controls. This brings it back.
+//
+// Moving a parent normally drags its children with it, so the children are
+// detached first and reattached after. Parenting preserves the world transform
+// in both directions, so nothing of theirs moves — only the null does.
+function zae_recenterGroup(params) {
+    try {
+        params = params || {};
+
+        var comp = app.project ? app.project.activeItem : null;
+        if (!(comp instanceof CompItem)) return _result(false, "Open a composition first.");
+
+        var sel = comp.selectedLayers;
+        if (!sel || !sel.length) return _result(false, "Select a group (or a layer inside one).");
+
+        var control = null, i;
+        for (i = 0; i < sel.length && !control; i++) {
+            if (_isGroupControl(sel[i])) control = sel[i];
+            else {
+                var p = null;
+                try { p = sel[i].parent; } catch (e) { p = null; }
+                if (p && _isGroupControl(p)) control = p;
+            }
+        }
+        if (!control) return _result(false, "No ZeusPack group in the selection — select the null itself, or one of its children.");
+
+        var kids = _childrenOf(comp, control);
+        if (!kids.length) return _result(false, '"' + control.name + '" has no layers in it.');
+
+        var t = 0;
+        try { t = comp.time; } catch (eT) {}
+
+        var ctr = _selectionCenter(kids, t);
+        if (!ctr) return _result(false, "Could not work out where those layers are.");
+
+        app.beginUndoGroup("ZeusPack: Recenter Group");
+        try {
+            for (i = 0; i < kids.length; i++) { try { kids[i].parent = null; } catch (e2) {} }
+            _setControlPos(control, ctr.x, ctr.y);
+            for (i = 0; i < kids.length; i++) { try { kids[i].parent = control; } catch (e3) {} }
+        } finally {
+            app.endUndoGroup();
+        }
+
+        return _result(true, "Recentred \"" + control.name + "\" on its " + kids.length
+                     + " layer" + (kids.length === 1 ? "" : "s") + " — now at "
+                     + Math.round(ctr.x) + "," + Math.round(ctr.y)
+                     + (ctr.from === "positions" ? " (averaged from layer positions)" : ""),
+                     { centerX: ctr.x, centerY: ctr.y, children: kids.length, centredFrom: ctr.from });
+    } catch (e) {
+        try { app.endUndoGroup(); } catch (e9) {}
+        return _result(false, "Exception: " + e.toString());
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SELF-UPDATE
+// ═══════════════════════════════════════════════════════════════
+// No releases and no tags: the version of record is ExtensionBundleVersion in
+// the repo's own CSXS/manifest.xml. The panel reads that file raw from GitHub,
+// compares it with what is installed, and this installs the difference.
+//
+// GitHub has no API for downloading one folder, so the whole repo archive is
+// fetched and only zeuspack_ae_bridge/ae_bridge is copied out of it.
+//
+// The destination is the SYSTEM-wide CEP folder under Program Files, which is
+// not writable by a normal user — so the work happens in an elevated PowerShell
+// child process and Windows raises the UAC prompt.
+var _UPDATE_REPO    = "explainervid-glitch/zeusanimation-library";
+var _UPDATE_BRANCH  = "main";
+var _EXT_FOLDER     = "zeuspack_ae_bridge";
+var _CEP_SYSTEM_DIR = "C:\\Program Files (x86)\\Common Files\\Adobe\\CEP\\extensions";
+
+// PowerShell's -EncodedCommand takes base64 of UTF-16LE. Going through it
+// sidesteps quoting entirely — the script travels as one opaque token, so paths
+// with spaces, quotes or & need no escaping at any of the three levels
+// (callSystem → powershell → Start-Process).
+function _psEncode(script) {
+    var bytes = "";
+    for (var i = 0; i < script.length; i++) {
+        var c = script.charCodeAt(i);
+        bytes += String.fromCharCode(c & 0xff) + String.fromCharCode((c >> 8) & 0xff);
+    }
+    return _b64encode(bytes);
+}
+
+function _manifestVersionOf(file) {
+    var txt = _readText(file);
+    if (!txt) return "";
+    var m = /ExtensionBundleVersion\s*=\s*"([^"]+)"/.exec(txt);
+    return m ? String(m[1]) : "";
+}
+
+// What is actually on disk in the system CEP folder right now.
+function zae_installedExtensionVersion(params) {
+    try {
+        var dir = (params && params.dir) ? String(params.dir) : _CEP_SYSTEM_DIR;
+        var f = new File(dir + "/" + _EXT_FOLDER + "/CSXS/manifest.xml");
+        if (!f.exists) {
+            return _result(true, "not installed", { installed: false, version: "", path: f.fsName });
+        }
+        var v = _manifestVersionOf(f);
+        return _result(true, v || "unknown", { installed: true, version: v, path: f.fsName });
+    } catch (e) {
+        return _result(false, "Exception: " + e.toString());
+    }
+}
+
+function zae_installUpdate(params) {
+    try {
+        params = params || {};
+        if (String($.os).indexOf("Windows") === -1) {
+            return _result(false, "Automatic install is Windows-only — copy ae_bridge/ into the CEP extensions folder by hand.");
+        }
+
+        var branch = params.branch ? String(params.branch) : _UPDATE_BRANCH;
+        var target = _CEP_SYSTEM_DIR + "\\" + _EXT_FOLDER;
+        var url    = "https://github.com/" + _UPDATE_REPO + "/archive/refs/heads/" + branch + ".zip";
+
+        var before = _manifestVersionOf(new File(target + "/CSXS/manifest.xml"));
+
+        // Runs elevated. Everything it needs is baked in — it takes no
+        // arguments, so there is nothing for the shell to mangle.
+        var inner = ""
+          + "$ErrorActionPreference='Stop';"
+          + "$log = Join-Path $env:TEMP 'zeuspack_update.log';"
+          + "Set-Content -Path $log -Value ('ZeusPack update ' + (Get-Date));"
+          + "try {"
+          + "  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;"
+          + "  $zip  = Join-Path $env:TEMP 'zeuspack_update.zip';"
+          + "  $work = Join-Path $env:TEMP 'zeuspack_update_extract';"
+          + "  Add-Content $log ('Downloading " + url + "');"
+          + "  Invoke-WebRequest -Uri '" + url + "' -OutFile $zip -UseBasicParsing;"
+          + "  if (Test-Path $work) { Remove-Item $work -Recurse -Force }"
+          + "  Expand-Archive -Path $zip -DestinationPath $work -Force;"
+          + "  $root = Get-ChildItem $work -Directory | Select-Object -First 1;"
+          + "  $from = Join-Path $root.FullName 'zeuspack_ae_bridge\\ae_bridge';"
+          + "  if (-not (Test-Path $from)) { throw ('ae_bridge not found in the archive: ' + $from) }"
+          + "  $target = '" + target + "';"
+          + "  if (-not (Test-Path $target)) { New-Item -ItemType Directory -Path $target -Force | Out-Null }"
+          + "  Add-Content $log ('Copying to ' + $target);"
+          + "  Copy-Item -Path (Join-Path $from '*') -Destination $target -Recurse -Force;"
+          + "  Remove-Item $zip -Force -ErrorAction SilentlyContinue;"
+          + "  Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue;"
+          + "  Add-Content $log 'OK';"
+          + "} catch {"
+          + "  Add-Content $log ('ERROR: ' + $_.Exception.Message);"
+          + "  exit 1;"
+          + "}";
+
+        // -Wait so the result can be verified against the disk before reporting;
+        // AE is blocked for the download, which the panel says up front.
+        var outer = "Start-Process -FilePath powershell.exe -Verb RunAs -Wait "
+                  + "-ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand','"
+                  + _psEncode(inner) + "'";
+
+        try {
+            system.callSystem("powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand "
+                            + _psEncode(outer));
+        } catch (eRun) {
+            return _result(false, "Could not start the installer: " + eRun.toString());
+        }
+
+        // callSystem's exit code is unreliable across hosts, and UAC can be
+        // cancelled without any error surfacing — so believe the disk.
+        var after = _manifestVersionOf(new File(target + "/CSXS/manifest.xml"));
+        var logTxt = _readText(new File(Folder.temp.fsName + "/zeuspack_update.log")) || "";
+        var failed = /ERROR: /.test(logTxt);
+
+        if (!after) {
+            return _result(false, "Nothing was installed — the elevation prompt was declined, or the "
+                         + "install failed." + (failed ? " " + logTxt.replace(/[\r\n]+/g, " ") : ""));
+        }
+        if (before && after === before && failed) {
+            return _result(false, "Install failed, the existing copy is untouched: "
+                         + logTxt.replace(/[\r\n]+/g, " "));
+        }
+
+        return _result(true, "Installed " + after + " to " + target
+                     + (before ? " (was " + before + ")" : " (fresh install)")
+                     + " — restart After Effects to load it.",
+                     { version: after, previous: before, path: target });
     } catch (e) {
         return _result(false, "Exception: " + e.toString());
     }

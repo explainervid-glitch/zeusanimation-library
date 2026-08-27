@@ -104,6 +104,24 @@
   .log .ok  { color:var(--ok); }
   .log .err { color:var(--err); }
 
+  /* ── Layer tools — collapsed until the Tools button is toggled ── */
+  .tools { display:none; flex:0 0 auto; flex-direction:column; gap:5px; }
+  .tools.open { display:flex; }
+  /* The primary action of the group, tinted so the eye lands on it first —
+     distinct from .ico.on, which means a toggle is currently switched on. */
+  .ico.pri { color:var(--accent); border-color:var(--accent); }
+  .ico.pri:hover { background:var(--accent); color:#fff; }
+
+  /* Checkbox / number rows: small enough to survive a 240px docked panel. */
+  .chk {
+    display:flex; align-items:center; gap:4px;
+    font-size:10px; color:var(--muted); cursor:pointer; white-space:nowrap;
+  }
+  .chk:hover { color:var(--text); }
+  .chk input[type=checkbox] { margin:0; width:11px; height:11px; cursor:pointer; }
+  /* Pushed to the far end so the action icons stay grouped together. */
+  .tools .chk { margin-left:auto; }
+
   /* ── Preset browser — hidden until the wand button is toggled ── */
   .presets { display:none; flex:1; min-height:0; flex-direction:column; gap:5px; }
   .presets.open { display:flex; }
@@ -214,6 +232,7 @@
   }
   .tag.aep { color:#8fb0ff; }   /* composition */
   .tag.ffx { color:#fbbf24; }   /* animation preset */
+  .tag.zfx { color:#4ade80; }   /* ZeusPack preset — .ffx payload + expressions */
 
   /* Right-click menu — plain div, since CEP's native menu API is panel-wide
      and can't vary per card. */
@@ -350,12 +369,46 @@
       <span>Presets</span>
     </button>
 
+    <!-- Toggle layer tools -->
+    <button class="ico lbl" id="toolsBtn" title="Layer tools — group, ungroup, recenter">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+           stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><path d="M14 6h7M17.5 3v6M3 17.5h7"/></svg>
+      <span>Tools</span>
+    </button>
+
     <!-- Toggle log -->
     <button class="ico lbl" id="logBtn" title="Show log">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
            stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="14" y2="17"/></svg>
       <span>Log</span>
     </button>
+  </div>
+
+  <!-- ── Layer tools ── -->
+  <div class="tools" id="tools">
+    <div class="row">
+      <!-- Icon-only: the actions are few and their tooltips carry the detail,
+           which keeps the whole tools panel to a single row. -->
+      <button class="ico pri" id="groupBtn"
+              title="Quick Parent: Parent the selected layers to a null placed at their center">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+             stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" stroke-dasharray="4 3"/><rect x="8.5" y="8.5" width="7" height="7" rx="1"/></svg>
+      </button>
+      <button class="ico" id="ungroupBtn"
+              title="Clear Parent: Release the group's layers and delete its null">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+             stroke-linecap="round" stroke-linejoin="round"><rect x="8.5" y="8.5" width="7" height="7" rx="1"/><path d="M4 4l3 3M20 4l-3 3M4 20l3-3M20 20l-3-3"/></svg>
+      </button>
+      <button class="ico" id="recenterBtn"
+              title="Recenter: Move the group's null back to the center of its layers">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+             stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
+      </button>
+
+      <label class="chk" title="Shy the grouped layers so they collapse out of the timeline. Note that the shy switch is comp-wide.">
+        <input type="checkbox" id="collapseChk" /><span>Shy</span>
+      </label>
+    </div>
   </div>
 
   <!-- ── Preset browser ── -->

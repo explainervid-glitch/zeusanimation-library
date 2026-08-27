@@ -44,6 +44,13 @@
   var loopBtn    = document.getElementById("loopBtn");
   var loopLbl    = document.getElementById("loopLbl");
 
+  var toolsBtn    = document.getElementById("toolsBtn");
+  var toolsEl     = document.getElementById("tools");
+  var groupBtn    = document.getElementById("groupBtn");
+  var ungroupBtn  = document.getElementById("ungroupBtn");
+  var recenterBtn = document.getElementById("recenterBtn");
+  var collapseChk = document.getElementById("collapseChk");
+
   var connected = null;   // tri-state so the first result always renders
 
   // The status row carries asset names, folder names and host messages, any of
@@ -136,16 +143,24 @@
   // ═══════════════════════════════════════════════════════════
   //  UPDATE CHECK
   // ═══════════════════════════════════════════════════════════
-  // Compares the installed extension version against the newest GitHub release
-  // tag. Entirely best-effort: no network, a rate-limited API or a repo with no
-  // releases all end in silence rather than an error the user can't act on.
-  var UPDATE_REPO = "explainervid-glitch/zeusanimation-library";
-  var UPDATE_API  = "https://api.github.com/repos/" + UPDATE_REPO + "/releases/latest";
-  var UPDATE_PAGE = "https://github.com/" + UPDATE_REPO + "/releases/latest";
+  // There are no releases and no tags to publish. The version of record is
+  // ExtensionBundleVersion in the repo's own CSXS/manifest.xml, read raw from
+  // GitHub and compared with what this panel is running.
+  //
+  // The test is INEQUALITY, not "newer". A working copy that is ahead of the
+  // branch is just as much a mismatch as one behind it, and both are worth
+  // knowing about — the tooltip names both versions so it is obvious which way
+  // round it is.
+  //
+  // Still best-effort: no network, a CDN hiccup or a moved file all end in
+  // silence rather than an error nobody can act on.
+  var UPDATE_REPO   = "explainervid-glitch/zeusanimation-library";
+  var UPDATE_BRANCH = "main";
+  var UPDATE_MANIFEST = "https://raw.githubusercontent.com/" + UPDATE_REPO + "/"
+                      + UPDATE_BRANCH + "/zeuspack_ae_bridge/ae_bridge/CSXS/manifest.xml";
   var UPDATE_TS_KEY   = "zae.updateCheckedAt";
-  var UPDATE_SEEN_KEY = "zae.updateSeen";
-  var UPDATE_EVERY_MS = 6 * 60 * 60 * 1000;   // unauthenticated GitHub is 60 req/h
-  var PANEL_VERSION   = "1.0.0";              // fallback if CEP won't tell us
+  var UPDATE_EVERY_MS = 6 * 60 * 60 * 1000;
+  var PANEL_VERSION   = "1.0.2";              // fallback if CEP won't tell us
 
   var updateBtn = document.getElementById("updateBtn");
 
@@ -157,7 +172,7 @@
     return PANEL_VERSION;
   }
 
-  // Numeric compare on major.minor.patch; a leading "v" on the tag is ignored.
+  // Numeric compare on major.minor.patch; a leading "v" is ignored.
   function cmpVersion(a, b) {
     var pa = String(a).replace(/^v/i, "").split(".");
     var pb = String(b).replace(/^v/i, "").split(".");
@@ -169,17 +184,32 @@
     return 0;
   }
 
-  function showUpdate(latest, url) {
+  // Downloads the repo archive and copies ae_bridge/ into the system-wide CEP
+  // folder. That path is under Program Files, so the host runs the copy in an
+  // elevated child process — Windows raises the UAC prompt, and declining it is
+  // reported as "nothing was installed" rather than a silent no-op.
+  function runUpdate(remote) {
+    updateBtn.disabled = true;
+    flash("Updating to " + remote + "…");
+    log("Update → downloading " + UPDATE_REPO + "@" + UPDATE_BRANCH
+        + " and installing to the system CEP folder…");
+    log("  Accept the Windows elevation prompt. After Effects is blocked until it finishes.");
+
+    callHost("zae_installUpdate", { branch: UPDATE_BRANCH }, function (r) {
+      updateBtn.disabled = false;
+      log("Update → " + r.message, r.ok ? "ok" : "err");
+      flash(r.ok ? "Updated — restart After Effects" : r.message, !r.ok);
+      if (r.ok) updateBtn.style.display = "none";
+    });
+  }
+
+  function showUpdate(remote) {
+    var mine = installedVersion();
     updateBtn.style.display = "";
-    updateBtn.title = "Version " + latest + " is available (you have " + installedVersion() + ")";
-    updateBtn.onclick = function () {
-      try { csInterface.openURLInDefaultBrowser(url || UPDATE_PAGE); } catch (e) {}
-      // Hide until an even newer release appears, so it stops nagging once
-      // the user has gone to fetch it.
-      try { localStorage.setItem(UPDATE_SEEN_KEY, latest); } catch (e2) {}
-      updateBtn.style.display = "none";
-    };
-    log("Update available: " + latest, "ok");
+    updateBtn.title = "Repo has " + remote + ", this panel is " + mine
+                    + " — click to install (needs administrator rights)";
+    updateBtn.onclick = function () { runUpdate(remote); };
+    log("Update available: " + remote + " (running " + mine + ")", "ok");
   }
 
   function checkForUpdate() {
@@ -190,20 +220,20 @@
     if (Date.now() - last < UPDATE_EVERY_MS) return;
     try { localStorage.setItem(UPDATE_TS_KEY, String(Date.now())); } catch (e2) {}
 
-    fetch(UPDATE_API, { cache: "no-store", headers: { Accept: "application/vnd.github+json" } })
-      .then(function (r) { return r.ok ? r.json() : null; })
-      .then(function (d) {
-        if (!d || !d.tag_name) return;                    // no releases published yet
-        var latest = String(d.tag_name);
-        if (cmpVersion(installedVersion(), latest) >= 0) return;
-
-        var seen = null;
-        try { seen = localStorage.getItem(UPDATE_SEEN_KEY); } catch (e3) {}
-        if (seen && cmpVersion(seen, latest) >= 0) return;  // already sent there
-
-        showUpdate(latest, d.html_url);
+    // raw.githubusercontent sits behind a CDN, so the timestamp is a cache
+    // buster rather than decoration — without it a just-pushed bump can take
+    // minutes to show up.
+    fetch(UPDATE_MANIFEST + "?t=" + Date.now(), { cache: "no-store" })
+      .then(function (r) { return r.ok ? r.text() : null; })
+      .then(function (txt) {
+        if (!txt) return;
+        var m = /ExtensionBundleVersion\s*=\s*"([^"]+)"/.exec(txt);
+        if (!m) return;                                  // manifest moved or malformed
+        var remote = String(m[1]);
+        if (cmpVersion(installedVersion(), remote) === 0) return;
+        showUpdate(remote);
       })
-      .catch(function () { /* offline or rate-limited — stay quiet */ });
+      .catch(function () { /* offline — stay quiet */ });
   }
 
   // ── Buttons ──
@@ -319,11 +349,14 @@
       : '<video draggable="false" src="' + esc(fileUrl(p.preview, p.previewMtime)) + '" preload="metadata" loop muted playsinline></video>';
 
     // The badge marks WHAT the asset is, not what sidecars it has: "ffx" is an
-    // animation preset, "aep" a composition. A preset's same-named .aep is only
-    // the source its preview was rendered from, so it never shows as "aep".
+    // animation preset, "aep" a composition, "zfx" a ZeusPack preset (which
+    // carries expressions on top of the .ffx payload it embeds). A preset's
+    // same-named .aep is only the source its preview was rendered from, so it
+    // never shows as "aep".
     var isComp = p.kind === "comp";
-    var cls    = isComp ? "aep" : "ffx";      // colour class, keyed to file type
-    var label  = isComp ? "Comp" : "FX";      // what the user actually reads
+    var isPlus = p.kind === "presetplus";
+    var cls    = isComp ? "aep" : isPlus ? "zfx" : "ffx";   // colour class
+    var label  = isComp ? "Comp" : isPlus ? "FX+" : "FX";   // what the user reads
 
     var media = !p.preview
       ? '<span class="ph">' + label + "</span>"
@@ -641,6 +674,27 @@
     }
   }
 
+  // Is this folder path still one the rail will draw a row for? Guards the
+  // selection kept across a reload: a category deleted (or renamed) since the
+  // last scan would otherwise stay "selected" and filter the grid to nothing,
+  // with no highlighted row to explain why.
+  //
+  // null = "All presets" and "" = the root row; both always exist.
+  function folderStillListed(path) {
+    if (path === null || path === "") return true;
+    var i;
+    for (i = 0; i < knownFolders.length; i++) if (knownFolders[i] === path) return true;
+    if (declaredCats) {
+      for (i = 0; i < declaredCats.length; i++) if (declaredCats[i] === path) return true;
+    }
+    // A folder holding assets is drawn even if the scan didn't list it directly.
+    for (i = 0; i < presets.length; i++) {
+      var f = String(presets[i].folder || "");
+      if (f === path || f.indexOf(path + "/") === 0) return true;
+    }
+    return false;
+  }
+
   // `prune` drops declared categories whose folder is gone. Passed only by the
   // Refresh button: it rewrites categories.json, which everyone on the shared
   // root reads, so it stays an explicit user action rather than a side effect
@@ -654,14 +708,20 @@
         log("Presets → " + r.message, "err");
         return;
       }
+      var prevDir = currentDir;
       currentDir = r.data.path;
       pathSelect.title = currentDir;
       renderRoots(currentRootId());
       presets = r.data.presets || [];
       declaredCats = r.data.categories || null;
       knownFolders = r.data.folders || [];
-      // A folder selected in the previous directory means nothing here.
-      activeFolder = null;
+
+      // Keep the selected category across a reload of the SAME root — Refresh,
+      // and the rescans that follow a rename/move/delete/export, should leave
+      // you where you were rather than throwing you back to "All presets".
+      // Only a genuine root change (or a folder that has since gone) clears it,
+      // because a path from the previous directory means nothing here.
+      if (prevDir !== currentDir || !folderStillListed(activeFolder)) activeFolder = null;
       renderCats();
       applyFilter();
       log("Presets → " + r.message + " (" + r.data.withPreview + " with preview)"
@@ -960,6 +1020,25 @@
     }, function (r) {
       log("Save preset → " + r.message, r.ok ? "ok" : "err");
       flash(r.message, !r.ok);
+      if (r.ok && currentDir) loadPresets(currentDir);
+    });
+  }
+
+  // ── Save the AE selection as a .zfx ──────────────────────────
+  // Same modal as the legacy command — AE's Save Animation Preset is the only
+  // way to get animation-preset bytes, and those bytes are what keeps the
+  // format lossless. The difference is on either side of it: expressions are
+  // read off the live layer first, and the .ffx is folded into the .zfx after.
+  function savePresetPlus() {
+    if (!currentDir) { flash("Pick a preset folder first", true); return; }
+    flash("Waiting for AE's save dialog…");
+    log("Save .zfx → opening After Effects' Save Animation Preset dialog…");
+    log("  Name it and save anywhere — the panel files it into " + targetLabel() + " afterwards.");
+    callHost("zae_savePresetPlus", {
+      root: currentDir, category: targetCategory()
+    }, function (r) {
+      log("Save .zfx → " + r.message, r.ok ? "ok" : "err");
+      flash(r.ok ? (r.data && r.data.name ? r.data.name + " ✓" : "Saved ✓") : r.message, !r.ok);
       if (r.ok && currentDir) loadPresets(currentDir);
     });
   }
@@ -1381,8 +1460,14 @@
     menuEl.innerHTML = "";
 
     var into = targetLabel();
+    // The richer format first — it embeds the .ffx, so it keeps everything the
+    // legacy command does and adds expressions on top.
+    item("Save Animation+ (.zfx)", !!currentDir, savePresetPlus,
+      "AE selection → " + into + " — embeds AE's own preset data, so nothing is "
+      + "lost, and captures expressions on top");
+
     item("Save Animation (.ffx) ", !!currentDir, saveAnimationPreset,
-      "AE selection → " + into);
+      "AE selection → " + into + " — plain AE preset, no expression capture");
 
     item("Save Animation Comp (.aep)", !!currentDir, saveCompAsPreset,
       "Collect Files: the whole open project → " + into);
@@ -1440,7 +1525,10 @@
     if (!p) return;
     var label = reverse ? "Apply Out" : "Apply In";
     applyBtn.disabled = true; applyOutBtn.disabled = true;
-    callHost("zae_applyPreset", { path: p.path, reverse: !!reverse }, function (r) {
+    // A .zfx goes through the richer path: it decodes its embedded .ffx and
+    // then restores the expressions it captured on top.
+    var fn = (p.kind === "presetplus") ? "zae_applyPresetPlus" : "zae_applyPreset";
+    callHost(fn, { path: p.path, reverse: !!reverse }, function (r) {
       applyBtn.disabled = false; applyOutBtn.disabled = false;
       log(label + " " + p.name + " → " + r.message, r.ok ? "ok" : "err");
       flash(r.ok ? p.name + (reverse ? " out ✓" : " ✓") : r.message, !r.ok);
@@ -1458,6 +1546,59 @@
   applyBtn.addEventListener("click", useSelected);
   applyOutBtn.addEventListener("click", function () { applySelected(true); });
 
+  // ═══════════════════════════════════════════════════════════
+  //  LAYER TOOLS
+  // ═══════════════════════════════════════════════════════════
+  // Grouping without a pre-comp: a control layer sized to the selection's
+  // bounding box, with the selection parented to it.
+  //
+  // These act on After Effects' own selection, so there is nothing to pick in
+  // the panel — the buttons just fire and report.
+  var TOOLS_KEY    = "zae.toolsOpen";
+  var COLLAPSE_KEY = "zae.groupCollapse";
+
+  function runTool(fn, label, params) {
+    groupBtn.disabled = true; ungroupBtn.disabled = true; recenterBtn.disabled = true;
+    flash(label + "…");
+    callHost(fn, params || {}, function (r) {
+      groupBtn.disabled = false; ungroupBtn.disabled = false; recenterBtn.disabled = false;
+      log(label + " → " + r.message, r.ok ? "ok" : "err");
+      flash(r.ok ? (r.message || label + " ✓") : r.message, !r.ok);
+    });
+  }
+
+  groupBtn.addEventListener("click", function () {
+    runTool("zae_groupLayers", "Group", {
+      collapse: !!(collapseChk && collapseChk.checked)
+    });
+  });
+  ungroupBtn.addEventListener("click", function () {
+    runTool("zae_ungroupLayers", "Ungroup", {});
+  });
+  recenterBtn.addEventListener("click", function () {
+    runTool("zae_recenterGroup", "Recenter", {});
+  });
+
+  // Persisted — it is a per-taste setting, not a per-group one.
+  if (collapseChk) {
+    try { collapseChk.checked = localStorage.getItem(COLLAPSE_KEY) === "1"; } catch (e) {}
+    collapseChk.addEventListener("change", function () {
+      try { localStorage.setItem(COLLAPSE_KEY, this.checked ? "1" : "0"); } catch (e2) {}
+    });
+  }
+
+  function setToolsOpen(open) {
+    toolsEl.className = open ? "tools open" : "tools";
+    toolsBtn.className = open ? "ico lbl on" : "ico lbl";
+    toolsBtn.title = open ? "Hide layer tools" : "Layer tools — group, ungroup, recenter";
+    try { localStorage.setItem(TOOLS_KEY, open ? "1" : "0"); } catch (e) {}
+    syncHeight();
+  }
+
+  toolsBtn.addEventListener("click", function () {
+    setToolsOpen(toolsEl.className.indexOf("open") === -1);
+  });
+
   // Collapsed = one status row only. Ask the host to shrink/grow the panel to
   // match, so a closed log costs no screen space next to AE's own panels.
   var COLLAPSED_H = 40, EXPANDED_H = 190, PRESETS_H = 400;
@@ -1467,12 +1608,20 @@
   }
 
   // Height is driven by whichever sections are open; the browser is the tall
-  // one, so it wins when both are showing.
+  // one, so it sets the baseline and the fixed-height rows add to it.
+  // One row of icon buttons now that the actions carry their labels in
+  // tooltips, so the section costs a single row's height.
+  var TOOLS_H = 32;
+
   function syncHeight() {
     var presetsOpen = presetsEl.className.indexOf("open") !== -1;
+    var toolsOpen   = toolsEl.className.indexOf("open") !== -1;
     var logOpen     = logEl.className.indexOf("open") !== -1;
-    if (presetsOpen) setPanelHeight(PRESETS_H + (logOpen ? 100 : 0));
-    else             setPanelHeight(logOpen ? EXPANDED_H : COLLAPSED_H);
+
+    var h = presetsOpen ? PRESETS_H : COLLAPSED_H;
+    if (toolsOpen) h += TOOLS_H;
+    if (logOpen)   h += presetsOpen ? 100 : (EXPANDED_H - COLLAPSED_H);
+    setPanelHeight(h);
   }
 
   logBtn.addEventListener("click", function () {
@@ -1512,6 +1661,12 @@
   initCardSize();
   initCatsWidth();
   setAutoplay(autoplayAll, false);
+
+  // Tools start closed — the browser is the panel's main job. Set before the
+  // browser so syncHeight only runs once with both states settled.
+  var savedTools = null;
+  try { savedTools = localStorage.getItem(TOOLS_KEY); } catch (e) {}
+  setToolsOpen(savedTools === "1");
 
   // Browser is open by default; after that the panel remembers whether it was
   // left open, so closing it isn't undone on every launch.

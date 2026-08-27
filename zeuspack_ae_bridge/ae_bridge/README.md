@@ -47,6 +47,8 @@ Glow Pop.mp4     the rendered preview the grid shows
 that preset's preview project, not as a separate asset — so the pair above is one
 card, not two.
 
+Precedence is **`.zfx` › `.ffx` › `.aep`** — see [The .zfx format](#the-zfx-format).
+
 **An `.aep` with no matching `.ffx` is its own asset**, a *composition*. It can
 have a preview too:
 
@@ -336,6 +338,113 @@ Notes:
 
 ---
 
+## The .zfx format
+
+`.zfx` is a **superset of `.ffx`, not a replacement**. It is a JSON file that
+embeds After Effects' own animation-preset bytes verbatim (base64) and adds a
+structured layer on top:
+
+```
+Glow Pop.zfx     ← the asset (embedded .ffx + expressions + provenance)
+Glow Pop.mp4       its preview
+```
+
+Cards are badged green **`FX+`**, against amber `FX` for a plain `.ffx`.
+
+### Why embed rather than reimplement
+
+`applyPreset()` does an enormous amount that cannot be reproduced from script:
+effect instances and their parameters — including `PropertyValueType
+.CUSTOM_VALUE` blobs (Gradient Ramp's ramp data, Curves, most custom-UI effect
+params) that ExtendScript can neither read nor write — plus keyframe
+interpolation types, temporal ease (speed + influence, per dimension), spatial
+tangents, roving and hold keys, masks, text documents and layer styles.
+
+A hand-rolled format would silently drop exactly those. By carrying AE's own
+payload, `.zfx` **cannot be worse than the `.ffx` inside it** — worst case it
+behaves identically.
+
+### What it adds
+
+| Field | Purpose |
+|---|---|
+| `expressions[]` | Captured per property, addressed by **matchName chain** (`ADBE Transform Group` › `ADBE Position`) with a numeric index chain as fallback |
+| `expressions[].refs` | External things each expression reaches for, so apply can name what's missing |
+| `app.expressionEngine` | What it was authored against, so an engine mismatch is reported rather than left as a silent error |
+| `source` | Comp, layer names, and how many properties were selected at save time |
+
+Expressions are captured **from the live layer before AE's dialog runs**, so
+they are recorded whether or not AE's own format keeps them.
+
+### Dropdown Menu Control items
+
+A Dropdown Menu Control keeps its item list as part of the *effect*, not as a
+property value. AE's own preset format carries it, so the embedded `.ffx`
+restores it correctly and **there is nothing for the panel to put back**.
+
+The item list *is* recorded in the `.zfx`, but as metadata only — it is never
+replayed on apply.
+
+> **Never call `setPropertyParameters()` on a restored dropdown.** It does not
+> edit the dropdown in place; it rebuilds the effect, and the rebuilt effect
+> loses the name the user gave it.
+>
+> Two dropdowns named `Cursor Default` and `Cursor Hover` came back as
+> `Cursor Hover` and `Cursor Hover 2` — AE uniquing a name that had been
+> dropped — which broke every expression referencing them by name. Two `Glow`
+> effects survived the identical round trip untouched, because no dropdown code
+> ran on them. That contrast is what identified the cause.
+
+Reading the list is kept only because it costs nothing and makes the saved file
+self-describing. It is a probe: `setPropertyParameters()` writes the list
+(AE 17.0.1+) but no getter has ever been documented, so when nothing answers
+only the item count is recorded.
+
+### Saving
+
+*Save Animation+ (.zfx)* is on the grid's right-click menu. It opens AE's
+dialog — the only way to get preset bytes — and the panel folds the resulting
+`.ffx` into the `.zfx` afterwards, removing the intermediate file. Pass
+`keepFfx: true` to keep both.
+
+**Property selection still matters for the embedded payload.** AE saves only the
+selected properties when any are selected; click the *layer name* to capture the
+whole layer. The expression capture is not subject to this — it always reads the
+full layer — and the panel says so when the two disagree.
+
+### Applying
+
+Decode payload → `applyPreset()` → restore expressions on top. Expressions are
+re-applied unconditionally rather than only where missing: if the embedded
+`.ffx` kept them, it is a harmless rewrite of identical text; where it did not,
+that is the whole point.
+
+The apply message reports what could not be resolved:
+
+```
+Applied Glow Pop to 1 layer, 3 expressions, restored 3 expressions
+ — expects layer not in this comp: Null 1
+ — authored for expression engine extendscript, this project uses
+   javascript-1.0 (File ▸ Project Settings ▸ Expressions)
+```
+
+That last class of failure is the one **no storage format can fix on its own** —
+the reference has to resolve against the destination comp. Naming it is the most
+the format can do.
+
+### Compatibility
+
+*Save Animation (.ffx)* is unchanged and stays — a `.ffx` opens in anyone's After
+Effects, ZeusPack or not, and supports drag-and-drop from AE's own Effects &
+Presets panel. `.zfx` does neither; it is the richer option for a shared library,
+not a replacement for interop.
+
+A `.ffx` sitting beside a `.zfx` of the same name is treated as that preset's
+legacy sibling (one card, not two), the same way an `.aep` is treated as its
+preview project.
+
+---
+
 ## Authoring workflow
 
 1. **Add Asset…** — creates a 1080p project in the chosen category and opens it.
@@ -435,23 +544,70 @@ be open, which is a bigger change than a thumbnail.
 
 ## Updates
 
-The panel checks GitHub for a newer release on launch and shows an **Update**
-badge in the status bar when the newest tag is above the installed extension
-version. Clicking it opens the releases page and hides the badge until an even
-newer version appears.
+**No releases and no tags.** The version of record is `ExtensionBundleVersion`
+in this repo's own `CSXS/manifest.xml`. Shipping an update is one commit:
 
-| Constant (`js/panel.js`) | Meaning |
-|---|---|
-| `UPDATE_REPO` | `explainervid-glitch/zeusanimation-library` |
-| `UPDATE_EVERY_MS` | 6h — unauthenticated GitHub allows 60 requests/hour |
-| `PANEL_VERSION` | Fallback if CEP won't report the installed version |
+```xml
+<ExtensionManifest ... ExtensionBundleVersion="1.0.3"
+```
 
-For this to fire, a release must be **tagged with a version above
-`ExtensionBundleVersion` in `CSXS/manifest.xml`** (currently `1.0.0`). Tags may
-be written `1.2.0` or `v1.2.0`; only major.minor.patch is compared.
+On launch the panel reads that file raw from GitHub and compares it with the
+running extension. When they differ it shows an **Update** badge in the status
+bar; clicking it installs.
 
-The check is best-effort by design — no network, a rate-limited API, or a repo
-with no releases all end in silence rather than an error nobody can act on.
+### What the check compares
+
+**Inequality, not "newer".** A working copy *ahead* of the branch is as much a
+mismatch as one behind it, and both are worth knowing about — the tooltip names
+both versions, so which way round it is stays obvious:
+
+```
+Repo has 1.0.3, this panel is 1.0.2 — click to install (needs administrator rights)
+```
+
+### What clicking it does
+
+1. Downloads `https://github.com/<repo>/archive/refs/heads/main.zip`.
+   GitHub has no API for fetching a single folder, so the whole archive comes
+   down and only `zeuspack_ae_bridge/ae_bridge` is copied out.
+2. Copies that folder into
+   **`C:\Program Files (x86)\Common Files\Adobe\CEP\extensions\zeuspack_ae_bridge`**.
+3. Reports the version now on disk, and asks you to restart After Effects.
+
+That destination is not writable by a normal user, so the copy runs in an
+**elevated PowerShell child process** and Windows raises the UAC prompt.
+Declining it is reported as *"Nothing was installed"* rather than passing
+silently.
+
+Notes:
+
+- **After Effects is blocked while it runs.** The elevated process is waited on
+  so the result can be verified against the disk rather than trusted from an
+  exit code — `callSystem` reports those unreliably, and a cancelled UAC prompt
+  surfaces no error at all.
+- The script travels as **`-EncodedCommand`** (base64 UTF-16LE), which sidesteps
+  quoting at all three levels — `callSystem` → `powershell` → `Start-Process`.
+  Paths with spaces, `&` or quotes need no escaping.
+- Failures are appended to `%TEMP%\zeuspack_update.log`, and the panel echoes
+  the last error into its own log.
+- **Windows only.** Elsewhere it refuses and tells you to copy `ae_bridge/` by
+  hand.
+
+| Constant | Where | Meaning |
+|---|---|---|
+| `UPDATE_REPO` / `_UPDATE_REPO` | both | `explainervid-glitch/zeusanimation-library` |
+| `UPDATE_BRANCH` / `_UPDATE_BRANCH` | both | `main` |
+| `UPDATE_EVERY_MS` | `panel.js` | 6h between checks |
+| `PANEL_VERSION` | `panel.js` | Fallback if CEP won't report the installed version |
+| `_CEP_SYSTEM_DIR` | `host.jsx` | System-wide CEP extensions folder |
+
+The check itself stays best-effort — no network, a CDN hiccup or a moved
+manifest all end in silence rather than an error nobody can act on. The install
+is the opposite: it always reports what happened.
+
+> The raw manifest URL is fetched with a `?t=<timestamp>` cache buster.
+> `raw.githubusercontent.com` sits behind a CDN, and without it a just-pushed
+> version bump can take minutes to appear.
 
 ## Known limitations
 
