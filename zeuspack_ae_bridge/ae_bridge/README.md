@@ -1,4 +1,4 @@
-# ZeusPack AE Bridge
+# ZeusPack
 
 A CEP panel for Adobe After Effects. It does three separate jobs:
 
@@ -25,7 +25,7 @@ Run the installer one level up:
 It copies this folder to `%APPDATA%\Adobe\CEP\extensions\zeuspack_ae_bridge` and
 enables unsigned extensions (`PlayerDebugMode`). Restart After Effects, then open:
 
-**Window ▸ Extensions ▸ ZeusPack AE Bridge**
+**Window ▸ Extensions ▸ ZeusPack**
 
 Re-run the installer after any change to `CSXS/manifest.xml` — its
 `CEFCommandLine` flags are read once at panel launch.
@@ -557,6 +557,19 @@ selected properties when any are selected; click the *layer name* to capture the
 whole layer. The expression capture is not subject to this — it always reads the
 full layer — and the panel says so when the two disagree.
 
+**One layer at a time.** A multi-layer selection is refused. Expressions are
+addressed by matchName chain, which records *which property* but not *which
+layer*, so two selected layers produce indistinguishable records for the same
+property — on apply they would be written over each other and the last one would
+win, silently. Disambiguating at apply time is not an option either: broadcasting
+one layer's records onto a whole selection is the wanted behaviour, and there is
+no sensible reading of "apply a 2-layer preset to 3 layers". So the constraint
+sits at capture: **one layer in, any number out.** `.ffx` has no expression
+replay and is unaffected — use it, or save each layer separately.
+
+A `.zfx` written before this rule applies its first source layer's expressions
+only, and says so in the log.
+
 ### Applying
 
 Decode payload → `applyPreset()` → restore expressions on top. Expressions are
@@ -701,7 +714,7 @@ be open, which is a bigger change than a thumbnail.
 in this repo's own `CSXS/manifest.xml`. Shipping an update is one commit:
 
 ```xml
-<ExtensionManifest ... ExtensionBundleVersion="1.0.3"
+<ExtensionManifest ... ExtensionBundleVersion="1.0.5"
 ```
 
 On launch the panel reads that file raw from GitHub and compares it with the
@@ -715,7 +728,7 @@ mismatch as one behind it, and both are worth knowing about — the tooltip name
 both versions, so which way round it is stays obvious:
 
 ```
-Repo has 1.0.3, this panel is 1.0.2 — click to install (needs administrator rights)
+Repo has 1.0.5, this panel is 1.0.4 — click to install (needs administrator rights)
 ```
 
 ### What clicking it does
@@ -764,13 +777,34 @@ is the opposite: it always reports what happened.
 
 ## Known limitations
 
-**Saving a preset can't be silent.** `Save Animation Preset` is an AE menu
-command with no path argument — ExtendScript cannot choose the destination. So
-both *Save Animation+ (.zfx)* and *Save Animation (.ffx)* snapshot every `.ffx`
-they can see, fire the command, wait on AE's modal dialog, then find the new file
-and file it into the selected category. Wherever you point the dialog, the file lands correctly. If
-you save somewhere unwatched (the Desktop, say), the panel says it couldn't
-locate it rather than claiming success.
+**Saving a preset can't be silent, and its start folder can't be set.**
+`Save Animation Preset` is an AE menu command with no path argument —
+ExtendScript cannot choose the destination, and cannot tell the dialog where to
+open either. AE picks that from its own last-used-directory memory, which every
+other file dialog in the app (import, save project, Collect Files) also writes
+to, which is why it appears to wander.
+
+So both *Save Animation+ (.zfx)* and *Save Animation (.ffx)* snapshot every
+`.ffx` they can see, fire the command, wait on AE's modal, then find the new file
+and file it into the selected category. **Wherever you point the dialog, the file
+lands correctly** — the start folder is cosmetic.
+
+Two things soften the wandering:
+
+* `Folder.current` is set to the category folder before the modal opens. Some
+  native dialogs inherit the process working directory as their default; whether
+  AE's does varies by version and platform, so this is a nudge, never a
+  guarantee.
+* If the watched folders (category, preset root, every `User Presets`) come up
+  empty, a **rescue sweep** looks for any `.ffx` written since the modal opened,
+  two levels deep in the Desktop, the open project's folder and Documents. A
+  file found there is still filed into the category, and the log names where it
+  came from. Only if that also misses does the panel report failure — and it
+  then lists every folder it looked in.
+
+A rescued `.ffx` is never deleted by the `.zfx` path. Those folders were not
+snapshotted, so "AE created this file" cannot be told from "AE overwrote this
+file", and the panel only removes an `.ffx` it knows it made.
 
 **No drag-and-drop into the timeline.** CEP panels are Chromium views; HTML5 drag
 events don't cross into AE's native UI and CEP exposes no panel→host drag API.

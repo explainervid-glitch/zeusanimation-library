@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<ExtensionManifest Version="5.0" ExtensionBundleId="com.zeus.zeuspackaebridge" ExtensionBundleVersion="1.0.3"
-    ExtensionBundleName="ZeusPack AE Bridge" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<ExtensionManifest Version="5.0" ExtensionBundleId="com.zeus.zeuspackaebridge" ExtensionBundleVersion="1.0.5"
+    ExtensionBundleName="ZeusPack" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
     <ExtensionList>
-        <Extension Id="com.zeus.zeuspackaebridge.panel" Version="1.0.3" />
+        <Extension Id="com.zeus.zeuspackaebridge.panel" Version="1.0.5" />
     </ExtensionList>
     <ExecutionEnvironment>
         <HostList>
@@ -38,7 +38,7 @@
                 </Lifecycle>
                 <UI>
                     <Type>Panel</Type>
-                    <Menu>ZeusPack AE Bridge</Menu>
+                    <Menu>ZeusPack</Menu>
                     <Geometry>
                         <!-- The preset browser opens by default, so the panel
                              starts tall enough to show it. It still shrinks

@@ -1231,16 +1231,25 @@ function _captureExpressions(layers) {
 // .ffx may well carry the expression too, in which case this is a harmless
 // rewrite of identical text, and where it did NOT survive this is the whole
 // point of the format.
-function _restoreExpressions(layers, list) {
+//
+// RELIES ON A SINGLE-LAYER CAPTURE. Records are addressed by matchName chain
+// only, so two source layers produce indistinguishable records for the same
+// property and the broadcast below would apply them on top of each other.
+// zae_savePresetPlus refuses a multi-layer selection precisely so that cannot
+// happen; `skipLayer` is the escape hatch for .zfx files written before it did.
+function _restoreExpressions(layers, list, skipLayer) {
     var out = { restored: 0, missing: 0, failed: 0, unresolved: [] };
     if (!list || !list.length) return out;
 
     for (var i = 0; i < list.length; i++) {
         var rec = list[i];
         if (!rec || !rec.expression) continue;
+        // Legacy multi-layer file: keep the first source layer's records and
+        // drop the rest, rather than letting them overwrite each other.
+        if (skipLayer && Number(rec.layer || 0) !== 0) continue;
 
-        // Presets are captured from one layer but may be applied to several —
-        // replay every record onto every selected layer.
+        // One layer in, any number out: replay every record onto every selected
+        // layer, so a preset saved from one layer applies to a whole selection.
         for (var L = 0; L < layers.length; L++) {
             var p = _resolveByChain(layers[L], rec.path, rec.index);
             if (!p) {
@@ -1601,7 +1610,14 @@ function _runSavePresetDialog(root, target) {
     var before = {}, after = {}, w;
     for (w = 0; w < watched.length; w++) _collectFfx(watched[w], 0, before);
 
-    app.executeCommand(cmdId);        // modal — returns once saved or cancelled
+    // Anything AE writes during the modal is newer than this. A couple of
+    // seconds of slack covers filesystems that store mtime at 1s or 2s
+    // granularity (FAT/exFAT on a USB drive, some SMB shares).
+    var t0 = (new Date()).getTime() - 2000;
+
+    _withCurrentFolder(target, function () {
+        app.executeCommand(cmdId);    // modal — returns once saved or cancelled
+    });
 
     for (w = 0; w < watched.length; w++) _collectFfx(watched[w], 0, after);
 
@@ -1612,10 +1628,35 @@ function _runSavePresetDialog(root, target) {
         if (existed && after[k] === before[k]) continue;
         if (after[k] > newestTime) { newestTime = after[k]; newest = k; isNew = !existed; }
     }
-    if (!newest) {
-        return { ok: false, message: "No new preset found — cancelled, or saved outside the watched folders." };
+    if (newest) return { ok: true, file: new File(newest), isNew: isNew };
+
+    // ── Rescue sweep ─────────────────────────────────────────────────────────
+    // The dialog was pointing somewhere the watch does not cover. Rather than
+    // lose the file the user just saved, look for any .ffx written since the
+    // modal opened, in the places a stray save realistically lands.
+    //
+    // isNew stays FALSE for anything found here: these folders were never
+    // snapshotted, so "AE wrote this file" cannot be told from "AE overwrote
+    // this file". The caller only deletes an .ffx it knows it created, so an
+    // unprovable one is kept and reported instead of silently removed.
+    var rescue = {}, rr = _rescueRoots();
+    for (w = 0; w < rr.length; w++) _collectFfx(rr[w], 0, rescue, 2);
+
+    var found = null, foundTime = -1;
+    for (var k2 in rescue) {
+        if (!rescue.hasOwnProperty(k2)) continue;
+        if (rescue[k2] < t0) continue;                    // was already there
+        if (rescue[k2] > foundTime) { foundTime = rescue[k2]; found = k2; }
     }
-    return { ok: true, file: new File(newest), isNew: isNew };
+    if (found) {
+        return { ok: true, file: new File(found), isNew: false, rescued: true };
+    }
+
+    var where = [];
+    for (w = 0; w < watched.length; w++) { try { where.push(watched[w].fsName); } catch (eN) {} }
+    for (w = 0; w < rr.length; w++) { try { where.push(rr[w].fsName); } catch (eN2) {} }
+    return { ok: false, message: "No new preset found — cancelled, or saved outside the folders "
+                               + "the panel can see. Looked in: " + where.join("; ") };
 }
 
 // ── Save the selection as a .zfx ─────────────────────────────────────────────
@@ -1639,6 +1680,30 @@ function zae_savePresetPlus(params) {
         var layers = comp.selectedLayers;
         if (!layers || !layers.length) {
             return _result(false, "Select a layer — or just the properties/effects you want saved.");
+        }
+        // ONE LAYER ONLY — this is what keeps the expression replay honest.
+        //
+        // An expression is addressed by its matchName chain, and that chain says
+        // nothing about which layer it came from. Capture two layers and both
+        // records land on the same path ("ADBE Transform Group" ▸ "ADBE
+        // Position"), so on apply _restoreExpressions has no way to tell them
+        // apart: every record is written to every target and the last one wins.
+        // A wiggle() on layer A and a time*100 on layer B come back as time*100
+        // on both, silently.
+        //
+        // Refusing here rather than disambiguating on apply is deliberate. The
+        // broadcast IS the wanted behaviour for the normal case — one layer's
+        // preset applied to several — so the only way to keep that while also
+        // supporting a multi-layer capture is to carry a source-layer index and
+        // switch on it, which then has to guess what "apply a 2-layer preset to
+        // 3 layers" means. There is no good answer to that question, and .ffx
+        // does not answer it either. One layer in, any number out.
+        if (layers.length > 1) {
+            return _result(false, "Select ONE layer — " + layers.length + " are selected. A "
+                         + _ZFX_EXT.toUpperCase() + " captures expressions by property path, which "
+                         + "cannot tell two layers' copies of the same property apart, so a "
+                         + "multi-layer save would apply the wrong expressions on top of each "
+                         + "other. Save each layer separately, or use Save Animation (.ffx).");
         }
 
         // Captured from the SOURCE layer, independent of what AE decides to put
@@ -1717,6 +1782,16 @@ function zae_savePresetPlus(params) {
         }
         if (!cleaned && !keepFfx && dlg.isNew) msg += " (the .ffx is also still at " + src.fsName + ")";
         if (keepFfx) msg += " (.ffx kept at " + src.fsName + ")";
+        // Found outside the folders the panel watches. The .zfx is filed
+        // correctly either way, but the stray .ffx is left alone: the panel
+        // cannot prove it created that file rather than overwriting one of
+        // yours, so deleting it would be a guess.
+        if (dlg.rescued) {
+            msg += ". AE's dialog was pointing at " + src.parent.fsName
+                 + " — the .zfx was filed into " + (category || "root")
+                 + " anyway, but the .ffx there was left in place (delete it by hand if it "
+                 + "was not yours)";
+        }
 
         return _result(true, msg, {
             path: zfx.fsName, name: base, expressions: exprs.length,
@@ -1763,6 +1838,18 @@ function zae_applyPresetPlus(params) {
                          + "removed (it could not carry dropdown item lists or effect data that "
                          + "only AE's own preset format holds). Re-save it with Save Animation+.");
         }
+        // Written before the save path required a single layer: records from
+        // several source layers share the same property paths, so replaying all
+        // of them would have each one overwrite the last. Keep the first
+        // layer's and say so — the .ffx payload still applies in full.
+        var multiSrc = 0;
+        if (doc.expressions) {
+            for (var mi = 0; mi < doc.expressions.length; mi++) {
+                var ml = Number(doc.expressions[mi].layer || 0);
+                if (ml > multiSrc) multiSrc = ml;
+            }
+        }
+
         if (!doc.payload.data) {
             return _result(false, _baseName(f) + " has no preset payload.");
         }
@@ -1801,7 +1888,7 @@ function zae_applyPresetPlus(params) {
                     // unaffected precisely because no dropdown code touched them.
                     //
                     // The captured list is kept in the file as metadata only.
-                    restored = _restoreExpressions(ls, doc.expressions);
+                    restored = _restoreExpressions(ls, doc.expressions, multiSrc > 0);
                     return restored;
                 }
             });
@@ -1823,6 +1910,13 @@ function zae_applyPresetPlus(params) {
         if (restored && restored.missing) {
             msg += " — " + restored.missing + " had no matching property here"
                  + (restored.unresolved.length ? " (" + restored.unresolved.join(", ") + ")" : "");
+        }
+        if (multiSrc > 0) {
+            msg += " — NOTE: this file was saved from " + (multiSrc + 1) + " layers by an older "
+                 + "build. Expressions are addressed by property path, so the extra layers' copies "
+                 + 'would have overwritten each other; only "'
+                 + String((doc.source && doc.source.layers && doc.source.layers[0]) || "the first layer")
+                 + '" was restored. Re-save it one layer at a time.';
         }
 
         // The one failure a format cannot fix: the expression is intact but
@@ -2817,8 +2911,12 @@ function zae_revealPreset(params) {
 
 // Every .ffx under a folder, keyed by path → mtime. Used to spot what AE's
 // Save Animation Preset dialog just wrote.
-function _collectFfx(folder, depth, map) {
-    if (!folder || !folder.exists || depth > _MAX_DEPTH) return;
+// `maxDepth` defaults to _MAX_DEPTH. The rescue sweep passes a shallower one:
+// it scans Documents and the Desktop, which can hold tens of thousands of files,
+// and a preset saved by hand is never buried deep in them.
+function _collectFfx(folder, depth, map, maxDepth) {
+    if (maxDepth === undefined) maxDepth = _MAX_DEPTH;
+    if (!folder || !folder.exists || depth > maxDepth) return;
     var entries;
     try { entries = folder.getFiles(); } catch (e) { return; }
     if (!entries) return;
@@ -2827,12 +2925,46 @@ function _collectFfx(folder, depth, map) {
         if (e instanceof Folder) {
             var n = _baseName(e);
             if (n.charAt(0) === "." || _IGNORED_FOLDER.test(n)) continue;
-            _collectFfx(e, depth + 1, map);
+            _collectFfx(e, depth + 1, map, maxDepth);
             continue;
         }
         if (_extOf(_baseName(e)) !== "ffx") continue;
         try { map[e.fsName] = e.modified ? e.modified.getTime() : 0; } catch (e2) {}
     }
+}
+
+// Where a preset saved "somewhere random" plausibly landed.
+//
+// Only swept when the watched folders came up empty, so the cost is paid by the
+// one case that would otherwise lose the file entirely.
+function _rescueRoots() {
+    var out = [];
+    function add(f) { try { if (f && f.exists) out.push(f); } catch (e) {} }
+    add(Folder.desktop);
+    try { if (app.project && app.project.file) add(app.project.file.parent); } catch (e1) {}
+    add(Folder.myDocuments);
+    return out;
+}
+
+// Nudge AE's file dialog toward the category folder.
+//
+// There is NO API for this — Save Animation Preset is a menu command with no
+// arguments, and AE picks the start folder from its own last-used-directory
+// memory, which every other file dialog in the app (import, save project,
+// Collect Files) also writes to. That is why it wanders.
+//
+// Folder.current is the closest lever there is: it sets the ExtendScript
+// process's working directory, which SOME native dialogs inherit as their
+// default. Whether AE's does varies by version and platform, so this is a nudge
+// and never a guarantee — the snapshot-and-diff below is what actually
+// guarantees the file ends up in the right place. Restored afterwards so a
+// changed CWD cannot leak into anything else that resolves a relative path.
+function _withCurrentFolder(folder, fn) {
+    var prev = null;
+    try { prev = Folder.current; } catch (e) {}
+    try { if (folder && folder.exists) Folder.current = folder; } catch (e2) {}
+    try { return fn(); }
+    finally { try { if (prev) Folder.current = prev; } catch (e3) {} }
 }
 
 // `relative` may be nested ("Text/Kinetic"). Folder.create() does not reliably
@@ -2935,6 +3067,10 @@ function zae_saveAnimationPreset(params) {
 
         return _result(true, "Saved " + _stripExt(fileName) + " → " + (category || "root")
                      + (movedOut ? "" : " (the original is also still at " + src.fsName + ")")
+                     // Unlike the .zfx path, moving is right even for a rescued
+                     // file: the .ffx IS the asset here, and AE had already
+                     // written over whatever was at that path.
+                     + (dlg.rescued ? " (AE's dialog was pointing at " + src.parent.fsName + ")" : "")
                      + exprNote, {
             path: destPath, moved: true, removedOriginal: movedOut, from: src.fsName,
             expressions: srcExpr.total, selectedProperties: narrowed

@@ -1,4 +1,4 @@
-/* ZeusPack AE Bridge — CEP panel client for Adobe After Effects
+/* ZeusPack — CEP panel client for Adobe After Effects
  *
  * The CEP host has `fetch` but no Node.js, so this panel can't listen — it
  * POLLS the ZeusPack app's loopback server (127.0.0.1:8771):
@@ -197,7 +197,11 @@
                       + UPDATE_BRANCH + "/zeuspack_ae_bridge/ae_bridge/CSXS/manifest.xml";
   var UPDATE_TS_KEY   = "zae.updateCheckedAt";
   var UPDATE_EVERY_MS = 6 * 60 * 60 * 1000;
-  var PANEL_VERSION   = "1.0.2";              // fallback if CEP won't tell us
+  // Fallback when CEP won't report the installed version. MUST track
+  // ExtensionBundleVersion in CSXS/manifest.xml: the update check tests
+  // INEQUALITY against the repo's manifest, so a stale value here reports a
+  // phantom "update available" against a repo that has not moved.
+  var PANEL_VERSION   = "1.0.5";
 
   var updateBtn = document.getElementById("updateBtn");
 
@@ -1500,8 +1504,10 @@
     // The richer format first — it embeds the .ffx, so it keeps everything the
     // legacy command does and adds expressions on top.
     item("Save Animation+ (.zfx)", !!currentDir, savePresetPlus,
-      "AE selection → " + into + " — embeds AE's own preset data, so nothing is "
-      + "lost, and captures expressions on top");
+      "ONE selected layer → " + into + " — embeds AE's own preset data, so nothing is "
+      + "lost, and captures expressions on top. Select a single layer (or just the "
+      + "properties/effects on it); expressions are stored by property path, which "
+      + "cannot tell two layers apart.");
 
     item("Save Animation (.ffx) ", !!currentDir, saveAnimationPreset,
       "AE selection → " + into + " — plain AE preset, no expression capture");
