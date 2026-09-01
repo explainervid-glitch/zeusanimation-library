@@ -96,7 +96,7 @@ function zae_getActiveProjectInfo(params) {
             footage:  footage
         };
         return _result(true, "Project: " + (proj.file ? proj.file.displayName : "(unsaved)") +
-                       " — " + comps.length + " comp(s).", data);
+                       " (" + comps.length + " comp(s)).", data);
     } catch (e) {
         return _result(false, "Exception: " + e.toString());
     }
@@ -239,9 +239,9 @@ function zae_importAep(params) {
         app.endUndoGroup();
 
         var msg = "Imported '" + f.name + "' (" + newComps.length + " comp(s))";
-        if (want && !target) msg += " — comp '" + want + "' not found in project.";
+        if (want && !target) msg += ". Comp '" + want + "' was not found in the project.";
         else if (target) {
-            msg += " — '" + target.name + "'" +
+            msg += ": '" + target.name + "'" +
                    (placed ? " added to '" + destComp.name + "'"
                            : (opened ? " opened"
                                      : (destComp ? " ready in project"
@@ -830,11 +830,11 @@ function zae_listPresets(params) {
 
         var msg = acc.presets.length + " preset" + (acc.presets.length === 1 ? "" : "s");
         if (pruned) {
-            msg += " — dropped " + pruned.removed.length + " missing categor"
-                 + (pruned.removed.length === 1 ? "y" : "ies") + " from categories.json";
+            msg += " (dropped " + pruned.removed.length + " missing categor"
+                 + (pruned.removed.length === 1 ? "y" : "ies") + " from categories.json)";
         }
         if (manifestBroken) {
-            msg += " — categories.json exists but could not be read (invalid JSON?); "
+            msg += "; categories.json exists but could not be read (invalid JSON?); "
                  + "showing all folders until it's fixed";
         }
 
@@ -1389,13 +1389,13 @@ function _applyMsgTail(r, reverse) {
         msg += ", " + r.expr.total + " expression" + (r.expr.total === 1 ? "" : "s");
         if (r.expr.reenabled) msg += " (" + r.expr.reenabled + " re-enabled)";
         if (r.expr.broken) {
-            msg += " — " + r.expr.broken + " erroring [engine: "
+            msg += ", " + r.expr.broken + " erroring [engine: "
                  + (_expressionEngine() || "unknown") + "] " + r.expr.errors.join("; ");
         }
     }
     if (reverse) {
-        if (!r.reversedProps)  msg += " — no keyframes to reverse (static preset)";
-        else if (!r.cmdId)     msg += " — but Time-Reverse Keyframes was not found on this AE version";
+        if (!r.reversedProps)  msg += " (no keyframes to reverse, static preset)";
+        else if (!r.cmdId)     msg += " (but Time-Reverse Keyframes was not found on this AE version)";
         else                   msg += ", reversed " + r.reversedProps + " animated propert"
                                     + (r.reversedProps === 1 ? "y" : "ies");
     }
@@ -1655,8 +1655,8 @@ function _runSavePresetDialog(root, target) {
     var where = [];
     for (w = 0; w < watched.length; w++) { try { where.push(watched[w].fsName); } catch (eN) {} }
     for (w = 0; w < rr.length; w++) { try { where.push(rr[w].fsName); } catch (eN2) {} }
-    return { ok: false, message: "No new preset found — cancelled, or saved outside the folders "
-                               + "the panel can see. Looked in: " + where.join("; ") };
+    return { ok: false, message: "No new preset found (cancelled, or saved outside the folders "
+                               + "the panel can see). Looked in: " + where.join("; ") };
 }
 
 // ── Save the selection as a .zfx ─────────────────────────────────────────────
@@ -1679,7 +1679,7 @@ function zae_savePresetPlus(params) {
         if (!(comp instanceof CompItem)) return _result(false, "Open a composition first.");
         var layers = comp.selectedLayers;
         if (!layers || !layers.length) {
-            return _result(false, "Select a layer — or just the properties/effects you want saved.");
+            return _result(false, "Select a layer, or just the properties/effects you want saved.");
         }
         // ONE LAYER ONLY — this is what keeps the expression replay honest.
         //
@@ -1699,7 +1699,7 @@ function zae_savePresetPlus(params) {
         // 3 layers" means. There is no good answer to that question, and .ffx
         // does not answer it either. One layer in, any number out.
         if (layers.length > 1) {
-            return _result(false, "Select ONE layer — " + layers.length + " are selected. A "
+            return _result(false, "Select ONE layer (" + layers.length + " are selected). A "
                          + _ZFX_EXT.toUpperCase() + " captures expressions by property path, which "
                          + "cannot tell two layers' copies of the same property apart, so a "
                          + "multi-layer save would apply the wrong expressions on top of each "
@@ -1772,12 +1772,12 @@ function zae_savePresetPlus(params) {
         if (!keepFfx && dlg.isNew) cleaned = _removedFile(src);
 
         var msg = "Saved " + base + "." + _ZFX_EXT + " → " + (category || "root")
-                + " — " + exprs.length + " expression" + (exprs.length === 1 ? "" : "s")
+                + " (" + exprs.length + " expression" + (exprs.length === 1 ? "" : "s")
                 + (drops.length ? ", " + drops.length + " dropdown" + (drops.length === 1 ? "" : "s") : "")
-                + ", " + bin.length + " bytes of preset data";
+                + ", " + bin.length + " bytes of preset data)";
         if (exprs.length && narrowed) {
             msg += "; only the " + narrowed + " selected propert"
-                 + (narrowed === 1 ? "y was" : "ies were") + " in AE's save — deselect "
+                 + (narrowed === 1 ? "y was" : "ies were") + " in AE's save; deselect "
                  + "properties (click the layer name) to capture the whole layer";
         }
         if (!cleaned && !keepFfx && dlg.isNew) msg += " (the .ffx is also still at " + src.fsName + ")";
@@ -1788,7 +1788,7 @@ function zae_savePresetPlus(params) {
         // yours, so deleting it would be a guess.
         if (dlg.rescued) {
             msg += ". AE's dialog was pointing at " + src.parent.fsName
-                 + " — the .zfx was filed into " + (category || "root")
+                 + ". The .zfx was filed into " + (category || "root")
                  + " anyway, but the .ffx there was left in place (delete it by hand if it "
                  + "was not yours)";
         }
@@ -1908,11 +1908,11 @@ function zae_applyPresetPlus(params) {
                  + (restored.restored === 1 ? "" : "s");
         }
         if (restored && restored.missing) {
-            msg += " — " + restored.missing + " had no matching property here"
+            msg += ", " + restored.missing + " had no matching property here"
                  + (restored.unresolved.length ? " (" + restored.unresolved.join(", ") + ")" : "");
         }
         if (multiSrc > 0) {
-            msg += " — NOTE: this file was saved from " + (multiSrc + 1) + " layers by an older "
+            msg += ". NOTE: this file was saved from " + (multiSrc + 1) + " layers by an older "
                  + "build. Expressions are addressed by property path, so the extra layers' copies "
                  + 'would have overwritten each other; only "'
                  + String((doc.source && doc.source.layers && doc.source.layers[0]) || "the first layer")
@@ -1923,14 +1923,14 @@ function zae_applyPresetPlus(params) {
         // points at something this comp does not have.
         var missingRefs = _missingRefs(comp, doc.expressions);
         if (missingRefs.length) {
-            msg += " — expects layer" + (missingRefs.length === 1 ? "" : "s")
+            msg += ". Expects layer" + (missingRefs.length === 1 ? "" : "s")
                  + " not in this comp: " + missingRefs.join(", ");
         }
 
         var srcEngine = (doc.app && doc.app.expressionEngine) ? String(doc.app.expressionEngine) : "";
         var curEngine = _expressionEngine();
         if (srcEngine && curEngine && srcEngine !== curEngine) {
-            msg += " — authored for expression engine " + srcEngine + ", this project uses "
+            msg += ". Authored for expression engine " + srcEngine + ", this project uses "
                  + curEngine + " (File ▸ Project Settings ▸ Expressions)";
         }
 
@@ -2010,7 +2010,7 @@ function zae_makePreviewComp(params) {
         // ── Exists → just open it ──
         if (aep.exists) {
             var openedProj = app.open(aep);
-            if (!openedProj) return _result(false, "Cancelled — current project kept.");
+            if (!openedProj) return _result(false, "Cancelled (current project kept).");
             return _result(true, "Opened " + name + ".aep", {
                 path: aep.fsName, created: false
             });
@@ -2023,7 +2023,7 @@ function zae_makePreviewComp(params) {
         var dur = params.duration ? Number(params.duration) : 3;
 
         var proj = app.newProject();
-        if (!proj) return _result(false, "Cancelled — current project kept.");
+        if (!proj) return _result(false, "Cancelled (current project kept).");
 
         var comp = proj.items.addComp(name, w, h, 1, dur, fps);
         comp.openInViewer();
@@ -2135,12 +2135,12 @@ function zae_exportPreview(params) {
         var name = params.name ? String(params.name) : _stripExt(_baseName(ffx));
         var dir  = ffx.parent;
         var aep  = new File(dir.fsName + "/" + name + ".aep");
-        if (!aep.exists) return _result(false, 'No "' + name + '.aep" — run Make Preview Comp first.');
+        if (!aep.exists) return _result(false, 'No "' + name + '.aep". Run Make Preview Comp first.');
 
         // Make sure the right project is open before touching the render queue.
         var cur = (app.project && app.project.file) ? app.project.file.fsName : "";
         if (cur !== aep.fsName) {
-            if (!app.open(aep)) return _result(false, "Cancelled — current project kept.");
+            if (!app.open(aep)) return _result(false, "Cancelled (current project kept).");
         }
         var proj = app.project;
 
@@ -2167,8 +2167,8 @@ function zae_exportPreview(params) {
         var replaced = false;
         if (_fileAppeared(out.fsName)) {
             if (!_removedFile(out)) {
-                return _result(false, 'Could not replace "' + name + '.mp4" — the file is open '
-                             + "somewhere else. Close it and try again.");
+                return _result(false, 'Could not replace "' + name + '.mp4" (the file is open '
+                             + "somewhere else). Close it and try again.");
             }
             replaced = true;
         }
@@ -2251,12 +2251,12 @@ function zae_exportPreview(params) {
         if (!resName)          sizeNote = "at comp size " + comp.width + "x" + comp.height + " (no clean downscale)";
         else if (resName === "Full") sizeNote = "at " + comp.width + "x" + comp.height;
         else if (res.applied)  sizeNote = "at " + targetW + "x" + targetH + " (" + resName + ")";
-        else                   sizeNote = "at comp size " + comp.width + "x" + comp.height + " — could not set " + resName + " on this AE version";
+        else                   sizeNote = "at comp size " + comp.width + "x" + comp.height + " (could not set " + resName + " on this AE version)";
 
         var msg = "Exported " + name + ".mp4"
                 + (replaced ? " (replaced)" : "")
                 + " " + sizeNote
-                + " — template: " + tpl
+                + ", template: " + tpl
                 + (br.applied ? ", bitrate set to " + bitrate + " Mbps"
                               : ", bitrate from template");
         return _result(true, msg, {
@@ -2348,11 +2348,11 @@ function zae_exportImagePreview(params) {
         var name = params.name ? String(params.name) : _stripExt(_baseName(f));
         var dir  = f.parent;
         var aep  = new File(dir.fsName + "/" + name + ".aep");
-        if (!aep.exists) return _result(false, 'No "' + name + '.aep" — run Make Preview Comp first.');
+        if (!aep.exists) return _result(false, 'No "' + name + '.aep". Run Make Preview Comp first.');
 
         var cur = (app.project && app.project.file) ? app.project.file.fsName : "";
         if (cur !== aep.fsName) {
-            if (!app.open(aep)) return _result(false, "Cancelled — current project kept.");
+            if (!app.open(aep)) return _result(false, "Cancelled (current project kept).");
         }
         var proj = app.project;
 
@@ -2364,8 +2364,8 @@ function zae_exportImagePreview(params) {
             if (pick.how === "none") {
                 return _result(false, "No composition in " + name + ".aep.");
             }
-            return _result(false, "Several comps in " + name + ".aep and none is open — "
-                         + "open the one you want, then try again. (" + _compNames(pick.comps) + ")");
+            return _result(false, "Several comps in " + name + ".aep and none is open. "
+                         + "Open the one you want, then try again. (" + _compNames(pick.comps) + ")");
         }
 
         var targetW = params.width  ? Number(params.width)  : 480;
@@ -2375,8 +2375,8 @@ function zae_exportImagePreview(params) {
         var replaced = false;
         if (_fileAppeared(out.fsName)) {
             if (!_removedFile(out)) {
-                return _result(false, 'Could not replace "' + name + '.png" — the file is open '
-                             + "somewhere else. Close it and try again.");
+                return _result(false, 'Could not replace "' + name + '.png" (the file is open '
+                             + "somewhere else). Close it and try again.");
             }
             replaced = true;
         }
@@ -2411,7 +2411,7 @@ function zae_exportImagePreview(params) {
 
         return _result(true, "Exported " + name + ".png at " + targetW + "x" + targetH
                      + (replaced ? " (replaced)" : "") + fromNote
-                     + " — frame at " + (Math.round(t * 100) / 100) + "s", {
+                     + " (frame at " + (Math.round(t * 100) / 100) + "s)", {
             path: out.fsName, width: targetW, height: targetH, time: t, replaced: replaced,
             comp: comp.name, pickedBy: pick.how
         });
@@ -2501,7 +2501,7 @@ function zae_moveAsset(params) {
                 for (var c = 0; c < copied.length; c++) {
                     try { new File(copied[c]).remove(); } catch (e3) {}
                 }
-                return _result(false, "Could not copy " + moves[i].name + " — nothing was moved.");
+                return _result(false, "Could not copy " + moves[i].name + ". Nothing was moved.");
             }
             copied.push(target);
         }
@@ -2619,7 +2619,7 @@ function zae_deleteCategory(params) {
         if (blocking.length) {
             var shown = blocking.slice(0, 3).join(", ");
             if (blocking.length > 3) shown += " and " + (blocking.length - 3) + " more";
-            return _result(false, '"' + name + '" is not empty (' + shown + ") — empty it first.");
+            return _result(false, '"' + name + '" is not empty (' + shown + "). Empty it first.");
         }
         for (i = 0; i < hidden.length; i++) { try { hidden[i].remove(); } catch (eH) {} }
 
@@ -2680,7 +2680,7 @@ function zae_deleteAsset(params) {
             if (!bdir.exists) return _result(false, "Folder not found: " + bundle);
             if (!_removeTree(bdir)) {
                 return _result(false, "Could not fully delete " + name
-                             + " — some files are open somewhere else.");
+                             + ". Some files are open somewhere else.");
             }
             return _result(true, 'Deleted "' + name + '" and its collected folder',
                            { deleted: 1, bundle: bundle });
@@ -2714,7 +2714,7 @@ function zae_deleteAsset(params) {
 
         if (stuck.length) {
             return _result(false, "Deleted " + gone.length + " of " + targets.length
-                         + " file(s) — " + stuck.join(", ") + " is open somewhere else.",
+                         + " file(s). " + stuck.join(", ") + " is open somewhere else.",
                          { deleted: gone.length, stuck: stuck });
         }
         return _result(true, 'Deleted "' + name + '" (' + gone.length + " file"
@@ -2795,7 +2795,7 @@ function _moveTree(src, dst) {
 
     if (!_copyTree(src, dst)) {
         try { _removeTree(dst); } catch (e) {}   // leave no half-copy behind
-        return { ok: false, message: "Could not copy " + _baseName(src) + " — nothing was moved." };
+        return { ok: false, message: "Could not copy " + _baseName(src) + ". Nothing was moved." };
     }
     if (!_removeTree(src)) {
         return { ok: true, warn: " (copied, but the original folder could not be deleted)" };
@@ -2862,7 +2862,7 @@ function zae_renameAsset(params) {
                 for (var r = 0; r < done.length; r++) {
                     try { done[r].file.rename(done[r].old); } catch (e3) {}
                 }
-                return _result(false, "Could not rename " + oldName + " — nothing was changed.");
+                return _result(false, "Could not rename " + oldName + ". Nothing was changed.");
             }
             done.push({ file: targets[i].file, old: oldName });
         }
@@ -3007,7 +3007,7 @@ function zae_saveAnimationPreset(params) {
         if (!(comp instanceof CompItem)) return _result(false, "Open a composition first.");
         var layers = comp.selectedLayers;
         if (!layers || !layers.length) {
-            return _result(false, "Select a layer — or just the properties/effects you want saved.");
+            return _result(false, "Select a layer, or just the properties/effects you want saved.");
         }
 
         // What AE is about to be asked to save.
@@ -3030,11 +3030,11 @@ function zae_saveAnimationPreset(params) {
         try { narrowed = comp.selectedProperties ? comp.selectedProperties.length : 0; } catch (eSP) {}
 
         var exprNote = srcExpr.total
-            ? " — " + srcExpr.total + " expression" + (srcExpr.total === 1 ? "" : "s") + " on the selection"
-            : " — no expressions on the selection";
+            ? " (" + srcExpr.total + " expression" + (srcExpr.total === 1 ? "" : "s") + " on the selection)"
+            : " (no expressions on the selection)";
         if (srcExpr.total && narrowed) {
             exprNote += "; only the " + narrowed + " selected propert"
-                      + (narrowed === 1 ? "y is" : "ies are") + " saved — deselect properties "
+                      + (narrowed === 1 ? "y is" : "ies are") + " saved; deselect properties "
                       + "(click the layer name) to save the whole layer";
         }
 
@@ -3116,7 +3116,7 @@ function zae_saveCompAsPreset(params) {
         if (!proj) return _result(false, "No project open in After Effects.");
         // Collect Files works from the project ON DISK, and names its output
         // after the project file — an unsaved project has neither.
-        if (!proj.file) return _result(false, "Save the project first — Collect Files needs a project file.");
+        if (!proj.file) return _result(false, "Save the project first (Collect Files needs a project file).");
 
         var name = _stripExt(_baseName(proj.file));
         if (!name) return _result(false, "Could not read the project name.");
@@ -3165,8 +3165,8 @@ function zae_saveCompAsPreset(params) {
         }
         if (!found) found = fallback;
         if (!found) {
-            return _result(false, "No collected folder found — cancelled, or collected outside "
-                         + (category || "the preset root") + ". Expected it in: " + target.fsName);
+            return _result(false, "No collected folder found (cancelled, or collected outside "
+                         + (category || "the preset root") + "). Expected it in: " + target.fsName);
         }
 
         // Relocate if the dialog pointed elsewhere.
@@ -3208,7 +3208,7 @@ function zae_saveCompAsPreset(params) {
         var rel = (category ? category + "/" : "") + finalName;
         return _result(true, "Collected " + name + " → " + (category || "root")
                      + (moved ? " (moved from " + (proj.file.parent ? proj.file.parent.fsName : "elsewhere") + ")" : "")
-                     + (renamed ? "" : ' — kept AE\'s folder name "' + finalName + '"'), {
+                     + (renamed ? "" : ' (kept AE\'s folder name "' + finalName + '")'), {
             path: target.fsName + "/" + finalName, bundle: rel,
             name: finalName, moved: moved, renamed: !!renamed
         });
@@ -3253,7 +3253,7 @@ function zae_addAsset(params) {
         var dur = params.duration ? Number(params.duration) : 3;
 
         var proj = app.newProject();
-        if (!proj) return _result(false, "Cancelled — current project kept.");
+        if (!proj) return _result(false, "Cancelled (current project kept).");
 
         var comp = proj.items.addComp(name, w, h, 1, dur, fps);
         comp.openInViewer();
@@ -3503,7 +3503,7 @@ function zae_groupLayers(params) {
             }
             if (!inSel) roots.push(members[i]);
         }
-        if (!roots.length) return _result(false, "Nothing to group — every selected layer is already parented inside the selection.");
+        if (!roots.length) return _result(false, "Nothing to group. Every selected layer is already parented inside the selection.");
 
         // Index of the topmost member, read before anything is added.
         var topIndex = members[0].index;
@@ -3532,12 +3532,12 @@ function zae_groupLayers(params) {
         }
 
         var msg = "Grouped " + roots.length + " layer" + (roots.length === 1 ? "" : "s")
-                + " under \"" + name + "\" — null centred at "
+                + " under \"" + name + "\", null centred at "
                 + Math.round(ctr.x) + "," + Math.round(ctr.y);
         if (ctr.from === "positions") {
             // No measurable rect anywhere (3D layers, cameras, lights), so the
             // centre is the average of their positions rather than of a box.
-            msg += " (averaged from layer positions — nothing had a measurable rect)";
+            msg += " (averaged from layer positions, nothing had a measurable rect)";
         }
         if (ctr.skipped && ctr.skipped.length) {
             var shown = ctr.skipped.slice(0, 3).join(", ");
@@ -3582,7 +3582,7 @@ function zae_ungroupLayers(params) {
             if (!dup) controls.push(cand);
         }
         if (!controls.length) {
-            return _result(false, "No ZeusPack group in the selection — select the group layer itself, or one of its children.");
+            return _result(false, "No ZeusPack group in the selection. Select the group layer itself, or one of its children.");
         }
 
         app.beginUndoGroup("ZeusPack: Ungroup");
@@ -3605,7 +3605,7 @@ function zae_ungroupLayers(params) {
         }
 
         return _result(true, "Ungrouped " + removed + " group" + (removed === 1 ? "" : "s")
-                     + " — released " + freed + " layer" + (freed === 1 ? "" : "s"),
+                     + ", released " + freed + " layer" + (freed === 1 ? "" : "s"),
                      { groups: removed, released: freed });
     } catch (e) {
         try { app.endUndoGroup(); } catch (e9) {}
@@ -3641,7 +3641,7 @@ function zae_recenterGroup(params) {
                 if (p && _isGroupControl(p)) control = p;
             }
         }
-        if (!control) return _result(false, "No ZeusPack group in the selection — select the null itself, or one of its children.");
+        if (!control) return _result(false, "No ZeusPack group in the selection. Select the null itself, or one of its children.");
 
         var kids = _childrenOf(comp, control);
         if (!kids.length) return _result(false, '"' + control.name + '" has no layers in it.');
@@ -3662,7 +3662,7 @@ function zae_recenterGroup(params) {
         }
 
         return _result(true, "Recentred \"" + control.name + "\" on its " + kids.length
-                     + " layer" + (kids.length === 1 ? "" : "s") + " — now at "
+                     + " layer" + (kids.length === 1 ? "" : "s") + ", now at "
                      + Math.round(ctr.x) + "," + Math.round(ctr.y)
                      + (ctr.from === "positions" ? " (averaged from layer positions)" : ""),
                      { centerX: ctr.x, centerY: ctr.y, children: kids.length, centredFrom: ctr.from });
@@ -4001,11 +4001,33 @@ function _copyLayerInto(src, comp) {
     var tagged = false;
     try { src.comment = marker; tagged = true; } catch (e2) {}
 
-    try { src.copyToComp(comp); }
-    catch (e3) {
+    // Detach in the SOURCE for the duration of the copy.
+    //
+    // copyToComp() carries the layer's parent link across, and a copy that
+    // arrives already parented is a copy whose transform is being read through
+    // a link this function never chose — pointing either at a layer in the
+    // wrong comp or at a duplicate AE dragged along with it. The caller
+    // rebuilds the hierarchy itself, so the inherited link is dead weight at
+    // best; at worst every transform applied afterwards is composed with it and
+    // the layer lands far outside the canvas, which reads as "the child
+    // vanished".
+    //
+    // setParentWithJump, NOT `parent = null`: the plain setter compensates,
+    // rewriting the layer's own position/scale/rotation so it stays put — and
+    // this layer lives inside the precomp we are reading FROM, so that would
+    // quietly rewrite the source. Jumping leaves every value untouched in both
+    // directions, which makes detach-and-restore lossless.
+    var srcParent = null;
+    try { srcParent = src.parent; } catch (eP) { srcParent = null; }
+    if (srcParent) { try { src.setParentWithJump(null); } catch (eP2) {} }
+
+    function restoreSrc() {
+        if (srcParent) { try { src.setParentWithJump(srcParent); } catch (eP3) {} }
         if (tagged) { try { src.comment = srcComment; } catch (e4) {} }
-        return null;
     }
+
+    try { src.copyToComp(comp); }
+    catch (e3) { restoreSrc(); return null; }
 
     var found = null;
     for (var i = 1; i <= comp.numLayers; i++) {
@@ -4014,7 +4036,7 @@ function _copyLayerInto(src, comp) {
         if (c === marker) { found = L; break; }
     }
 
-    if (tagged) { try { src.comment = srcComment; } catch (e6) {} }
+    restoreSrc();
     if (found)  { try { found.comment = srcComment; } catch (e7) {} }
 
     // Marker missing means the comment did not survive the copy; fall back to
@@ -4050,7 +4072,6 @@ function _unPrecompWarnings(P, S, comp) {
     try { if (P.trackMatteType && P.trackMatteType !== TrackMatteType.NO_TRACK_MATTE) w.push("track matte"); } catch (e2) {}
     try { if (P.timeRemapEnabled) w.push("time remapping"); } catch (e3) {}
     try { if (Math.abs(P.stretch - 100) > 0.001) w.push("time stretch"); } catch (e4) {}
-    try { if (Math.abs(P.startTime) > 0.0001) w.push("a shifted start time"); } catch (e5) {}
     try { if (P.collapseTransformation) w.push("collapse transformations"); } catch (e6) {}
     try {
         var op = Number(_propAt(P, "ADBE Opacity", comp.time, 100));
@@ -4146,7 +4167,7 @@ function zae_unPrecomp(params) {
             if (src && (src instanceof CompItem)) targets.push(sel[i]);
         }
         if (!targets.length) {
-            return _result(false, "No precomp in the selection — select a layer whose source is a composition.");
+            return _result(false, "No precomp in the selection. Select a layer whose source is a composition.");
         }
 
         var t = 0;
@@ -4155,6 +4176,7 @@ function zae_unPrecomp(params) {
         app.beginUndoGroup("ZeusPack: UnPrecomp");
         var totalOut = 0, done = [], warned = {}, carriers = [], empties = [];
         var mattes = 0, matteFails = 0, baked = 0, bakeStops = {};
+        var shiftedAny = 0, clippedTotal = 0;
         try {
             for (var n = 0; n < targets.length; n++) {
                 var P = targets[n];
@@ -4184,6 +4206,90 @@ function zae_unPrecomp(params) {
                     var made = _copyLayerInto(inner[i], comp);
                     copies[i] = made;
                     if (made) { try { made.moveBefore(P); } catch (eO) {} }
+                }
+
+                // ── Rebase precomp time onto comp time ───────────────────────
+                // Everything inside a precomp is timed in PRECOMP time, and the
+                // precomp layer's startTime is the offset that maps it onto this
+                // comp's timeline. copyToComp brings keyframes across at their
+                // raw precomp times, so a precomp dragged to 2s used to dump its
+                // contents back at 0s.
+                //
+                // Setting startTime slides the whole layer bar, so each copy's
+                // own trim rides along and only the offset changes.
+                //
+                // Time stretch and time remapping on the precomp layer are NOT
+                // covered by a single offset — they rescale time rather than
+                // shift it — so those stay in the warnings. The shift still puts
+                // the start in the right place, which beats leaving everything
+                // at zero.
+                var shift = 0;
+                try { shift = Number(P.startTime) || 0; } catch (eSh) {}
+                if (shift) {
+                    for (i = 0; i < copies.length; i++) {
+                        if (!copies[i]) continue;
+                        try {
+                            copies[i].startTime = (Number(inner[i].startTime) || 0) + shift;
+                        } catch (eSh2) {}
+                    }
+                }
+
+                // Clip to the precomp layer's own trim. Content past either end
+                // was hidden by the precomp layer before, so letting it show now
+                // would not be "keeping them where they looked". Out before in:
+                // the two must never cross mid-write.
+                var pin = 0, pout = 0, haveTrim = false;
+                try {
+                    pin = Number(P.inPoint); pout = Number(P.outPoint);
+                    haveTrim = !isNaN(pin) && !isNaN(pout);
+                } catch (eTr) {}
+                var clipped = 0;
+                if (haveTrim) {
+                    for (i = 0; i < copies.length; i++) {
+                        if (!copies[i]) continue;
+                        var cl = copies[i], cin = 0, cout = 0, did = false;
+                        try { cin = Number(cl.inPoint); cout = Number(cl.outPoint); }
+                        catch (eTr2) { continue; }
+                        // No overlap at all: the layer was never visible through
+                        // this precomp. Trimming it to nothing is not
+                        // expressible, so leave it and let the count report it.
+                        if (cout <= pin || cin >= pout) continue;
+                        try { if (cout > pout) { cl.outPoint = pout; did = true; } } catch (eTr3) {}
+                        try { if (cin  < pin)  { cl.inPoint  = pin;  did = true; } } catch (eTr4) {}
+                        if (did) clipped++;
+                    }
+                }
+
+                // Every copy starts from a known state: unparented.
+                //
+                // Belt and braces with the detach in _copyLayerInto. A copy that
+                // still carried a link would be composed through it AND through
+                // whatever is applied below — and a root is never told to clear
+                // its parent, so an inherited one would survive the whole
+                // operation and put the layer nowhere near where it belonged.
+                // Jump, so clearing a link cannot rewrite the values it holds.
+                for (i = 0; i < copies.length; i++) {
+                    if (!copies[i]) continue;
+                    try {
+                        if (copies[i].parent) copies[i].setParentWithJump(null);
+                    } catch (eC) {}
+
+                    // ...and visible in the timeline.
+                    //
+                    // shy travels with the copy, and a shy layer is not DRAWN in
+                    // the timeline of a comp that has Hide Shy Layers switched
+                    // on — which is indistinguishable from a layer that never
+                    // arrived. An older build of the Group tool set shy on every
+                    // layer it parented to a null AND switched hideShyLayers on
+                    // for the comp; that code is gone, but the flags it wrote are
+                    // still in people's projects. Group a set, precomp it, then
+                    // UnPrecomp it and the children came out invisible.
+                    //
+                    // Cleared rather than preserved because extracting a layer is
+                    // an explicit request to see it here. Nothing else in the
+                    // panel writes shy any more, so there is no hidden state left
+                    // to respect.
+                    try { copies[i].shy = false; } catch (eSy) {}
                 }
 
                 // Rebuild parenting INSIDE the extracted set first. A layer
@@ -4239,6 +4345,9 @@ function zae_unPrecomp(params) {
                     }
                 }
 
+                if (shift) shiftedAny++;
+                clippedTotal += clipped;
+
                 var tm = _restoreTrackMattes(inner, copies);
                 mattes += tm.linked;
                 matteFails += tm.failed;
@@ -4258,14 +4367,21 @@ function zae_unPrecomp(params) {
 
         if (!done.length) {
             return _result(false, empties.length
-                ? "Nothing to extract — " + empties.join(", ") + " has no layers."
+                ? "Nothing to extract: " + empties.join(", ") + " has no layers."
                 : "Nothing was extracted.");
         }
 
-        var msg = "UnPrecomped " + done.join(", ") + " — " + totalOut + " layer"
+        var msg = "UnPrecomped " + done.join(", ") + ": " + totalOut + " layer"
                 + (totalOut === 1 ? "" : "s") + " lifted out in their original order";
         if (mattes)     msg += ", " + mattes + " track matte" + (mattes === 1 ? "" : "s") + " relinked";
         if (matteFails) msg += ", " + matteFails + " track matte" + (matteFails === 1 ? "" : "s") + " could not be relinked";
+        if (shiftedAny) {
+            msg += ", shifted onto the precomp layer's own start time";
+        }
+        if (clippedTotal) {
+            msg += ", " + clippedTotal + " layer" + (clippedTotal === 1 ? "" : "s")
+                 + " trimmed to the precomp layer's in/out range";
+        }
         msg += "; precomp layer deleted";
         if (baked) {
             msg += ", its transform baked into the layers (nothing left behind)";
@@ -4275,7 +4391,7 @@ function zae_unPrecomp(params) {
             for (var bs in bakeStops) if (bakeStops.hasOwnProperty(bs)) stops.push(bs);
             msg += ", but " + carriers.join(", ") + " had to stay as a transform carrier"
                  + (stops.length ? " because " + stops.join("; ") : "")
-                 + " — baking it into the layers would not have been exact";
+                 + "; baking it into the layers would not have been exact";
         }
         if (!baked && !carriers.length) msg += ", no transform to carry";
         if (empties.length) msg += "; skipped (empty): " + empties.join(", ");
@@ -4284,20 +4400,21 @@ function zae_unPrecomp(params) {
         for (var k in warned) if (warned.hasOwnProperty(k)) wlist.push(k);
         if (wlist.length) {
             msg += ". Effects and masks on the layers INSIDE came across intact"
-                 + " — but these were applied TO the precomp layer and could not follow: "
+                 + ", but these were applied TO the precomp layer and could not follow: "
                  + wlist.join(", ")
                  + ". They act on the flattened result of everything inside, which has no"
                  + " per-layer equivalent (blurring each layer is not the same as blurring"
                  + " the composite). Re-apply by hand, or undo if the render changed.";
         } else {
-            msg += ". Nothing was left behind — the precomp layer had no effects, masks or"
+            msg += ". Nothing was left behind: the precomp layer had no effects, masks or"
                  + " blend mode of its own.";
         }
 
         return _result(true, msg, {
             precomps: done, layers: totalOut, carriers: carriers,
             empty: empties, notCarried: wlist,
-            trackMattes: mattes, trackMattesFailed: matteFails, baked: baked
+            trackMattes: mattes, trackMattesFailed: matteFails, baked: baked,
+            timeShifted: shiftedAny, trimmed: clippedTotal
         });
     } catch (e) {
         try { app.endUndoGroup(); } catch (e9) {}
@@ -4362,7 +4479,7 @@ function zae_installUpdate(params) {
     try {
         params = params || {};
         if (String($.os).indexOf("Windows") === -1) {
-            return _result(false, "Automatic install is Windows-only — copy ae_bridge/ into the CEP extensions folder by hand.");
+            return _result(false, "Automatic install is Windows-only. Copy ae_bridge/ into the CEP extensions folder by hand.");
         }
 
         var branch = params.branch ? String(params.branch) : _UPDATE_BRANCH;
@@ -4420,7 +4537,7 @@ function zae_installUpdate(params) {
         var failed = /ERROR: /.test(logTxt);
 
         if (!after) {
-            return _result(false, "Nothing was installed — the elevation prompt was declined, or the "
+            return _result(false, "Nothing was installed. The elevation prompt was declined, or the "
                          + "install failed." + (failed ? " " + logTxt.replace(/[\r\n]+/g, " ") : ""));
         }
         if (before && after === before && failed) {
@@ -4430,7 +4547,7 @@ function zae_installUpdate(params) {
 
         return _result(true, "Installed " + after + " to " + target
                      + (before ? " (was " + before + ")" : " (fresh install)")
-                     + " — restart After Effects to load it.",
+                     + ". Restart After Effects to load it.",
                      { version: after, previous: before, path: target });
     } catch (e) {
         return _result(false, "Exception: " + e.toString());

@@ -31,7 +31,7 @@
        rendered preview fills the tile with nothing cropped. */
     --card-w:96px; --thumb-h:54px;
     --cats-w:84px;              /* category rail, dragged by its right edge */
-    --tools-w:74px;             /* tool strip, dragged by its left edge */
+    --tools-w:84px;             /* tool strip, dragged by its left edge */
   }
 
   /* The grid's scrollbar is subtracted from the track area, so a fat default
@@ -54,7 +54,7 @@
   }
 
   /* …except the text you actually need to copy out of the panel. */
-  .path, .state, .log {
+  .path, .state, .loglines {
     -webkit-user-select:text; user-select:text; cursor:text;
   }
 
@@ -108,17 +108,28 @@
   }
   .ico.upd:hover { background:#5b7cf5; border-color:#5b7cf5; color:#fff; }
 
-  /* Log — collapsed by default, only takes space when opened */
+  /* Log — collapsed by default, only takes space when opened.
+     Two parts: a fixed header row for the log's own actions, and a separate
+     scrolling area for the lines. They MUST be separate containers — the trim
+     that caps the log at 200 entries removes firstChild, so anything sharing a
+     parent with the lines would eventually be removed along with them. */
   .log {
-    display:none; flex:1; min-height:70px; overflow:auto;
+    display:none; flex:1; min-height:70px; min-width:0; flex-direction:column;
     background:#151515; border:1px solid var(--border); border-radius:5px;
-    padding:5px 6px; font-size:10px;
+    padding:5px 6px;
+  }
+  .log.open { display:flex; }
+  .logbar {
+    flex:0 0 auto; display:flex; align-items:center;
+    padding-bottom:4px; margin-bottom:4px; border-bottom:1px solid #2a2a2a;
+  }
+  .loglines {
+    flex:1; min-height:0; overflow:auto; font-size:10px;
     font-family:Consolas, monospace;   /* the log stays mono — Inter isn't */
     color:var(--muted); white-space:pre-wrap; word-break:break-word;
   }
-  .log.open { display:block; }
-  .log .ok  { color:var(--ok); }
-  .log .err { color:var(--err); }
+  .loglines .ok  { color:var(--ok); }
+  .loglines .err { color:var(--err); }
 
   /* Preset browser + tool strip, side by side. Hidden outright when both are
      closed — an empty flex:1 row would otherwise hold the panel open. */
@@ -128,11 +139,23 @@
   /* ── Layer tools — a vertical strip on the right ── */
   .tools {
     display:none; flex:0 0 var(--tools-w); min-width:0;
-    flex-direction:column; gap:4px; overflow-y:auto;
+    overflow-y:auto; overflow-x:hidden;
     background:#151515; border:1px solid var(--border); border-radius:5px;
     padding:4px;
   }
-  .tools.open { display:flex; }
+  .tools.open { display:block; }
+
+  /* Tools are grouped by what they act on. The heading is the only thing that
+     says a group exists, so it has to stay legible when the strip is dragged
+     narrow: it ellipsizes rather than wrapping to a second line and shoving
+     the buttons down. */
+  .tgroup { margin-bottom:7px; }
+  .tgroup:last-child { margin-bottom:0; }
+  .thead {
+    font-size:8px; font-weight:600; letter-spacing:.07em; text-transform:uppercase;
+    color:#6a6a6a; padding:0 2px 3px;
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
   .tools::-webkit-scrollbar { width:6px; }
   .tools::-webkit-scrollbar-track { background:transparent; }
   .tools::-webkit-scrollbar-thumb { background:#3f3f46; border-radius:99px; }
@@ -148,17 +171,25 @@
   .toolgrip:hover::after, .toolgrip.drag::after { background:var(--accent); }
 
   /* Tool buttons: icon over label, filling the strip's width so they grow with
-     it. Far bigger targets than the old 22px icons, and the label survives
-     because it is stacked rather than sitting beside the icon. */
+     it. Full width of whatever the strip currently is; on its own it becomes a
+     wide ordinary button instead (see .main.solo below).
+
+     Styled after Adobe's own dark-UI push buttons: a flat fill, a 2px corner,
+     and NO border. The border is what a native button does not have — the fill
+     is what separates it from the panel behind it, and hover raises that fill
+     rather than lighting an outline. All four read the same weight; none is
+     tinted as a primary. */
   .tbtn {
-    flex:0 0 auto; width:100%; min-height:42px;
+    width:100%; min-height:42px; margin-bottom:3px;
     display:flex; flex-direction:column; align-items:center; justify-content:center;
-    background:transparent; border:1px solid var(--border); border-radius:5px;
+    background:#2f2f2f; border:0; border-radius:2px;
     color:var(--muted); cursor:pointer; font:inherit; padding:5px 3px;
   }
-  .tbtn:hover:not(:disabled) { color:var(--text); border-color:var(--accent); }
+  .tbtn:last-child { margin-bottom:0; }
+  .tbtn:hover:not(:disabled) { background:#3d3d3d; color:var(--text); }
+  .tbtn:active:not(:disabled) { background:#272727; }
   .tbtn:disabled { opacity:.4; cursor:default; }
-  .tbtn svg { width:18px; height:18px; display:block; }
+  .tbtn svg { width:18px; height:18px; display:block; flex:0 0 auto; }
   /* margin rather than flex `gap` — that only landed in Chrome 84 and the
      manifest still claims CEP 9. */
   .tbtn span {
@@ -166,10 +197,22 @@
     font-size:9px; font-weight:600; line-height:1;
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
   }
-  /* The primary action, tinted so the eye lands on it first — distinct from
-     .ico.on, which means a toggle is currently switched on. */
-  .tbtn.pri { color:var(--accent); border-color:var(--accent); }
-  .tbtn.pri:hover:not(:disabled) { background:var(--accent); color:#fff; }
+
+  /* ── Solo: the strip is the only thing in the row ──────────────────────────
+     With the browser closed there is nothing to share the width with and
+     nothing to drag against, so the strip takes the whole row and the grip
+     goes away. At that width a stacked icon-over-label button reads as a tiny
+     glyph marooned in a wide box, so the buttons become ordinary rows: icon,
+     then label, left-aligned. */
+  .main.solo .toolgrip { display:none; }
+  .main.solo .tools    { flex:1; }
+  .main.solo .tbtn {
+    flex-direction:row; justify-content:flex-start;
+    min-height:30px; padding:5px 9px;
+  }
+  .main.solo .tbtn svg { width:15px; height:15px; }
+  .main.solo .tbtn span { margin-top:0; margin-left:8px; font-size:11px; }
+  .main.solo .thead { font-size:9px; padding-bottom:4px; }
 
   /* ── Preset browser — hidden until the wand button is toggled ── */
   /* min-width:0 matters now that this is a flex item in a ROW: without it the
@@ -405,12 +448,6 @@
     </button>
     <span class="state off" id="state">Connecting…</span>
 
-    <!-- Test connection (icon only) -->
-    <button class="ico" id="testBtn" title="Test: read active project">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-           stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-    </button>
-
     <!-- Update available — hidden until the GitHub check finds a newer tag -->
     <button class="ico lbl upd" id="updateBtn" style="display:none">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
@@ -426,7 +463,7 @@
     </button>
 
     <!-- Toggle layer tools -->
-    <button class="ico lbl" id="toolsBtn" title="Layer tools — group, ungroup, recenter">
+    <button class="ico lbl" id="toolsBtn" title="Layer tools (group, ungroup, recenter)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
            stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><path d="M14 6h7M17.5 3v6M3 17.5h7"/></svg>
       <span>Tools</span>
@@ -454,7 +491,7 @@
              stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
         <span id="loopLbl">Loop</span>
       </button>
-      <button class="ico" id="refreshBtn" title="Rescan folder — also drops categories whose folder is gone">
+      <button class="ico" id="refreshBtn" title="Rescan folder (also drops categories whose folder is gone)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
              stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg>
       </button>
@@ -484,7 +521,7 @@
       <input type="range" class="size" id="sizeSlider" min="72" max="200" step="4"
              title="Preview size" />
       <button class="btn primary" id="applyBtn" disabled
-              title="Apply the preset — entrance keyframes only">Apply In</button>
+              title="Apply the preset (entrance keyframes only)">Apply In</button>
       <button class="btn" id="applyOutBtn" disabled
               title="Apply the entrance keyframes, then time-reverse them">Apply Out</button>
     </div>
@@ -493,7 +530,9 @@
     <!-- ── Layer tools ── -->
     <div class="toolgrip" id="toolGrip" title="Drag to resize"></div>
     <div class="tools" id="tools">
-      <button class="tbtn pri" id="groupBtn"
+      <div class="tgroup">
+      <div class="thead">Null Parent</div>
+      <button class="tbtn" id="groupBtn"
               title="Quick Parent: Parent the selected layers to a null placed at their center">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
              stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" stroke-dasharray="4 3"/><rect x="8.5" y="8.5" width="7" height="7" rx="1"/></svg>
@@ -511,17 +550,33 @@
              stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>
         <span>Recenter</span>
       </button>
+      </div>
+
+      <div class="tgroup">
+      <div class="thead">Other</div>
 
       <button class="tbtn" id="unprecompBtn"
-              title="UnPrecomp: Lift a precomp's layers back into this comp, keeping them where they looked. Each layer comes across whole — its own effects, masks, keyframes and expressions included. Only things applied TO the precomp layer (effects, masks, blend mode) cannot follow, because they act on the flattened result; those are named in the log.">
+              title="UnPrecomp: Lift a precomp's layers back into this comp, keeping them where they looked. Each layer comes across whole, including its own effects, masks, keyframes and expressions. Only things applied TO the precomp layer (effects, masks, blend mode) cannot follow, because they act on the flattened result; those are named in the log.">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
              stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="1"/><path d="M14 4h6M17 1v6M14 20h6M17 17v6M4 14v6h6" stroke-dasharray="0"/><path d="M13 13l7 7"/></svg>
         <span>UnPrecomp</span>
       </button>
+      </div>
     </div>
   </div>
 
-  <div class="log" id="log"></div>
+  <div class="log" id="log">
+    <div class="logbar">
+      <!-- Lives here rather than in the status bar: its whole output is log
+           lines, so it belongs with them. -->
+      <button class="ico lbl" id="testBtn" title="Test: read the active project">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+             stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        <span>Test</span>
+      </button>
+    </div>
+    <div class="loglines" id="logLines"></div>
+  </div>
 
   <!-- Card right-click menu; items are rebuilt per card -->
   <div class="menu" id="menu"></div>

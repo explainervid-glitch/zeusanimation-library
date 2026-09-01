@@ -21,7 +21,8 @@
 
   var dot     = document.getElementById("dot");
   var stateEl = document.getElementById("state");
-  var logEl   = document.getElementById("log");
+  var logEl   = document.getElementById("log");        // wrapper: open/closed
+  var logLines = document.getElementById("logLines");  // the scrolling lines
   var testBtn = document.getElementById("testBtn");
   var logBtn  = document.getElementById("logBtn");
 
@@ -74,8 +75,8 @@
   // to reach its tooltip or it would be unreachable without opening the log.
   function syncDotTitle() {
     var msg = stateEl.textContent || "";
-    dotBtn.title = msg + (statusShown ? "  —  click to hide status text"
-                                      : "  —  click to show status text");
+    dotBtn.title = msg + (statusShown ? " (click to hide status text)"
+                                      : " (click to show status text)");
   }
 
   function setStatusShown(on) {
@@ -115,9 +116,11 @@
     var line = document.createElement("div");
     if (cls) line.className = cls;
     line.textContent = "[" + new Date().toLocaleTimeString() + "] " + msg;
-    logEl.appendChild(line);
-    logEl.scrollTop = logEl.scrollHeight;
-    while (logEl.childNodes.length > 200) logEl.removeChild(logEl.firstChild);
+    // Appended to the LINES container, never to the wrapper: the trim below
+    // deletes firstChild, and the wrapper's first child is the header row.
+    logLines.appendChild(line);
+    logLines.scrollTop = logLines.scrollHeight;
+    while (logLines.childNodes.length > 200) logLines.removeChild(logLines.firstChild);
   }
 
   // Briefly show the last action in the status row, so the log can stay closed.
@@ -239,7 +242,7 @@
     callHost("zae_installUpdate", { branch: UPDATE_BRANCH }, function (r) {
       updateBtn.disabled = false;
       log("Update → " + r.message, r.ok ? "ok" : "err");
-      flash(r.ok ? "Updated — restart After Effects" : r.message, !r.ok);
+      flash(r.ok ? "Updated, restart After Effects" : r.message, !r.ok);
       if (r.ok) updateBtn.style.display = "none";
     });
   }
@@ -248,7 +251,7 @@
     var mine = installedVersion();
     updateBtn.style.display = "";
     updateBtn.title = "Repo has " + remote + ", this panel is " + mine
-                    + " — click to install (needs administrator rights)";
+                    + " (click to install, needs administrator rights)";
     updateBtn.onclick = function () { runUpdate(remote); };
     log("Update available: " + remote + " (running " + mine + ")", "ok");
   }
@@ -371,8 +374,8 @@
     loopBtn.className = autoplayAll ? "ico lbl on" : "ico lbl";
     loopLbl.textContent = autoplayAll ? "Loop" : "Hover";
     loopBtn.title = autoplayAll
-      ? "All previews loop — click for hover-only playback"
-      : "Previews play on hover — click to loop them all";
+      ? "All previews loop (click for hover-only playback)"
+      : "Previews play on hover (click to loop them all)";
     try { localStorage.setItem(AUTOPLAY_KEY, autoplayAll ? "1" : "0"); } catch (e2) {}
 
     if (rerender && view.length) {
@@ -766,7 +769,7 @@
       renderCats();
       applyFilter();
       log("Presets → " + r.message + " (" + r.data.withPreview + " with preview)"
-          + (r.data.truncated ? " — list truncated" : ""), "ok");
+          + (r.data.truncated ? " (list truncated)" : ""), "ok");
 
       // Say what was removed by name — this edited a shared file.
       var dropped = r.data.removedCategories || [];
@@ -779,9 +782,9 @@
       // every top-level folder — including Auto-Save — with nothing said about
       // it. Flag it loudly instead of letting it ride along in the "ok" line.
       if (r.data.manifestBroken) {
-        log("categories.json is present but could not be parsed — check it for a syntax error. "
+        log("categories.json is present but could not be parsed. Check it for a syntax error. "
             + "Showing all folders (including Auto-Save) until it's fixed.", "err");
-        flash("categories.json is broken — see log", true);
+        flash("categories.json is broken (see log)", true);
       }
     });
   }
@@ -841,7 +844,7 @@
 
       if (!pick) {
         renderRoots("");
-        showMessage("No preset folder available — pick one with Browse…", true);
+        showMessage("No preset folder available. Pick one with Browse…", true);
         return;
       }
       renderRoots(pick.id);
@@ -1074,7 +1077,7 @@
     if (!currentDir) { flash("Pick a preset folder first", true); return; }
     flash("Waiting for AE's save dialog…");
     log("Save .zfx → opening After Effects' Save Animation Preset dialog…");
-    log("  Name it and save anywhere — the panel files it into " + targetLabel() + " afterwards.");
+    log("  Name it and save anywhere. The panel files it into " + targetLabel() + " afterwards.");
     callHost("zae_savePresetPlus", {
       root: currentDir, category: targetCategory()
     }, function (r) {
@@ -1393,8 +1396,8 @@
     sep();
     dangerItem("Delete Asset…",
       function () { openPrompt("confirmdelete", { idx: i }); },
-      p.bundle ? "Deletes the whole collected folder, footage included — no undo"
-               : "Deletes the .ffx/.aep and its preview — no undo");
+      p.bundle ? "Deletes the whole collected folder, footage included (no undo)"
+               : "Deletes the .ffx/.aep and its preview (no undo)");
 
     // Show it before measuring, then clamp so it never runs off the panel.
     menuEl.className = "menu open";
@@ -1439,7 +1442,7 @@
         "Renames the folder on disk");
       item("Delete Folder", true,
         function () { deleteCategory(path); },
-        "Deletes " + label + " — empty folders only, there is no undo");
+        "Deletes " + label + " (empty folders only, there is no undo)");
     }
 
     sep();
@@ -1504,13 +1507,13 @@
     // The richer format first — it embeds the .ffx, so it keeps everything the
     // legacy command does and adds expressions on top.
     item("Save Animation+ (.zfx)", !!currentDir, savePresetPlus,
-      "ONE selected layer → " + into + " — embeds AE's own preset data, so nothing is "
+      "ONE selected layer → " + into + ". Embeds AE's own preset data, so nothing is "
       + "lost, and captures expressions on top. Select a single layer (or just the "
       + "properties/effects on it); expressions are stored by property path, which "
       + "cannot tell two layers apart.");
 
     item("Save Animation (.ffx) ", !!currentDir, saveAnimationPreset,
-      "AE selection → " + into + " — plain AE preset, no expression capture");
+      "AE selection → " + into + " (plain AE preset, no expression capture)");
 
     item("Save Animation Comp (.aep)", !!currentDir, saveCompAsPreset,
       "Collect Files: the whole open project → " + into);
@@ -1628,21 +1631,41 @@
   // ── Tool strip width (drag handle) ───────────────────────────
   // Mirrors the category rail, but the strip is on the RIGHT, so dragging left
   // has to widen it — hence the inverted delta.
-  var TOOLS_MIN = 46, TOOLS_MAX = 170, TOOLS_DEFAULT = 74;
+  // Buttons fill the strip's width, so this is purely how much room the labels
+  // and group headings get. The floor is set by the longest label
+  // ("UnPrecomp") plus the strip's padding and its 6px scrollbar — below that
+  // the text just ellipsizes into nothing useful.
+  var TOOLS_MIN = 76, TOOLS_MAX = 200, TOOLS_DEFAULT = 84;
   var TOOLS_W_KEY = "zae.toolsWidth";
   var PRESETS_MIN = 120;   // the browser never gets squeezed below this
 
+  // What the user actually dragged to, independent of whether the panel is
+  // currently wide enough to honour it.
+  //
+  // Keeping this separate from the measured width fixes two things. The strip
+  // is display:none when closed, so measuring it returned 0 and the `|| DEFAULT`
+  // fallback silently rewrote a dragged width back to one column every time the
+  // strip was hidden or the browser toggled. And a drag made while the panel was
+  // too narrow used to persist the CLAMPED width as the new preference, so the
+  // strip never came back to its old size once the panel was widened again.
+  var toolsWant = TOOLS_DEFAULT;
+
+  // `w` omitted = re-apply the remembered request. Callers use that after a
+  // layout change, when the ceiling has moved but the request has not.
   function applyToolsWidth(w) {
-    w = Math.max(TOOLS_MIN, Math.min(TOOLS_MAX, Math.round(Number(w) || TOOLS_DEFAULT)));
+    if (w !== undefined) {
+      toolsWant = Math.max(TOOLS_MIN, Math.min(TOOLS_MAX, Math.round(Number(w) || TOOLS_DEFAULT)));
+    }
     // Cap against the panel so dragging can't swallow the browser. The grip
     // sits between them, so its width comes out of the budget too.
+    var out = toolsWant;
     var avail = mainEl ? mainEl.clientWidth : 0;
     var presetsOpen = presetsEl.className.indexOf("open") !== -1;
     if (avail && presetsOpen) {
-      w = Math.min(w, Math.max(TOOLS_MIN, avail - PRESETS_MIN - GRIP_W));
+      out = Math.min(out, Math.max(TOOLS_MIN, avail - PRESETS_MIN - GRIP_W));
     }
-    document.documentElement.style.setProperty("--tools-w", w + "px");
-    return w;
+    document.documentElement.style.setProperty("--tools-w", out + "px");
+    return out;
   }
 
   function initToolsWidth() {
@@ -1662,9 +1685,10 @@
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
         toolGrip.className = "toolgrip open";
-        try {
-          localStorage.setItem(TOOLS_W_KEY, String(Math.round(toolsEl.getBoundingClientRect().width)));
-        } catch (e2) {}
+        // Persist the REQUEST, not the measured width: on a narrow panel the
+        // two differ, and saving the clamped value would make the squeeze
+        // permanent once the panel was widened again.
+        try { localStorage.setItem(TOOLS_W_KEY, String(toolsWant)); } catch (e2) {}
       }
       window.addEventListener("pointermove", onMove);
       window.addEventListener("pointerup", onUp);
@@ -1676,19 +1700,27 @@
   function syncMain() {
     var presetsOpen = presetsEl.className.indexOf("open") !== -1;
     var toolsOpen   = toolsEl.className.indexOf("open") !== -1;
-    mainEl.className = (presetsOpen || toolsOpen) ? "main open" : "main";
+    var cls = (presetsOpen || toolsOpen) ? "main open" : "main";
+    // Solo: the strip has the row to itself, so it takes the whole width and
+    // the drag grip goes away — there is nothing left to resize against.
+    // Keyed on the BROWSER alone, because the log sits in its own full-width
+    // row below and never competes for horizontal space; folding it in here
+    // would leave the strip pinned narrow beside a wide empty gap.
+    if (toolsOpen && !presetsOpen) cls += " solo";
+    mainEl.className = cls;
   }
 
   function setToolsOpen(open) {
     toolsEl.className = open ? "tools open" : "tools";
     toolGrip.className = open ? "toolgrip open" : "toolgrip";
     toolsBtn.className = open ? "ico lbl on" : "ico lbl";
-    toolsBtn.title = open ? "Hide layer tools" : "Layer tools — group, ungroup, recenter";
+    toolsBtn.title = open ? "Hide layer tools" : "Layer tools (group, ungroup, recenter)";
     try { localStorage.setItem(TOOLS_KEY, open ? "1" : "0"); } catch (e) {}
     syncMain();
     syncHeight();
-    // Re-clamp: the space available to the strip changed with the layout.
-    applyToolsWidth(toolsEl.getBoundingClientRect().width || TOOLS_DEFAULT);
+    // Re-clamp from the remembered request: the space available to the strip
+    // changed with the layout, but what the user asked for did not.
+    applyToolsWidth();
   }
 
   toolsBtn.addEventListener("click", function () {
@@ -1707,7 +1739,11 @@
   // one, so it sets the baseline and the fixed-height rows add to it.
   // The tool strip sits BESIDE the browser now, so it costs no height when the
   // browser is open — it only sets the floor when it is the only thing showing.
-  var TOOLS_ONLY_H = 200;
+  //
+  // Tall enough that the tools-only view does not open onto a scrollbar: two
+  // group headings and four buttons at the solo layout's 30px, plus the status
+  // row and the strip's own padding.
+  var TOOLS_ONLY_H = 230;
 
   function syncHeight() {
     var presetsOpen = presetsEl.className.indexOf("open") !== -1;
@@ -1741,7 +1777,7 @@
     syncMain();
     syncHeight();
     // The strip shares the row with the browser, so its ceiling moved.
-    applyToolsWidth(toolsEl.getBoundingClientRect().width || TOOLS_DEFAULT);
+    applyToolsWidth();
     try { localStorage.setItem(PRESETS_KEY, open ? "1" : "0"); } catch (e) {}
     if (!open) return;
     if (deferScan) setTimeout(initPresets, 200);

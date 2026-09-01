@@ -635,7 +635,7 @@ Panel constants, top of the relevant block in `js/panel.js`:
 | `EXPORT_MBPS` | `8` | Target H.264 bitrate |
 | `CARD_MIN/MAX/DEFAULT` | `72 / 200 / 100` | Thumbnail size slider range |
 | `CATS_MIN/MAX/DEFAULT` | `56 / 240 / 84` | Category rail width range |
-| `TOOLS_MIN/MAX/DEFAULT` | `46 / 170 / 74` | Tool strip width range |
+| `TOOLS_MIN/MAX/DEFAULT` | `76 / 200 / 84` | Tool strip width range — the floor is where the longest label and group heading stop clipping |
 | `PRESETS_MIN` | `120` | The browser is never squeezed below this by the tool strip |
 | `AUTOPLAY_KEY` | `zae.autoplay` | Stores the Loop/Hover choice |
 
