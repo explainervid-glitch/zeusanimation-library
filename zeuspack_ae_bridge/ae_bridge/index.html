@@ -22,16 +22,33 @@
     font-weight:600; font-style:normal; font-display:swap;
   }
 
+  /* UI TEXT IS WHITE AT REST.
+     Nothing is dimmed just because it is idle: --text is the colour for every
+     label, and hover feedback comes from a background or border change instead
+     of from brightening the type.
+
+     Four things stay dim ON PURPOSE, because they carry meaning rather than
+     decoration: a DISABLED menu item (.menu button.off) and an offline preset
+     root (.path option:disabled), which have to read as unavailable; input
+     PLACEHOLDER text, which must not look like a value you already typed; and
+     the "(Uncategorize)" row (.cat.root), which is a leftovers bucket rather
+     than a category anyone chose to make.
+
+     The grid's own text is dimmed too (.meta .nm, .tag, .thumb .ph): a folder
+     of cards is mostly labels, and they should sit behind the previews rather
+     than compete with them. Hover and selection bring them back to full white.
+     Semantic colours (ok/err/accent, and the FX/FX+/Comp badge colours) are
+     information too and are left alone. */
   :root {
     --bg:#1e1e1e; --panel:#252526; --border:#3a3a3a;
-    --text:#e6e6e6; --muted:#9a9a9a; --accent:#6c8cff;
+    --text:#ffffff; --muted:#9a9a9a; --accent:#6c8cff;
     --ok:#3fb950; --err:#f85149;
     /* Card width and thumbnail height, driven by the size slider. The pair is
        always kept at the preview comp's aspect ratio (see panel.js), so a
        rendered preview fills the tile with nothing cropped. */
     --card-w:96px; --thumb-h:54px;
     --cats-w:84px;              /* category rail, dragged by its right edge */
-    --tools-w:84px;             /* tool strip, dragged by its left edge */
+    --tools-w:92px;             /* tool strip, dragged by its left edge */
   }
 
   /* The grid's scrollbar is subtracted from the track area, so a fat default
@@ -73,7 +90,7 @@
   .dot.ok { background:var(--ok); } .dot.err { background:var(--err); }
   .dotbtn:hover .dot { box-shadow:0 0 0 3px rgba(108,140,255,.25); }
 
-  .state { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--muted); }
+  .state { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--text); }
   /* Hidden by default: the dot's colour already carries connection state, and
      its tooltip carries the words. `visibility` rather than `display` keeps the
      element as the flex spacer, so hiding the text does not slide the toolbar
@@ -89,7 +106,7 @@
     width:22px; height:22px; padding:0; flex-shrink:0;
     display:inline-flex; align-items:center; justify-content:center;
     background:transparent; border:1px solid var(--border); border-radius:5px;
-    color:var(--muted); cursor:pointer;
+    color:var(--text); cursor:pointer;
   }
   .ico:hover { color:var(--text); border-color:var(--accent); }
   .ico:disabled { opacity:.4; cursor:default; }
@@ -126,7 +143,7 @@
   .loglines {
     flex:1; min-height:0; overflow:auto; font-size:10px;
     font-family:Consolas, monospace;   /* the log stays mono — Inter isn't */
-    color:var(--muted); white-space:pre-wrap; word-break:break-word;
+    color:var(--text); white-space:pre-wrap; word-break:break-word;
   }
   .loglines .ok  { color:var(--ok); }
   .loglines .err { color:var(--err); }
@@ -152,10 +169,23 @@
   .tgroup { margin-bottom:7px; }
   .tgroup:last-child { margin-bottom:0; }
   .thead {
+    display:flex; align-items:center;
     font-size:8px; font-weight:600; letter-spacing:.07em; text-transform:uppercase;
-    color:#6a6a6a; padding:0 2px 3px;
-    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    color:var(--text); padding:0 2px 3px;
   }
+  /* The label takes the squeeze so the gear beside it never gets cropped off
+     the right edge when the strip is dragged narrow. */
+  .tname { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  /* Group-level settings. Sized down to the heading rather than up to the
+     buttons: it configures the group, it is not one of its actions. */
+  .tcfg {
+    flex:0 0 auto; width:14px; height:14px; margin-left:3px; padding:0;
+    display:inline-flex; align-items:center; justify-content:center;
+    background:transparent; border:0; border-radius:2px;
+    color:var(--text); cursor:pointer;
+  }
+  .tcfg:hover { background:#3d3d3d; color:var(--text); }
+  .tcfg svg { width:10px; height:10px; display:block; }
   .tools::-webkit-scrollbar { width:6px; }
   .tools::-webkit-scrollbar-track { background:transparent; }
   .tools::-webkit-scrollbar-thumb { background:#3f3f46; border-radius:99px; }
@@ -183,7 +213,7 @@
     width:100%; min-height:42px; margin-bottom:3px;
     display:flex; flex-direction:column; align-items:center; justify-content:center;
     background:#2f2f2f; border:0; border-radius:2px;
-    color:var(--muted); cursor:pointer; font:inherit; padding:5px 3px;
+    color:var(--text); cursor:pointer; font:inherit; padding:5px 3px;
   }
   .tbtn:last-child { margin-bottom:0; }
   .tbtn:hover:not(:disabled) { background:#3d3d3d; color:var(--text); }
@@ -290,6 +320,7 @@
     overflow:hidden; cursor:pointer; min-width:0;
   }
   .card:hover { border-color:#5a5a5a; }
+  .card:hover .meta .nm { color:var(--text); }
   .card.sel   { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
 
   /* Definite px height, not a percentage-padding aspect box: percentage padding
@@ -309,14 +340,19 @@
   .thumb .ph.err { color:var(--err); font-size:9px; font-weight:400; text-align:center; padding:0 4px; }
 
   .meta { padding:2px 4px 3px; }
+  /* Dimmer than the rest of the UI on purpose. A folder of cards is mostly
+     name text, and at full white the grid reads as a wall of labels competing
+     with the previews, which are the thing you are actually scanning. It
+     brightens on hover and goes white when selected, so the card you are
+     pointing at or have picked is always the loudest one. */
   .meta .nm {
-    display:block; font-size:10px; color:var(--text);
+    display:block; font-size:10px; color:var(--muted);
     white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
   }
   .card.sel .meta { background:var(--accent); }
   .card.sel .meta .nm { color:#fff; }
 
-  .empty-list { color:#6a6a6a; font-size:10px; text-align:center; }
+  .empty-list { color:var(--text); font-size:10px; text-align:center; }
 
   /* Corner badges on the thumbnail: which of the three sidecar files exist. */
   .tags { position:absolute; right:3px; bottom:3px; display:flex; gap:2px; }
@@ -354,7 +390,7 @@
   .btn {
     height:22px; padding:0 9px; flex-shrink:0;
     background:transparent; border:1px solid var(--border); border-radius:5px;
-    color:var(--muted); cursor:pointer; font-size:10px; font-weight:600;
+    color:var(--text); cursor:pointer; font-size:10px; font-weight:600;
   }
   .btn:hover:not(:disabled) { color:var(--text); border-color:var(--accent); }
   .btn:disabled { opacity:.4; cursor:default; }
@@ -408,7 +444,7 @@
   .cat {
     display:flex; align-items:center; gap:6px;
     padding:2px 6px; border-radius:4px; cursor:pointer;
-    color:var(--muted); font-size:10px;
+    color:var(--text); font-size:10px;
   }
   .cat:hover { background:#1d1d1d; color:var(--text); }
   .cat.sel  { background:var(--accent); color:#fff; }
@@ -417,8 +453,12 @@
               box-shadow:inset 0 0 0 1px var(--accent); color:var(--text); }
   /* "(Uncategorize)" — the leftovers bucket, pinned below the real categories
      and dimmed so the eye reads the named folders first. */
+  /* Deliberately dim (see the note in :root). "(Uncategorize)" is not a
+     category you made, it is the leftovers bucket for assets never filed into
+     one, so it reads quieter than the real rows. Brightens on hover and goes
+     full white when selected, so it never looks disabled. */
   .cat.root { color:#6a6a6a; font-style:italic; }
-  .cat.root:hover { color:var(--muted); }
+  .cat.root:hover { color:var(--text); }
   .cat.root.sel { color:#fff; font-style:normal; }
   .cat .cn  { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .cat .cc  { flex-shrink:0; font-size:9px; opacity:.65; }
@@ -429,8 +469,11 @@
      up. It owns its own click (stopPropagation'd in panel.js) so toggling
      never also selects the row or changes the grid's filter. */
   .cat .catToggle {
-    flex-shrink:0; width:10px; text-align:center;
-    font-size:8px; color:var(--muted); cursor:pointer;
+    flex-shrink:0; width:14px; text-align:center;
+    font-size:12px; color:var(--text); cursor:pointer;
+    /* line-height:1 so the taller glyph does not push the row height up: the
+       10px label at 1.4 stays the tallest thing in the row. */
+    line-height:1;
   }
   .cat .catToggle:hover { color:var(--text); }
   .cat .catToggle.spacer { visibility:hidden; cursor:default; }
@@ -470,10 +513,9 @@
     </button>
 
     <!-- Toggle log -->
-    <button class="ico lbl" id="logBtn" title="Show log">
+    <button class="ico" id="logBtn" title="Show log">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
            stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="14" y2="17"/></svg>
-      <span>Log</span>
     </button>
   </div>
 
@@ -531,7 +573,14 @@
     <div class="toolgrip" id="toolGrip" title="Drag to resize"></div>
     <div class="tools" id="tools">
       <div class="tgroup">
-      <div class="thead">Null Parent</div>
+      <div class="thead">
+        <span class="tname" title="Null Parent">Null Parent</span>
+        <button class="tcfg" id="centerCfgBtn"
+                title="Where the null is placed when grouping and recentring">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+               stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+      </div>
       <button class="tbtn" id="groupBtn"
               title="Quick Parent: Parent the selected layers to a null placed at their center">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
@@ -553,13 +602,13 @@
       </div>
 
       <div class="tgroup">
-      <div class="thead">Other</div>
+      <div class="thead"><span class="tname">Other</span></div>
 
-      <button class="tbtn" id="unprecompBtn"
-              title="UnPrecomp: Lift a precomp's layers back into this comp, keeping them where they looked. Each layer comes across whole, including its own effects, masks, keyframes and expressions. Only things applied TO the precomp layer (effects, masks, blend mode) cannot follow, because they act on the flattened result; those are named in the log.">
+      <button class="tbtn" id="decomposeBtn"
+              title="Decompose: Lift a precomp's layers back into this comp, keeping them where they looked. Each layer comes across whole, including its own effects, masks, keyframes and expressions. Only things applied TO the precomp layer (effects, masks, blend mode) cannot follow, because they act on the flattened result; those are named in the log.">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
              stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="1"/><path d="M14 4h6M17 1v6M14 20h6M17 17v6M4 14v6h6" stroke-dasharray="0"/><path d="M13 13l7 7"/></svg>
-        <span>UnPrecomp</span>
+        <span>Decompose</span>
       </button>
       </div>
     </div>

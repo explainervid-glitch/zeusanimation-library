@@ -7,7 +7,7 @@ A CEP panel for Adobe After Effects. It does three separate jobs:
 2. **Preset browser** — browses, previews, applies, authors and exports `.ffx`
    presets, `.zfx` presets and `.aep` compositions, with video thumbnails in a
    grid.
-3. **Layer tools** — grouping without a pre-comp, and UnPrecomp.
+3. **Layer tools** — grouping without a pre-comp, and Decompose.
 
 The bridge half runs whether or not you ever open the browser. The browser and
 the tools work with After Effects alone and do not need ZeusPack running.
@@ -374,7 +374,7 @@ Effects' own selection, so there is nothing to pick in the panel.
 | **Parent** | Parents the selected layers to a null placed at their centre |
 | **Clear** | Releases a group's layers and deletes its null |
 | **Recenter** | Moves a group's null back to the centre of its layers, without moving them |
-| **UnPrecomp** | Lifts a precomp's layers back into the comp around it |
+| **Decompose** | Lifts a precomp's layers back into the comp around it |
 
 ### Group without a pre-comp
 
@@ -408,7 +408,7 @@ afterwards and the handle is left off to one side of what it controls. It
 detaches the children, moves the null, and reattaches — parenting preserves the
 world transform in both directions, so nothing of theirs moves.
 
-### UnPrecomp
+### Decompose
 
 Lifts a precomp's layers back into the comp around it, keeping them exactly where
 they looked. **The precomp layer is always deleted**, and normally nothing
@@ -478,7 +478,7 @@ scripting limit — it is the reason precomps exist — so they are named in the
 instead of being dropped quietly. When the precomp layer has none of them, the
 log says that too.
 
-> If the precomp layer *does* carry an effect, UnPrecomp will change the render.
+> If the precomp layer *does* carry an effect, Decompose will change the render.
 > It runs in a single undo group, so Ctrl+Z backs the whole thing out.
 
 ---
@@ -635,7 +635,7 @@ Panel constants, top of the relevant block in `js/panel.js`:
 | `EXPORT_MBPS` | `8` | Target H.264 bitrate |
 | `CARD_MIN/MAX/DEFAULT` | `72 / 200 / 100` | Thumbnail size slider range |
 | `CATS_MIN/MAX/DEFAULT` | `56 / 240 / 84` | Category rail width range |
-| `TOOLS_MIN/MAX/DEFAULT` | `76 / 200 / 84` | Tool strip width range — the floor is where the longest label and group heading stop clipping |
+| `TOOLS_MIN/MAX/DEFAULT` | `92 / 200 / 92` | Tool strip width range — the floor is where the "Null Parent" heading and its gear stop clipping |
 | `PRESETS_MIN` | `120` | The browser is never squeezed below this by the tool strip |
 | `AUTOPLAY_KEY` | `zae.autoplay` | Stores the Loop/Hover choice |
 
@@ -714,7 +714,7 @@ be open, which is a bigger change than a thumbnail.
 in this repo's own `CSXS/manifest.xml`. Shipping an update is one commit:
 
 ```xml
-<ExtensionManifest ... ExtensionBundleVersion="1.0.5"
+<ExtensionManifest ... ExtensionBundleVersion="1.0.6"
 ```
 
 On launch the panel reads that file raw from GitHub and compares it with the
@@ -728,7 +728,7 @@ mismatch as one behind it, and both are worth knowing about — the tooltip name
 both versions, so which way round it is stays obvious:
 
 ```
-Repo has 1.0.5, this panel is 1.0.4 — click to install (needs administrator rights)
+Repo has 1.0.6, this panel is 1.0.5 — click to install (needs administrator rights)
 ```
 
 ### What clicking it does
@@ -917,11 +917,11 @@ the panel no longer writes the list back on top;
 `setPropertyParameters()` rebuilds the effect rather than editing it, which drops
 the name you gave it and breaks expressions that reference it.
 
-**UnPrecomp left a null behind** — the precomp layer's transform could not be
+**Decompose left a null behind** — the precomp layer's transform could not be
 baked exactly. The log names which of the three reasons applied: an animated
-transform, a 3D precomp layer, or a shear. See [UnPrecomp](#unprecomp).
+transform, a 3D precomp layer, or a shear. See [Decompose](#decompose).
 
-**Layers moved or resized after UnPrecomp** — check the log for what was *not*
+**Layers moved or resized after Decompose** — check the log for what was *not*
 carried. Anything applied **to** the precomp layer (effects, masks, blend mode,
 opacity) acts on the flattened result and has no per-layer equivalent. Ctrl+Z
 backs the whole operation out in one step.

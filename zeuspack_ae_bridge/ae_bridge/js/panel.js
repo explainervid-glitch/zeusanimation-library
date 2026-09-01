@@ -50,8 +50,9 @@
   var groupBtn    = document.getElementById("groupBtn");
   var ungroupBtn  = document.getElementById("ungroupBtn");
   var recenterBtn = document.getElementById("recenterBtn");
-  var unprecompBtn = document.getElementById("unprecompBtn");
+  var decomposeBtn = document.getElementById("decomposeBtn");
   var toolGrip    = document.getElementById("toolGrip");
+  var centerCfgBtn = document.getElementById("centerCfgBtn");
   var mainEl      = document.getElementById("main");
 
   var connected = null;   // tri-state so the first result always renders
@@ -204,7 +205,7 @@
   // ExtensionBundleVersion in CSXS/manifest.xml: the update check tests
   // INEQUALITY against the repo's manifest, so a stale value here reports a
   // phantom "update available" against a repo that has not moved.
-  var PANEL_VERSION   = "1.0.5";
+  var PANEL_VERSION   = "1.0.6";
 
   var updateBtn = document.getElementById("updateBtn");
 
@@ -350,7 +351,10 @@
   function showMessage(html, isErr) {
     listEl.className = "list msg";
     listEl.innerHTML = '<div class="empty-list"' + (isErr ? ' style="color:#f85149"' : "") + ">" + html + "</div>";
+    // BOTH buttons. Only Apply In used to be switched off here, so Apply Out
+    // stayed live over an empty grid and still had a stale `view` behind it.
     applyBtn.disabled = true;
+    applyOutBtn.disabled = true;
   }
 
   // Preview playback mode, toggled from the toolbar.
@@ -631,9 +635,8 @@
     for (var i = 0; i < presets.length; i++) {
       if (activeFolder === null || inFolder(presets[i], activeFolder)) view.push(presets[i]);
     }
-    selectedIdx = -1;
     renderList();
-    applyBtn.disabled = true;
+    select(-1);          // clears the selection AND both buttons, in one place
   }
 
   function renderList() {
@@ -747,7 +750,13 @@
     showMessage("Scanning…");
     callHost("zae_listPresets", { path: dir, prune: !!prune }, function (r) {
       if (!r.ok) {
+        // Drop the whole view, not just `presets`. Leaving `view` and
+        // `selectedIdx` behind meant a failed scan (an unplugged network root,
+        // say) showed an error while still holding the previous folder's
+        // presets, and Apply Out would happily apply one of them.
         presets = [];
+        view = [];
+        selectedIdx = -1;
         showMessage(esc(r.message), true);
         log("Presets → " + r.message, "err");
         return;
@@ -903,15 +912,29 @@
     // Cleared so a stale mode can't make a later Escape or Enter act on a
     // confirmation that is no longer on screen.
     promptMode = "";
-    promptDelete = null;
+    promptTarget = null;
     syncHeight();
   }
 
-  // The delete target is captured when the confirmation opens, not read back
-  // from view[] when it is accepted: a rescan between the two would silently
-  // repoint the index at a different asset, and this is the one action where
-  // that means destroyed files.
-  var promptDelete = null;
+  // The asset a prompt is acting on, captured when the prompt OPENS.
+  //
+  // Never read back from view[] when the prompt is accepted. Every rescan
+  // rebuilds the grid (a finished export, a move, a delete), and the panel
+  // keeps responding while After Effects is busy rendering, so the list really
+  // can shift while a prompt sits open. An index captured before that shift
+  // points at a DIFFERENT asset after it.
+  //
+  // Delete and Rename both write to disk, so both capture. Delete had this
+  // from the start; Rename was still reading view[promptIdx] at submit time
+  // and could rename a file the user never picked.
+  var promptTarget = null;
+
+  function captureAsset(i) {
+    var d = view[i];
+    if (!d) return null;
+    return { idx: i, name: d.name, folder: d.folder || "",
+             bundle: d.bundle || "", path: d.path };
+  }
 
   // opts: { idx } for an asset rename or delete, { path } for folder
   // create/rename.
@@ -921,17 +944,14 @@
     promptMode = mode;
     promptIdx  = (opts.idx === undefined) ? -1 : opts.idx;
     promptPath = (opts.path === undefined) ? "" : opts.path;
-    promptDelete = null;
+    promptTarget = null;
 
     // Confirmation, not input: the message replaces the field, and focus lands
     // on Cancel so a reflexive Enter backs out instead of deleting.
     if (mode === "confirmdelete") {
-      var d = view[promptIdx];
+      promptTarget = captureAsset(promptIdx);
+      var d = promptTarget;
       if (!d) return;
-      promptDelete = {
-        idx: promptIdx, name: d.name, folder: d.folder || "",
-        bundle: d.bundle || "", path: d.path
-      };
       promptMsg.textContent = 'Delete "' + d.name + '"'
         + (d.bundle ? " and its whole folder" : "") + "? No undo.";
       promptMsg.title = d.bundle ? d.path + "  (the whole folder)" : d.path;
@@ -946,8 +966,11 @@
     promptOk.className = "btn";
     var lastSegment = promptPath ? promptPath.split("/").pop() : "";
     var current = "";
-    if (mode === "rename" && view[promptIdx]) current = view[promptIdx].name;
-    else if (mode === "catrename") current = lastSegment;
+    if (mode === "rename") {
+      promptTarget = captureAsset(promptIdx);
+      if (!promptTarget) return;
+      current = promptTarget.name;
+    } else if (mode === "catrename") current = lastSegment;
 
     promptInput.value = current;
     promptInput.placeholder =
@@ -971,8 +994,8 @@
   function submitPrompt() {
     // Confirm mode has no input to read — check it before the name guard.
     if (promptMode === "confirmdelete") {
-      var target = promptDelete;
-      closePrompt();                 // clears promptDelete
+      var target = promptTarget;
+      closePrompt();                 // clears promptTarget
       if (target) deleteAsset(target);
       return;
     }
@@ -982,11 +1005,13 @@
     promptOk.disabled = true;
 
     if (promptMode === "rename") {
-      var p = view[promptIdx];
+      // The asset captured when the prompt opened, not whatever card now sits
+      // at that index.
+      var p = promptTarget;
       if (!p) { promptOk.disabled = false; closePrompt(); return; }
       callHost("zae_renameAsset", {
-        root: currentDir, folder: p.folder || "", from: p.name, to: name,
-        bundle: p.bundle || ""
+        root: currentDir, folder: p.folder, from: p.name, to: name,
+        bundle: p.bundle
       }, function (r) {
         promptOk.disabled = false;
         log("Rename " + p.name + " → " + r.message, r.ok ? "ok" : "err");
@@ -1241,7 +1266,16 @@
   // card holds its .mp4 open while Loop mode is on, and the export deletes
   // the previous file first — on Windows that delete can fail against a live
   // handle. The card is re-rendered from the rescan afterwards either way.
-  function releasePreview(i) {
+  function releasePreview(path) {
+    if (!path) return;
+    // Found by PATH, not by card number: the grid may have been rebuilt since
+    // the action was started, and then card N is a different asset. Compared
+    // against `view` rather than a DOM attribute so no new escaping surface is
+    // introduced. See promptTarget.
+    var i = -1, k;
+    for (k = 0; k < view.length; k++) { if (view[k].path === path) { i = k; break; } }
+    if (i < 0) return;
+
     var cards = listEl.getElementsByClassName("card");
     for (var n = 0; n < cards.length; n++) {
       if (Number(cards[n].getAttribute("data-i")) !== i) continue;
@@ -1258,7 +1292,7 @@
   function exportImagePreview(i) {
     var p = view[i];
     if (!p) return;
-    releasePreview(i);
+    releasePreview(p.path);
     flash("Saving " + p.name + ".png…");
     callHost("zae_exportImagePreview", {
       path: p.path, name: p.name, width: EXPORT_W, height: EXPORT_H
@@ -1272,7 +1306,7 @@
   function exportPreview(i) {
     var p = view[i];
     if (!p) return;
-    releasePreview(i);
+    releasePreview(p.path);
     // rq.render() blocks After Effects until it finishes, so evalScript's
     // callback only fires at the end — say what's happening up front.
     flash("Rendering " + p.name + "…");
@@ -1289,12 +1323,12 @@
   }
 
   // `t` is the target captured by the confirmation, not a live index — see
-  // promptDelete.
+  // promptTarget.
   function deleteAsset(t) {
     if (!t || !currentDir) return;
     // Loop mode keeps every .mp4 open; on Windows the delete fails against a
     // live handle, so let go of this card's preview first.
-    releasePreview(t.idx);
+    releasePreview(t.path);
     flash("Deleting " + t.name + "…");
     callHost("zae_deleteAsset", {
       root: currentDir, folder: t.folder, name: t.name, bundle: t.bundle
@@ -1602,7 +1636,7 @@
   // the panel — the buttons just fire and report.
   var TOOLS_KEY    = "zae.toolsOpen";
 
-  var toolButtons = [groupBtn, ungroupBtn, recenterBtn, unprecompBtn];
+  var toolButtons = [groupBtn, ungroupBtn, recenterBtn, decomposeBtn];
 
   function runTool(fn, label, params) {
     var i;
@@ -1615,27 +1649,92 @@
     });
   }
 
+  // ── Where the null goes ──────────────────────────────────────
+  // "bounds"  the middle of the selection's bounding box, so the handle lands
+  //           in the visual middle of what it controls.
+  // "anchor"  the average of the layers' own anchor points, which ignores how
+  //           big anything is: a wide background no longer drags the handle
+  //           away from the thing you meant to move.
+  //
+  // Group and Recenter BOTH read it. They run the same centring, so letting
+  // them disagree would mean recentring a group moved its null somewhere the
+  // grouping would never have put it.
+  var CENTER_KEY = "zae.groupCenter";
+  var groupCenter = "bounds";
+  try {
+    if (localStorage.getItem(CENTER_KEY) === "anchor") groupCenter = "anchor";
+  } catch (e) {}
+
+  var CENTER_LABEL = { bounds: "Bounding box", anchor: "Anchor point" };
+
+  function syncCenterTitle() {
+    centerCfgBtn.title = "Null placement: " + CENTER_LABEL[groupCenter]
+                       + " (click to change)";
+  }
+
+  function setGroupCenter(mode) {
+    groupCenter = (mode === "anchor") ? "anchor" : "bounds";
+    syncCenterTitle();
+    try { localStorage.setItem(CENTER_KEY, groupCenter); } catch (e2) {}
+    log("Null placement: " + CENTER_LABEL[groupCenter], "ok");
+    flash("Null placement: " + CENTER_LABEL[groupCenter]);
+  }
+
+  // Reuses the grid's floating menu rather than an inline panel: the strip is
+  // 76px wide at its narrowest, which is not enough for two readable labels.
+  function openCenterMenu(x, y) {
+    menuEl.innerHTML = "";
+    function opt(id, label, tip) {
+      item((groupCenter === id ? "✓ " : "    ") + label, true,
+        function () { setGroupCenter(id); }, tip);
+    }
+    opt("bounds", "Bounding box",
+      "Centre the null on the selection's visual bounding box. Falls back to "
+      + "anchor points when nothing has a measurable rect (3D layers, cameras, lights).");
+    opt("anchor", "Anchor point",
+      "Centre the null on the average of the layers' own anchor points. Ignores "
+      + "layer size, so a large background does not pull the handle off-centre.");
+
+    menuEl.className = "menu open";
+    var mw = menuEl.offsetWidth, mh = menuEl.offsetHeight;
+    var vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
+    menuEl.style.left = Math.max(2, Math.min(x, vw - mw - 2)) + "px";
+    menuEl.style.top  = Math.max(2, Math.min(y, vh - mh - 2)) + "px";
+  }
+
+  centerCfgBtn.addEventListener("click", function (ev) {
+    ev.stopPropagation();   // the document handler would shut it again
+    var r = this.getBoundingClientRect();
+    openCenterMenu(r.left, r.bottom + 2);
+  });
+  syncCenterTitle();
+
   groupBtn.addEventListener("click", function () {
-    runTool("zae_groupLayers", "Group", {});
+    runTool("zae_groupLayers", "Group", { center: groupCenter });
   });
   ungroupBtn.addEventListener("click", function () {
     runTool("zae_ungroupLayers", "Ungroup", {});
   });
   recenterBtn.addEventListener("click", function () {
-    runTool("zae_recenterGroup", "Recenter", {});
+    runTool("zae_recenterGroup", "Recenter", { center: groupCenter });
   });
-  unprecompBtn.addEventListener("click", function () {
-    runTool("zae_unPrecomp", "UnPrecomp", {});
+  decomposeBtn.addEventListener("click", function () {
+    runTool("zae_decompose", "Decompose", {});
   });
 
   // ── Tool strip width (drag handle) ───────────────────────────
   // Mirrors the category rail, but the strip is on the RIGHT, so dragging left
   // has to widen it — hence the inverted delta.
   // Buttons fill the strip's width, so this is purely how much room the labels
-  // and group headings get. The floor is set by the longest label
-  // ("UnPrecomp") plus the strip's padding and its 6px scrollbar — below that
-  // the text just ellipsizes into nothing useful.
-  var TOOLS_MIN = 76, TOOLS_MAX = 200, TOOLS_DEFAULT = 84;
+  // and group headings get.
+  //
+  // The floor is set by the widest HEADING ROW, not by the widest button label:
+  // "NULL PARENT" is uppercase with letter-spacing and now shares its row with
+  // the gear, which costs it 17px. That row needs 92px where the longest button
+  // label ("Decompose", 52px) only needs 76. Measured, not guessed. Below 92
+  // the heading ellipsizes to "NULL PAREN..." at the default width, which is
+  // exactly where people leave it.
+  var TOOLS_MIN = 92, TOOLS_MAX = 200, TOOLS_DEFAULT = 92;
   var TOOLS_W_KEY = "zae.toolsWidth";
   var PRESETS_MIN = 120;   // the browser never gets squeezed below this
 
@@ -1760,7 +1859,7 @@
   logBtn.addEventListener("click", function () {
     var open = logEl.className.indexOf("open") === -1;
     logEl.className = open ? "log open" : "log";
-    logBtn.className = open ? "ico lbl on" : "ico lbl";
+    logBtn.className = open ? "ico on" : "ico";
     logBtn.title = open ? "Hide log" : "Show log";
     syncHeight();
   });

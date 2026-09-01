@@ -2174,13 +2174,41 @@ function zae_exportPreview(params) {
         }
 
         var rq = proj.renderQueue;
-        // Leave anything already queued alone, but don't render it with us.
+
+        // Take anything already queued OUT of this render, then put it back.
+        //
+        // rq.render() renders every ticked item, so someone else's overnight
+        // job would otherwise be rendered alongside a 3-second thumbnail.
+        // Un-ticking it is right; leaving it un-ticked is not. That is a
+        // silent failure you find the next morning, when the render you
+        // queued turns out never to have run.
+        //
+        // References, not indices: our own item is removed at the end, and
+        // RenderQueueItem objects stay valid across that.
+        var disarmed = [];
         for (var q = 1; q <= rq.numItems; q++) {
-            try { if (rq.item(q).status === RQItemStatus.QUEUED) rq.item(q).render = false; } catch (e2) {}
+            try {
+                var qi = rq.item(q);
+                if (qi.status === RQItemStatus.QUEUED) { qi.render = false; disarmed.push(qi); }
+            } catch (e2) {}
         }
 
         var rqItem = rq.items.add(comp);
         rqItem.render = true;
+
+        // Runs on EVERY exit from here on, success or failure. Our queue item
+        // is scaffolding: left behind, the queue collects one DONE row per
+        // preview ever exported.
+        // Safe to call at any point, including from the outer catch before
+        // these have been assigned: `var` hoists them as undefined.
+        function _releaseQueue() {
+            try { if (rqItem) rqItem.remove(); } catch (eRm) {}
+            if (!disarmed) return;
+            for (var d = 0; d < disarmed.length; d++) {
+                try { disarmed[d].render = true; } catch (eRe) {}
+            }
+            disarmed = [];      // idempotent, so a double call cannot re-tick
+        }
 
         var targetW = params.width  ? Number(params.width)  : 480;
         var targetH = params.height ? Number(params.height) : 270;
@@ -2232,18 +2260,25 @@ function zae_exportPreview(params) {
         }
 
         if (configErr) {
-            try { rqItem.remove(); } catch (e3) {}
+            _releaseQueue();
             return _result(false, configErr);
         }
 
         // Render OUTSIDE the suppression — a genuine render failure should be
-        // visible rather than swallowed.
-        rq.render();
+        // visible rather than swallowed. Wrapped so a throw still hands the
+        // queue back the way it was found.
+        try { rq.render(); }
+        catch (eRen) {
+            _releaseQueue();
+            return _result(false, "Render failed: " + eRen.toString());
+        }
 
         // Re-stat rather than trusting `out` — see _fileAppeared.
         if (!_fileAppeared(out.fsName)) {
+            _releaseQueue();
             return _result(false, "Render finished but no file appeared at " + out.fsName);
         }
+        _releaseQueue();
 
         // Say what actually happened rather than what was requested — the size
         // and bitrate both depend on APIs older AE versions do not expose.
@@ -2267,6 +2302,9 @@ function zae_exportPreview(params) {
             targetWidth: targetW, targetHeight: targetH
         });
     } catch (e) {
+        // Last line of defence: an unexpected throw must not leave the user's
+        // queue disarmed. Harmless if the release already ran.
+        try { _releaseQueue(); } catch (eQ) {}
         return _result(false, "Exception: " + e.toString());
     }
 }
@@ -3435,10 +3473,31 @@ function _unionBounds(layers, t) {
 // space. _layerPointToComp(layer, anchor) collapses to exactly the layer's
 // position, so this works for 3D layers, cameras and anything else with no
 // measurable rect — the cases that make the bounding box unavailable.
-function _selectionCenter(layers, t) {
-    var b = _unionBounds(layers, t);
-    if (b.ok) {
-        return { x: b.cx, y: b.cy, from: "bounds", w: b.w, h: b.h, skipped: b.skipped };
+// `mode` picks WHICH centre, and the panel's gear button sets it:
+//
+//   "bounds" (default) the middle of the union bounding box, so the null lands
+//                      in the visual middle of what is selected. Falls back to
+//                      the anchor average when nothing has a measurable rect
+//                      (3D layers, cameras, lights), because there is no box.
+//
+//   "anchor"           the average of the layers' own anchor points, mapped to
+//                      comp space. Ignores how big anything is, so a wide
+//                      background does not drag the handle off the thing you
+//                      actually want to move; it is also the predictable choice
+//                      when layers are already anchored where they should pivot.
+//
+// `from` reports which one was actually used, and "positions" vs "anchor"
+// distinguishes the FALLBACK from the deliberate choice, so the log can say
+// "nothing had a measurable rect" only when that is really why.
+function _selectionCenter(layers, t, mode) {
+    var skipped = [];
+
+    if (mode !== "anchor") {
+        var b = _unionBounds(layers, t);
+        if (b.ok) {
+            return { x: b.cx, y: b.cy, from: "bounds", w: b.w, h: b.h, skipped: b.skipped };
+        }
+        skipped = b.skipped;
     }
 
     var sx = 0, sy = 0, n = 0;
@@ -3448,7 +3507,14 @@ function _selectionCenter(layers, t) {
         sx += p[0]; sy += p[1]; n++;
     }
     if (!n) return null;
-    return { x: sx / n, y: sy / n, from: "positions", w: 0, h: 0, skipped: b.skipped };
+    return { x: sx / n, y: sy / n,
+             from: (mode === "anchor" ? "anchor" : "positions"),
+             w: 0, h: 0, skipped: skipped };
+}
+
+// The panel sends "anchor" or "bounds"; anything else means the default.
+function _centerMode(params) {
+    return (params && String(params.center) === "anchor") ? "anchor" : "bounds";
 }
 
 // A plain After Effects null, centred on the selection.
@@ -3486,7 +3552,7 @@ function zae_groupLayers(params) {
         var t = 0;
         try { t = comp.time; } catch (eT) {}
 
-        var ctr = _selectionCenter(members, t);
+        var ctr = _selectionCenter(members, t, _centerMode(params));
         if (!ctr) return _result(false, "Could not work out where the selection is.");
 
         // Only reparent the ROOTS of the selection — a layer already parented to
@@ -3538,6 +3604,8 @@ function zae_groupLayers(params) {
             // No measurable rect anywhere (3D layers, cameras, lights), so the
             // centre is the average of their positions rather than of a box.
             msg += " (averaged from layer positions, nothing had a measurable rect)";
+        } else if (ctr.from === "anchor") {
+            msg += " (averaged from the layers' anchor points)";
         }
         if (ctr.skipped && ctr.skipped.length) {
             var shown = ctr.skipped.slice(0, 3).join(", ");
@@ -3649,7 +3717,7 @@ function zae_recenterGroup(params) {
         var t = 0;
         try { t = comp.time; } catch (eT) {}
 
-        var ctr = _selectionCenter(kids, t);
+        var ctr = _selectionCenter(kids, t, _centerMode(params));
         if (!ctr) return _result(false, "Could not work out where those layers are.");
 
         app.beginUndoGroup("ZeusPack: Recenter Group");
@@ -3664,7 +3732,8 @@ function zae_recenterGroup(params) {
         return _result(true, "Recentred \"" + control.name + "\" on its " + kids.length
                      + " layer" + (kids.length === 1 ? "" : "s") + ", now at "
                      + Math.round(ctr.x) + "," + Math.round(ctr.y)
-                     + (ctr.from === "positions" ? " (averaged from layer positions)" : ""),
+                     + (ctr.from === "positions" ? " (averaged from layer positions)"
+                        : ctr.from === "anchor"    ? " (averaged from the layers' anchor points)" : ""),
                      { centerX: ctr.x, centerY: ctr.y, children: kids.length, centredFrom: ctr.from });
     } catch (e) {
         try { app.endUndoGroup(); } catch (e9) {}
@@ -3672,7 +3741,7 @@ function zae_recenterGroup(params) {
     }
 }
 
-// ── UnPrecomp ────────────────────────────────────────────────────────────────
+// ── Decompose ────────────────────────────────────────────────────────────────
 // Lift a precomp's layers back into the comp around it, keeping them exactly
 // where they looked before.
 //
@@ -4057,7 +4126,7 @@ function _copyLayerInto(src, comp) {
 // composite, and for a blend mode or opacity that describes how that composite
 // meets the layers below. That is a compositing fact rather than a scripting
 // limit — it is the reason precomps exist — so the honest move is to name them.
-function _unPrecompWarnings(P, S, comp) {
+function _decomposeWarnings(P, S, comp) {
     var w = [];
     function has(group) {
         var g = null;
@@ -4149,7 +4218,7 @@ function _restoreTrackMattes(inner, copies) {
     return res;
 }
 
-function zae_unPrecomp(params) {
+function zae_decompose(params) {
     try {
         params = params || {};
 
@@ -4173,7 +4242,7 @@ function zae_unPrecomp(params) {
         var t = 0;
         try { t = comp.time; } catch (eT) {}
 
-        app.beginUndoGroup("ZeusPack: UnPrecomp");
+        app.beginUndoGroup("ZeusPack: Decompose");
         var totalOut = 0, done = [], warned = {}, carriers = [], empties = [];
         var mattes = 0, matteFails = 0, baked = 0, bakeStops = {};
         var shiftedAny = 0, clippedTotal = 0;
@@ -4187,7 +4256,7 @@ function zae_unPrecomp(params) {
                 for (i = 1; i <= S.numLayers; i++) inner.push(S.layer(i));
                 if (!inner.length) { empties.push(pname); continue; }
 
-                var w = _unPrecompWarnings(P, S, comp);
+                var w = _decomposeWarnings(P, S, comp);
                 for (i = 0; i < w.length; i++) warned[w[i]] = true;
 
                 // Pick the transform carrier.
@@ -4283,7 +4352,7 @@ function zae_unPrecomp(params) {
                     // layer it parented to a null AND switched hideShyLayers on
                     // for the comp; that code is gone, but the flags it wrote are
                     // still in people's projects. Group a set, precomp it, then
-                    // UnPrecomp it and the children came out invisible.
+                    // Decompose it and the children came out invisible.
                     //
                     // Cleared rather than preserved because extracting a layer is
                     // an explicit request to see it here. Nothing else in the
@@ -4371,7 +4440,7 @@ function zae_unPrecomp(params) {
                 : "Nothing was extracted.");
         }
 
-        var msg = "UnPrecomped " + done.join(", ") + ": " + totalOut + " layer"
+        var msg = "Decomposed " + done.join(", ") + ": " + totalOut + " layer"
                 + (totalOut === 1 ? "" : "s") + " lifted out in their original order";
         if (mattes)     msg += ", " + mattes + " track matte" + (mattes === 1 ? "" : "s") + " relinked";
         if (matteFails) msg += ", " + matteFails + " track matte" + (matteFails === 1 ? "" : "s") + " could not be relinked";
