@@ -147,14 +147,7 @@ function zae_listAepComps(params) {
 }
 
 // Import a composition from a source .aep into the running project.
-// Seconds to a short "1.5s" string for log messages. Trims a trailing ".0"
-// and rounds to 2 dp so a comp duration reads cleanly (12.333333 -> "12.33s").
-function _fmtSecs(s) {
-    var n = Math.round(Number(s) * 100) / 100;
-    var str = String(n);
-    return str + "s";
-}
-
+//
 // AE imports the .aep as a folder (the comp + its dependencies). If a specific
 // `comp` name is given, we locate it among the newly-imported comps and:
 //   - open it (params.open !== false), and
@@ -222,24 +215,12 @@ function zae_importAep(params) {
 
         // Add the chosen comp directly into the destination composition as a
         // layer. Default ON — pass addToActive:false to only import + open.
-        var placed = false, opened = false, matched = false, matchFrom = 0;
+        var placed = false, opened = false;
         if (target) {
             if (params.addToActive !== false && destComp && destComp.id !== target.id) {
-                // Match the asset comp's duration to the comp it's dropped into,
-                // BEFORE adding the layer: layers.add() sets the new layer's out
-                // point to the source comp's duration, so widening the source
-                // first makes the placed layer span the whole timeline instead
-                // of stopping partway. (Setting it after the add would grow the
-                // comp but leave the existing layer's out point where it was.)
-                // A shorter destination truncates the asset to fit, matching the
-                // "same duration" intent in both directions. Pass
-                // matchDuration:false to keep the asset's own length.
-                if (params.matchDuration !== false &&
-                    target.duration !== destComp.duration) {
-                    matchFrom = target.duration;
-                    try { target.duration = destComp.duration; matched = true; }
-                    catch (eDur) {}
-                }
+                // The asset comp keeps its own duration — the placed layer's out
+                // point is left at the source comp's length, not stretched to
+                // fill the destination timeline.
                 var newLayer = destComp.layers.add(target);
                 try { newLayer.selected = true; } catch (eSel) {}
                 // Default ON: an added comp layer starts un-collapsed, so it
@@ -269,18 +250,11 @@ function zae_importAep(params) {
                            : (opened ? " opened"
                                      : (destComp ? " ready in project"
                                                  : " ready in project (no active comp to drop into)")));
-            if (matched) {
-                msg += " (duration " + _fmtSecs(matchFrom) + " to "
-                     + _fmtSecs(destComp.duration) + ")";
-            }
         }
         return _result(true, msg, {
             file: f.fsName, comps: newComps, target: (target ? target.name : null),
             targetFound: !!target, opened: opened, placed: placed,
-            dest: (destComp ? destComp.name : null),
-            durationMatched: matched,
-            durationFrom: matched ? matchFrom : null,
-            durationTo: matched ? destComp.duration : null
+            dest: (destComp ? destComp.name : null)
         });
     } catch (e) {
         try { app.endUndoGroup(); } catch (e3) {}
