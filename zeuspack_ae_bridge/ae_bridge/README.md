@@ -753,7 +753,7 @@ be open, which is a bigger change than a thumbnail.
 in this repo's own `CSXS/manifest.xml`. Shipping an update is one commit:
 
 ```xml
-<ExtensionManifest ... ExtensionBundleVersion="1.0.7"
+<ExtensionManifest ... ExtensionBundleVersion="1.0.8"
 ```
 
 On launch the panel reads that file raw from GitHub and compares it with the

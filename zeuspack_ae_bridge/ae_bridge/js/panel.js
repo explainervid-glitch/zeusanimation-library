@@ -36,6 +36,9 @@
   var promptMsg    = document.getElementById("promptMsg");
   var promptCancel = document.getElementById("promptCancel");
   var listEl     = document.getElementById("list");
+  // Watches which preview cards are on screen so only those hold a live video
+  // player. Rebuilt on every renderList; see there.
+  var previewObserver = null;
   var findInput  = document.getElementById("findInput");
   var findCount  = document.getElementById("findCount");
   var applyBtn    = document.getElementById("applyBtn");
@@ -206,7 +209,7 @@
   // ExtensionBundleVersion in CSXS/manifest.xml: the update check tests
   // INEQUALITY against the repo's manifest, so a stale value here reports a
   // phantom "update available" against a repo that has not moved.
-  var PANEL_VERSION   = "1.0.7";
+  var PANEL_VERSION   = "1.0.8";
 
   var updateBtn = document.getElementById("updateBtn");
 
@@ -395,9 +398,13 @@
     // draggable="false" on the media: images and videos are natively draggable
     // and would hijack the card's own drag, so the drop would carry a file URL
     // instead of the asset.
-    var video = autoplayAll
-      ? '<video draggable="false" src="' + esc(fileUrl(p.preview, p.previewMtime)) + '" preload="auto" autoplay loop muted playsinline></video>'
-      : '<video draggable="false" src="' + esc(fileUrl(p.preview, p.previewMtime)) + '" preload="metadata" loop muted playsinline></video>';
+    // Lazy: the URL is withheld in data-src until the card scrolls into view,
+    // so an off-screen preview holds no video decoder. renderList's observer
+    // attaches the src (and plays it, in Loop mode) on entry and releases it on
+    // exit. One markup for both modes now — Loop vs Hover only changes whether
+    // the observer calls play().
+    var video = '<video draggable="false" data-src="' + esc(fileUrl(p.preview, p.previewMtime))
+              + '" preload="metadata" loop muted playsinline></video>';
 
     // The badge marks WHAT the asset is, not what sidecars it has: "ffx" is an
     // animation preset, "aep" a composition, "zfx" a ZeusPack preset (which
@@ -412,7 +419,7 @@
     var media = !p.preview
       ? '<span class="ph">' + label + "</span>"
       : (p.previewKind === "video" ? video
-          : '<img draggable="false" src="' + esc(fileUrl(p.preview, p.previewMtime)) + '" alt="">');
+          : '<img draggable="false" loading="lazy" src="' + esc(fileUrl(p.preview, p.previewMtime)) + '" alt="">');
 
     var tags = '<span class="tag ' + cls + '">' + label + "</span>";
     // A composition that owns presets ("Cursors.aep" plus
@@ -807,6 +814,44 @@
     }
     listEl.innerHTML = html;
 
+    // ── Preview players: only what's on screen holds a decoder ──
+    // 100+ autoplaying <video>s at once stutter, and past Chromium's media
+    // element ceiling (~75) the extra ones silently stop playing. So each
+    // preview keeps its URL in data-src and only becomes a live player while
+    // its card is in (or near) the viewport; leaving view releases it again.
+    if (previewObserver) { previewObserver.disconnect(); previewObserver = null; }
+
+    function attachSrc(v) {
+      if (!v || v.getAttribute("src")) return;
+      var s = v.getAttribute("data-src");
+      if (s) v.src = s;
+    }
+    function detachSrc(v) {
+      if (!v) return;
+      try { v.pause(); } catch (e) {}
+      if (v.getAttribute("src")) {
+        v.removeAttribute("src");
+        try { v.load(); } catch (e2) {}   // drop the WebMediaPlayer
+      }
+    }
+
+    if (typeof IntersectionObserver === "function") {
+      // rootMargin preloads a screen's-worth ahead so a preview is already
+      // playing by the time it is scrolled to, rather than popping in.
+      previewObserver = new IntersectionObserver(function (entries) {
+        for (var e = 0; e < entries.length; e++) {
+          var v = entries[e].target.getElementsByTagName("video")[0];
+          if (!v) continue;
+          if (entries[e].isIntersecting) {
+            attachSrc(v);
+            if (autoplayAll) { try { v.play(); } catch (err) {} }
+          } else {
+            detachSrc(v);
+          }
+        }
+      }, { root: listEl, rootMargin: "200px 0px", threshold: 0.01 });
+    }
+
     var cards = listEl.getElementsByClassName("card");
     for (var k = 0; k < cards.length; k++) {
       var card  = cards[k];
@@ -866,25 +911,38 @@
         })(asset, card);
       }
 
-      // Hover playback is redundant while every card is already looping.
-      if (video && !autoplayAll) {
-        card.addEventListener("mouseenter", function () {
-          var v = this.getElementsByTagName("video")[0];
-          if (v) { try { v.play(); } catch (e) {} }
-        });
-        card.addEventListener("mouseleave", function () {
-          var v = this.getElementsByTagName("video")[0];
-          if (v) { try { v.pause(); v.currentTime = 0; } catch (e) {} }
-        });
+      // Playback is driven by visibility. With an observer, a card plays only
+      // while on screen (Loop mode) or attaches its first frame ready for hover
+      // (Hover mode). Without one (very old CEF), fall back to loading every
+      // preview up front, the previous behaviour.
+      if (video) {
+        if (previewObserver) previewObserver.observe(card);
+        else { attachSrc(video); if (autoplayAll) { try { video.play(); } catch (e) {} } }
+
+        // Hover playback is redundant while every card is already looping, so it
+        // is wired only in Hover mode. attachSrc first: a card can be hovered
+        // before the observer has attached its src.
+        if (!autoplayAll) {
+          card.addEventListener("mouseenter", function () {
+            var v = this.getElementsByTagName("video")[0];
+            if (v) { attachSrc(v); try { v.play(); } catch (e) {} }
+          });
+          card.addEventListener("mouseleave", function () {
+            var v = this.getElementsByTagName("video")[0];
+            if (v) { try { v.pause(); v.currentTime = 0; } catch (e) {} }
+          });
+        }
       }
-      // autoplay is ignored by some CEF builds — nudge it explicitly.
-      if (video && autoplayAll) { try { video.play(); } catch (e) {} }
 
       // CEF blocks file:// media unless the manifest grants access; without
       // this the card would just show an empty black box.
       var media = video || img;
       if (media) {
         media.onerror = function () {
+          // Releasing an off-screen video (removeAttribute src + load) also
+          // fires 'error' with an empty source; that is not a failure. Only a
+          // still-set source that errored is a real "can't read the file".
+          if (this.tagName === "VIDEO" && !this.getAttribute("src")) return;
           var t = this.parentNode;
           if (t) t.innerHTML = '<span class="ph err">no file access</span>';
         };
