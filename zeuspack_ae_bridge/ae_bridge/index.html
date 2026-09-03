@@ -41,7 +41,7 @@
      information too and are left alone. */
   :root {
     --bg:#1e1e1e; --panel:#252526; --border:#3a3a3a;
-    --text:#ffffff; --muted:#9a9a9a; --accent:#6c8cff;
+    --text:#ffffff; --muted:#9a9a9a; --accent:#066ce7;
     --ok:#3fb950; --err:#f85149;
     /* Card width and thumbnail height, driven by the size slider. The pair is
        always kept at the preview comp's aspect ratio (see panel.js), so a
@@ -49,6 +49,16 @@
     --card-w:96px; --thumb-h:54px;
     --cats-w:84px;              /* category rail, dragged by its right edge */
     --tools-w:92px;             /* tool strip, dragged by its left edge */
+
+    /* Corner rounding for all panel chrome, routed through one knob so the
+       whole UI can be flipped between rounded and sharp in one place. Set to
+       0px for sharp corners; the previous look was 5px.
+       --r      : panels, buttons, inputs, cards, the right-click menu
+       --r-sm   : small chips (tags, category pills, the log's tool buttons)
+       Fully round things (the status dot, the slider knob, scrollbar thumbs)
+       are NOT routed through this — they are dots by intent, not rounded
+       rectangles, and a square status dot would just read as a bug. */
+    --r:0px; --r-sm:0px;
   }
 
   /* The grid's scrollbar is subtracted from the track area, so a fat default
@@ -78,6 +88,12 @@
   /* One compact status row: dot + state + actions. flex:0 0 auto so the row
      never stretches — collapsed, the body is exactly this tall. */
   .bar { flex:0 0 auto; display:flex; align-items:center; gap:7px; height:22px; }
+  /* The two side zones grow equally (flex:1 1 0), so the segmented control
+     between them is pinned to the bar's centre no matter what the sides hold.
+     min-width:0 lets them shrink (and the status text ellipsize) before they
+     ever push the centre off-centre. */
+  .barside { flex:1 1 0; min-width:0; display:flex; align-items:center; gap:7px; }
+  .barside.right { justify-content:flex-end; }
 
   /* Hit area for the dot. Transparent and borderless so the bar still reads as
      "a dot", while giving the click something to land on. */
@@ -88,7 +104,7 @@
   }
   .dot { width:8px; height:8px; border-radius:50%; background:var(--muted); flex-shrink:0; }
   .dot.ok { background:var(--ok); } .dot.err { background:var(--err); }
-  .dotbtn:hover .dot { box-shadow:0 0 0 3px rgba(108,140,255,.25); }
+  .dotbtn:hover .dot { box-shadow:0 0 0 3px rgba(6,108,231,.25); }
 
   .state { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--text); }
   /* Hidden by default: the dot's colour already carries connection state, and
@@ -105,12 +121,15 @@
   .ico {
     width:22px; height:22px; padding:0; flex-shrink:0;
     display:inline-flex; align-items:center; justify-content:center;
-    background:transparent; border:1px solid var(--border); border-radius:5px;
+    background:transparent; border:1px solid var(--border); border-radius:var(--r);
     color:var(--text); cursor:pointer;
   }
   .ico:hover { color:var(--text); border-color:var(--accent); }
   .ico:disabled { opacity:.4; cursor:default; }
-  .ico.on { color:var(--accent); border-color:var(--accent); }
+  /* Active toggle: filled accent, like the settings-modal toggles — reads
+     clearly as "on" rather than an accent-tinted outline. */
+  .ico.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .ico.on:hover { color:#fff; }
   .ico svg { width:12px; height:12px; display:block; }
 
   /* Labelled variant: icon + text. margin rather than flex `gap`, which only
@@ -119,11 +138,23 @@
   .ico.lbl svg { margin-right:4px; }
   .ico.lbl span { font-size:10px; font-weight:600; line-height:1; white-space:nowrap; }
 
+  /* The three view toggles read as one control, so they sit flush: only the
+     outer corners round, and the shared edges collapse to a single 1px line.
+     -1px margin rather than dropping one side's border, so a button that is
+     .on (or hovered) can still draw an accent outline on all four sides; the
+     z-index lifts that outline above its neighbours' plain border. */
+  .seg { display:flex; flex-shrink:0; }
+  .seg .ico { position:relative; border-radius:0; }
+  .seg .ico + .ico { margin-left:-1px; }
+  .seg .ico:first-child { border-radius:var(--r) 0 0 var(--r); }
+  .seg .ico:last-child  { border-radius:0 var(--r) var(--r) 0; }
+  .seg .ico:hover, .seg .ico.on { z-index:1; }
+
   /* Update badge — accent-filled so it reads as a notice, not another toggle. */
   .ico.upd {
     background:var(--accent); border-color:var(--accent); color:#fff;
   }
-  .ico.upd:hover { background:#5b7cf5; border-color:#5b7cf5; color:#fff; }
+  .ico.upd:hover { background:#0a5ec4; border-color:#0a5ec4; color:#fff; }
 
   /* Log — collapsed by default, only takes space when opened.
      Two parts: a fixed header row for the log's own actions, and a separate
@@ -132,7 +163,7 @@
      parent with the lines would eventually be removed along with them. */
   .log {
     display:none; flex:1; min-height:70px; min-width:0; flex-direction:column;
-    background:#151515; border:1px solid var(--border); border-radius:5px;
+    background:#151515; border:1px solid var(--border); border-radius:var(--r);
     padding:5px 6px;
   }
   .log.open { display:flex; }
@@ -142,7 +173,10 @@
   }
   .loglines {
     flex:1; min-height:0; overflow:auto; font-size:10px;
-    font-family:Consolas, monospace;   /* the log stays mono — Inter isn't */
+    /* Inter like the rest of the UI. It is not monospace, so log timestamps no
+       longer align in a column — switch this back to Consolas, monospace if
+       that matters. */
+    font-family:inherit;
     color:var(--text); white-space:pre-wrap; word-break:break-word;
   }
   .loglines .ok  { color:var(--ok); }
@@ -157,7 +191,7 @@
   .tools {
     display:none; flex:0 0 var(--tools-w); min-width:0;
     overflow-y:auto; overflow-x:hidden;
-    background:#151515; border:1px solid var(--border); border-radius:5px;
+    background:#151515; border:1px solid var(--border); border-radius:var(--r);
     padding:4px;
   }
   .tools.open { display:block; }
@@ -173,19 +207,7 @@
     font-size:8px; font-weight:600; letter-spacing:.07em; text-transform:uppercase;
     color:var(--text); padding:0 2px 3px;
   }
-  /* The label takes the squeeze so the gear beside it never gets cropped off
-     the right edge when the strip is dragged narrow. */
   .tname { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  /* Group-level settings. Sized down to the heading rather than up to the
-     buttons: it configures the group, it is not one of its actions. */
-  .tcfg {
-    flex:0 0 auto; width:14px; height:14px; margin-left:3px; padding:0;
-    display:inline-flex; align-items:center; justify-content:center;
-    background:transparent; border:0; border-radius:2px;
-    color:var(--text); cursor:pointer;
-  }
-  .tcfg:hover { background:#3d3d3d; color:var(--text); }
-  .tcfg svg { width:10px; height:10px; display:block; }
   .tools::-webkit-scrollbar { width:6px; }
   .tools::-webkit-scrollbar-track { background:transparent; }
   .tools::-webkit-scrollbar-thumb { background:#3f3f46; border-radius:99px; }
@@ -212,7 +234,7 @@
   .tbtn {
     width:100%; min-height:42px; margin-bottom:3px;
     display:flex; flex-direction:column; align-items:center; justify-content:center;
-    background:#2f2f2f; border:0; border-radius:2px;
+    background:#2f2f2f; border:0; border-radius:var(--r-sm);
     color:var(--text); cursor:pointer; font:inherit; padding:5px 3px;
   }
   .tbtn:last-child { margin-bottom:0; }
@@ -253,7 +275,7 @@
   .row { display:flex; align-items:center; gap:5px; flex:0 0 auto; }
   .path {
     flex:1; min-width:0; height:22px; padding:0 3px;
-    background:#151515; border:1px solid var(--border); border-radius:5px;
+    background:#151515; border:1px solid var(--border); border-radius:var(--r);
     color:var(--text); font:inherit; font-size:10px; cursor:pointer;
   }
   .path:hover { border-color:var(--accent); }
@@ -277,9 +299,16 @@
   }
   .addcat.ask .txt { display:none; }
   .addcat.ask .cancel { display:block; }
+  /* Search row. The magnifier is a sibling of the input rather than a
+     background image, so it inherits colour and needs no asset. */
+  .find .findico { flex:0 0 auto; width:11px; height:11px; color:var(--muted); }
+  .find .findcount {
+    flex:0 0 auto; font-size:9px; color:var(--muted); white-space:nowrap;
+  }
+
   .txt {
     flex:1; min-width:0; height:22px; padding:0 6px;
-    background:#151515; border:1px solid var(--border); border-radius:5px;
+    background:#151515; border:1px solid var(--border); border-radius:var(--r);
     color:var(--text); font:inherit; font-size:10px; outline:none;
     -webkit-user-select:text; user-select:text;
   }
@@ -291,7 +320,7 @@
      panel gets 2 columns and a wide floating one gets as many as fit. */
   .list {
     flex:1; min-width:0; min-height:60px; overflow-y:auto; overflow-x:hidden;
-    background:#151515; border:1px solid var(--border); border-radius:5px;
+    background:#151515; border:1px solid var(--border); border-radius:var(--r);
     padding:4px;
     display:grid;
     /* Fixed track width, NOT minmax(...,1fr): a stretching track makes the real
@@ -316,7 +345,7 @@
   .list.msg { display:block; padding:10px; }
 
   .card {
-    background:#1b1b1b; border:1px solid var(--border); border-radius:6px;
+    background:#1b1b1b; border:1px solid var(--border); border-radius:var(--r);
     overflow:hidden; cursor:pointer; min-width:0;
   }
   .card:hover { border-color:#5a5a5a; }
@@ -357,7 +386,7 @@
   /* Corner badges on the thumbnail: which of the three sidecar files exist. */
   .tags { position:absolute; right:3px; bottom:3px; display:flex; gap:2px; }
   .tag {
-    font-size:8px; line-height:1; padding:2px 3px; border-radius:3px;
+    font-size:8px; line-height:1; padding:2px 3px; border-radius:var(--r-sm);
     background:rgba(0,0,0,.7); color:#c8c8c8; font-weight:600; letter-spacing:.2px;
   }
   .tag.aep { color:#8fb0ff; }   /* composition */
@@ -368,16 +397,19 @@
      and can't vary per card. */
   .menu {
     display:none; position:fixed; z-index:100; min-width:158px;
-    background:var(--panel); border:1px solid var(--border); border-radius:5px;
+    background:var(--panel); border:1px solid var(--border); border-radius:var(--r);
     padding:3px; box-shadow:0 4px 16px rgba(0,0,0,.55);
   }
   .menu.open { display:block; }
   .menu button {
     display:block; width:100%; text-align:left; padding:4px 8px;
-    background:transparent; border:0; border-radius:3px; cursor:pointer;
+    background:transparent; border:0; border-radius:var(--r-sm); cursor:pointer;
     color:var(--text); font:inherit; font-size:10px;
   }
   .menu button:hover:not(.off) { background:var(--accent); color:#fff; }
+  /* Asset name inside a menu sentence. 600 rather than the default 700, which
+     smears at 10px. */
+  .menu button b { font-weight:600; }
   /* .off rather than [disabled]: a disabled button swallows pointer events, so
      its title tooltip never shows — and the unavailable items are exactly the
      ones whose tooltip explains why. */
@@ -387,9 +419,67 @@
   .menu button.danger:hover { background:var(--err); color:#fff; }
   .menu .sep { height:1px; background:var(--border); margin:3px 2px; }
 
+  /* ── Settings modal ──────────────────────────────────────────
+     A dimmed full-panel overlay with a centred card. Shown by adding .open
+     (default display:none), so nothing intercepts clicks while it is closed. */
+  .modal {
+    /* top/left/right/bottom rather than `inset` — inset shorthand only landed
+       in Chrome 87, and the manifest still claims CEP 9 (Chromium 61). */
+    display:none; position:fixed; top:0; left:0; right:0; bottom:0; z-index:200;
+    background:rgba(0,0,0,.55);
+    align-items:center; justify-content:center; padding:12px;
+  }
+  .modal.open { display:flex; }
+  .modalbox {
+    width:100%; max-width:300px; max-height:100%; overflow-y:auto;
+    background:var(--panel); border:1px solid var(--border); border-radius:var(--r);
+    box-shadow:0 8px 28px rgba(0,0,0,.6);
+  }
+  .modalhead {
+    display:flex; align-items:center; gap:8px;
+    padding:9px 10px; border-bottom:1px solid var(--border);
+  }
+  .modaltitle { flex:1; font-size:12px; font-weight:600; color:var(--text); }
+  .modalx {
+    width:20px; height:20px; padding:0; flex-shrink:0;
+    display:inline-flex; align-items:center; justify-content:center;
+    background:transparent; border:0; border-radius:var(--r-sm);
+    color:var(--muted); cursor:pointer;
+  }
+  .modalx:hover { color:var(--text); background:#3d3d3d; }
+  .modalx svg { width:13px; height:13px; display:block; }
+
+  .modalbody { padding:4px 10px; }
+  .setrow {
+    display:flex; align-items:center; gap:10px;
+    padding:10px 0; border-bottom:1px solid var(--border);
+  }
+  .setrow:last-child { border-bottom:0; }
+  .setlabel { flex:1; min-width:0; }
+  .setname { display:block; font-size:11px; font-weight:600; color:var(--text); }
+  .setdesc { display:block; margin-top:2px; font-size:9px; line-height:1.35; color:var(--muted); }
+
+  /* Two-option toggle. Same flush-segment idea as the top bar's .seg, but these
+     are text pills, so they carry their own borders and share the middle edge. */
+  .seg2 { display:flex; flex-shrink:0; }
+  .seg2 .segopt {
+    padding:4px 8px; font:inherit; font-size:10px; font-weight:600; white-space:nowrap;
+    background:#151515; border:1px solid var(--border); color:var(--muted); cursor:pointer;
+  }
+  .seg2 .segopt + .segopt { border-left:0; }
+  .seg2 .segopt:first-child { border-radius:var(--r-sm) 0 0 var(--r-sm); }
+  .seg2 .segopt:last-child  { border-radius:0 var(--r-sm) var(--r-sm) 0; }
+  .seg2 .segopt:hover { color:var(--text); }
+  .seg2 .segopt.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+
+  .modalfoot {
+    padding:8px 10px; border-top:1px solid var(--border);
+    font-size:9px; color:var(--muted); text-align:center;
+  }
+
   .btn {
     height:22px; padding:0 9px; flex-shrink:0;
-    background:transparent; border:1px solid var(--border); border-radius:5px;
+    background:transparent; border:1px solid var(--border); border-radius:var(--r);
     color:var(--text); cursor:pointer; font-size:10px; font-weight:600;
   }
   .btn:hover:not(:disabled) { color:var(--text); border-color:var(--accent); }
@@ -405,7 +495,7 @@
     background:transparent; cursor:pointer;
   }
   .size::-webkit-slider-runnable-track {
-    height:3px; border-radius:2px; background:var(--border);
+    height:3px; border-radius:var(--r-sm); background:var(--border);
   }
   .size::-webkit-slider-thumb {
     -webkit-appearance:none; appearance:none;
@@ -423,7 +513,7 @@
      grid's column maths stays predictable. */
   .cats {
     display:none; flex:0 0 var(--cats-w); min-width:0; overflow-y:auto;
-    background:#151515; border:1px solid var(--border); border-radius:5px;
+    background:#151515; border:1px solid var(--border); border-radius:var(--r);
     padding:3px;
   }
   .cats.open { display:block; }
@@ -443,7 +533,7 @@
 
   .cat {
     display:flex; align-items:center; gap:6px;
-    padding:2px 6px; border-radius:4px; cursor:pointer;
+    padding:2px 6px; border-radius:var(--r-sm); cursor:pointer;
     color:var(--text); font-size:10px;
   }
   .cat:hover { background:#1d1d1d; color:var(--text); }
@@ -483,6 +573,10 @@
 </head>
 <body>
   <div class="bar">
+    <!-- Three zones: the segmented control is the middle one, so it centres in
+         the bar while the status dot stays left and the actions stay right. The
+         two side zones grow equally, which is what keeps the centre centred. -->
+    <div class="barside left">
     <!-- The dot is the toggle for the status text beside it. Wrapped in a
          button purely for the hit area: an 8px circle is too small to click,
          but a bigger circle would shout louder than it deserves to. -->
@@ -490,14 +584,11 @@
       <span class="dot" id="dot"></span>
     </button>
     <span class="state off" id="state">Connecting…</span>
+    </div>
 
-    <!-- Update available — hidden until the GitHub check finds a newer tag -->
-    <button class="ico lbl upd" id="updateBtn" style="display:none">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-           stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><polyline points="7 10 12 15 17 10"/><line x1="4" y1="21" x2="20" y2="21"/></svg>
-      <span>Update</span>
-    </button>
-
+    <!-- The three view toggles are one segmented control: same kind of switch,
+         so they sit flush rather than reading as three unrelated buttons. -->
+    <div class="seg">
     <!-- Toggle preset browser -->
     <button class="ico lbl" id="presetBtn" title="Browse .ffx presets and .aep compositions">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
@@ -517,6 +608,23 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
            stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="14" y2="17"/></svg>
     </button>
+    </div>
+
+    <!-- Right zone: the update notice and the settings gear. -->
+    <div class="barside right">
+    <!-- Update available — hidden until the GitHub check finds a newer tag -->
+    <button class="ico lbl upd" id="updateBtn" style="display:none">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+           stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><polyline points="7 10 12 15 17 10"/><line x1="4" y1="21" x2="20" y2="21"/></svg>
+      <span>Update</span>
+    </button>
+    <!-- Settings. Sits outside the segmented control because it opens a modal
+         rather than toggling a view, so it should not read as a fourth switch. -->
+    <button class="ico" id="settingsBtn" title="Settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+           stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </button>
+    </div>
   </div>
 
   <!-- Preset browser and the tool strip sit side by side; the grip between
@@ -537,6 +645,18 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
              stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg>
       </button>
+    </div>
+
+    <!-- Search. Its own row rather than sharing the toolbar: at the 240px
+         docked minimum the path dropdown, Loop and Refresh already fill that
+         row, and a field squeezed in beside them would be unusable. -->
+    <div class="row find">
+      <svg class="findico" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
+        ><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <input type="text" class="txt" id="findInput" placeholder="Search presets…"
+             spellcheck="false" autocomplete="off" maxlength="80" />
+      <span class="findcount" id="findCount"></span>
     </div>
 
     <!-- Shared name input: new category, new asset. Hidden until asked for. -->
@@ -560,7 +680,11 @@
     </div>
 
     <div class="row">
-      <input type="range" class="size" id="sizeSlider" min="72" max="200" step="4"
+      <!-- min/max are set from JS; max is the current grid width, so the far
+           end is one card per row. step MUST stay 1: a range input can only
+           land on min + n*step, so a coarser step would make the max itself
+           unreachable and the far end would never register as "fit". -->
+      <input type="range" class="size" id="sizeSlider" min="72" max="200" step="1"
              title="Preview size" />
       <button class="btn primary" id="applyBtn" disabled
               title="Apply the preset (entrance keyframes only)">Apply In</button>
@@ -575,11 +699,6 @@
       <div class="tgroup">
       <div class="thead">
         <span class="tname" title="Null Parent">Null Parent</span>
-        <button class="tcfg" id="centerCfgBtn"
-                title="Where the null is placed when grouping and recentring">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-               stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-        </button>
       </div>
       <button class="tbtn" id="groupBtn"
               title="Quick Parent: Parent the selected layers to a null placed at their center">
@@ -629,6 +748,61 @@
 
   <!-- Card right-click menu; items are rebuilt per card -->
   <div class="menu" id="menu"></div>
+
+  <!-- Settings, opened by right-clicking the Presets toggle. A centred modal
+       rather than another floating menu: it gathers the panel's persistent
+       preferences (which otherwise live on scattered quick-toggles) in one
+       place, with room for a label and a line of explanation each. -->
+  <div class="modal" id="settingsModal">
+    <div class="modalbox" role="dialog" aria-label="Settings">
+      <div class="modalhead">
+        <span class="modaltitle">Settings</span>
+        <button class="modalx" id="settingsClose" title="Close (Esc)">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+               stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modalbody">
+
+        <div class="setrow">
+          <div class="setlabel">
+            <span class="setname">Preview playback</span>
+            <span class="setdesc">Loop every preview, or play only the one under the pointer.</span>
+          </div>
+          <div class="seg2" id="setPlayback">
+            <button class="segopt" data-v="loop">Loop all</button>
+            <button class="segopt" data-v="hover">Hover only</button>
+          </div>
+        </div>
+
+        <div class="setrow">
+          <div class="setlabel">
+            <span class="setname">Null placement</span>
+            <span class="setdesc">Where a null lands when grouping and recentring layers.</span>
+          </div>
+          <div class="seg2" id="setCenter">
+            <button class="segopt" data-v="bounds">Bounding box</button>
+            <button class="segopt" data-v="anchor">Anchor point</button>
+          </div>
+        </div>
+
+        <div class="setrow">
+          <div class="setlabel">
+            <span class="setname">Status text</span>
+            <span class="setdesc">Show the message beside the connection dot in the top bar.</span>
+          </div>
+          <div class="seg2" id="setStatus">
+            <button class="segopt" data-v="on">Show</button>
+            <button class="segopt" data-v="off">Hide</button>
+          </div>
+        </div>
+
+      </div>
+      <div class="modalfoot">
+        <span id="settingsVersion">ZeusPack</span>
+      </div>
+    </div>
+  </div>
 
   <script src="./js/CSInterface.js"></script>
   <script src="./js/panel.js"></script>

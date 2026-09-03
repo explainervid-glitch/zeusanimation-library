@@ -147,6 +147,14 @@ function zae_listAepComps(params) {
 }
 
 // Import a composition from a source .aep into the running project.
+// Seconds to a short "1.5s" string for log messages. Trims a trailing ".0"
+// and rounds to 2 dp so a comp duration reads cleanly (12.333333 -> "12.33s").
+function _fmtSecs(s) {
+    var n = Math.round(Number(s) * 100) / 100;
+    var str = String(n);
+    return str + "s";
+}
+
 // AE imports the .aep as a folder (the comp + its dependencies). If a specific
 // `comp` name is given, we locate it among the newly-imported comps and:
 //   - open it (params.open !== false), and
@@ -214,9 +222,24 @@ function zae_importAep(params) {
 
         // Add the chosen comp directly into the destination composition as a
         // layer. Default ON — pass addToActive:false to only import + open.
-        var placed = false, opened = false;
+        var placed = false, opened = false, matched = false, matchFrom = 0;
         if (target) {
             if (params.addToActive !== false && destComp && destComp.id !== target.id) {
+                // Match the asset comp's duration to the comp it's dropped into,
+                // BEFORE adding the layer: layers.add() sets the new layer's out
+                // point to the source comp's duration, so widening the source
+                // first makes the placed layer span the whole timeline instead
+                // of stopping partway. (Setting it after the add would grow the
+                // comp but leave the existing layer's out point where it was.)
+                // A shorter destination truncates the asset to fit, matching the
+                // "same duration" intent in both directions. Pass
+                // matchDuration:false to keep the asset's own length.
+                if (params.matchDuration !== false &&
+                    target.duration !== destComp.duration) {
+                    matchFrom = target.duration;
+                    try { target.duration = destComp.duration; matched = true; }
+                    catch (eDur) {}
+                }
                 var newLayer = destComp.layers.add(target);
                 try { newLayer.selected = true; } catch (eSel) {}
                 // Default ON: an added comp layer starts un-collapsed, so it
@@ -246,11 +269,18 @@ function zae_importAep(params) {
                            : (opened ? " opened"
                                      : (destComp ? " ready in project"
                                                  : " ready in project (no active comp to drop into)")));
+            if (matched) {
+                msg += " (duration " + _fmtSecs(matchFrom) + " to "
+                     + _fmtSecs(destComp.duration) + ")";
+            }
         }
         return _result(true, msg, {
             file: f.fsName, comps: newComps, target: (target ? target.name : null),
             targetFound: !!target, opened: opened, placed: placed,
-            dest: (destComp ? destComp.name : null)
+            dest: (destComp ? destComp.name : null),
+            durationMatched: matched,
+            durationFrom: matched ? matchFrom : null,
+            durationTo: matched ? destComp.duration : null
         });
     } catch (e) {
         try { app.endUndoGroup(); } catch (e3) {}
@@ -287,6 +317,10 @@ var _ZEUS_ROOT = "W:\\AE PACK ZEUSANIMATION";
 var _IGNORED_FOLDER = /auto[\- ]?save/i;
 
 var _CATEGORIES_FILE = "categories.json";
+
+// Marks a preset as belonging to a composition asset in the same folder:
+// "Cursors.aep" owns "Cursors__Hover Effects.zfx". See _walkPresets.
+var _OWNER_SEP = "__";
 
 // ExtendScript's JSON support is inconsistent across AE versions — parse when
 // it exists, otherwise fall back to eval. The file is a local, team-owned
@@ -590,7 +624,8 @@ function _bundleAep(folder) {
     try { entries = folder.getFiles(); } catch (e) { return null; }
     if (!entries) return null;
 
-    var aep = null, aepCount = 0, ffxCount = 0, hasFootage = false, reports = {};
+    var aep = null, aepCount = 0, hasFootage = false, reports = {};
+    var found = [];                       // every .ffx / .zfx in here
     for (var i = 0; i < entries.length; i++) {
         var e = entries[i];
         var n = _baseName(e);
@@ -600,18 +635,44 @@ function _bundleAep(folder) {
         }
         var ext = _extOf(n), base = _stripExt(n);
         if (ext === "aep") { aepCount++; aep = { file: e, base: base }; }
-        // Either preset kind marks this as a preset directory rather than a
-        // collected bundle, so both disqualify it.
-        else if (ext === "ffx" || ext === _ZFX_EXT) ffxCount++;
+        else if (ext === "ffx" || ext === _ZFX_EXT) found.push({ file: e, base: base, ext: ext });
         else if (ext === "txt" && / Report$/i.test(base)) {
             reports[base.replace(/ Report$/i, "").toLowerCase()] = true;
         }
     }
-    if (aepCount !== 1 || ffxCount || !aep) return null;
+    if (aepCount !== 1 || !aep) return null;
+
+    // A preset kind in here normally means this is a preset DIRECTORY rather
+    // than a collected bundle, and disqualifies the folder.
+    //
+    // Except one named "<the project>__<label>", which belongs to the project
+    // sitting beside it. Those are part of this asset, not evidence that the
+    // folder is something else. Without this exception, dropping one preset
+    // into a collected folder stopped it being an asset at all: the folder
+    // turned into a category row holding two unrelated cards, which is exactly
+    // the "it is still separate from the comp" symptom.
+    var pre = (aep.base + _OWNER_SEP).toLowerCase();
+    var owned = [], stray = 0;
+    for (i = 0; i < found.length; i++) {
+        var bl = found[i].base.toLowerCase();
+        if (bl.length > pre.length && bl.substring(0, pre.length) === pre) {
+            // The .ffx twin of an owned .zfx is its legacy sibling, so it is
+            // not stray either; only the .zfx becomes an attachment.
+            if (found[i].ext === _ZFX_EXT) {
+                owned.push({
+                    name: found[i].base.substring(pre.length),
+                    path: found[i].file.fsName,
+                    base: found[i].base
+                });
+            }
+        } else stray++;
+    }
+    if (stray) return null;
 
     var dirName = _baseName(folder);
     var named   = dirName.toLowerCase() === (aep.base + " folder").toLowerCase();
     if (!hasFootage && !named && !reports[aep.base.toLowerCase()]) return null;
+    aep.presets = owned;
     return aep;
 }
 
@@ -697,10 +758,52 @@ function _walkPresets(folder, depth, relPrefix, acc, allowed) {
     var claimed = {};
     var j, key, pv;
 
+    // ── Presets that belong to a composition ─────────────────────────────────
+    // "Cursors.aep" plus "Cursors__Hover Effects.zfx" is ONE asset: the comp,
+    // with that preset attached to it. The link is the file name, so it is
+    // visible in Explorer and needs no manifest and no per-file UI.
+    //
+    // A double underscore rather than a single one, a dash or a dot: those all
+    // turn up inside ordinary preset names, and a false pairing would hide a
+    // preset inside a comp card it has nothing to do with. "__" has to be typed
+    // on purpose.
+    //
+    // SAME FOLDER ONLY, and that falls out of the structure rather than being
+    // enforced: this function runs once per directory, so the owner map below
+    // is built only from the .aep files sitting alongside. Two categories can
+    // each hold a "Cursors.aep" without either seeing the other's presets.
+    //
+    // The prefix must match an .aep that is ACTUALLY going to be a Comp card.
+    // A .zfx or .ffx sharing the .aep's own name makes that .aep a preview
+    // project instead, and attaching to a card that is never drawn would just
+    // lose the preset.
+    var ownerOf = {};      // .aep base (lower) -> true, when it becomes a Comp card
+    for (j = 0; j < aep.length; j++) ownerOf[aep[j].base.toLowerCase()] = true;
+    for (j = 0; j < zfx.length; j++) delete ownerOf[zfx[j].base.toLowerCase()];
+    for (j = 0; j < ffx.length; j++) delete ownerOf[ffx[j].base.toLowerCase()];
+
+    var owned = {};        // .aep base (lower) -> [{ name, path, base }]
+    var isOwned = {};      // .zfx base (lower) -> true, so it gets no card of its own
+    for (j = 0; j < zfx.length; j++) {
+        var zb = zfx[j].base;
+        var cut = zb.indexOf(_OWNER_SEP);
+        if (cut <= 0) continue;
+        var ownerKey = zb.substring(0, cut).toLowerCase();
+        if (!ownerOf[ownerKey]) continue;
+        var label = zb.substring(cut + _OWNER_SEP.length).replace(/^\s+|\s+$/g, "");
+        if (!label) continue;
+        if (!owned[ownerKey]) owned[ownerKey] = [];
+        owned[ownerKey].push({ name: label, path: zfx[j].file.fsName, base: zb });
+        isOwned[zb.toLowerCase()] = true;
+    }
+
     for (j = 0; j < zfx.length; j++) {
         if (acc.presets.length >= _MAX_PRESETS) { acc.truncated = true; return; }
         key = zfx[j].base.toLowerCase();
+        // Claimed either way, so a same-named .ffx stays the legacy sibling
+        // rather than surfacing as a card once its .zfx is attached elsewhere.
         claimed[key] = true;
+        if (isOwned[key]) continue;
         pv = previews[key] || null;
         acc.presets.push({
             kind:        "presetplus",          // ZeusPack preset (.zfx)
@@ -751,7 +854,9 @@ function _walkPresets(folder, depth, relPrefix, acc, allowed) {
             previewKind: pv ? (pv.ext === "mp4" || pv.ext === "webm" ? "video" : "image") : "",
             previewMtime: pv ? pv.mtime : 0,
             project:     aep[j].file.fsName,    // it IS the project
-            bundle:      ""
+            bundle:      "",
+            // .zfx files named "<this comp>__<label>". Empty for most comps.
+            presets:     owned[key] || []
         });
     }
 
@@ -782,7 +887,11 @@ function _walkPresets(folder, depth, relPrefix, acc, allowed) {
                 // Set only for bundles: the asset's folder relative to the
                 // preset root. Move and rename act on this instead of on loose
                 // files, so the footage travels with the project.
-                bundle:      relPrefix ? (relPrefix + "/" + nm) : nm
+                bundle:      relPrefix ? (relPrefix + "/" + nm) : nm,
+                // Presets inside the collected folder that belong to its
+                // project. They already travel with it, since move and delete
+                // act on the whole folder.
+                presets:     bun.presets || []
             });
             continue;
         }
@@ -1530,6 +1639,51 @@ function _dropdownItems(p) {
     return out;
 }
 
+// What the preset visibly CONTAINS, for the browser's card tooltip.
+//
+// This has to be recorded at save time or it cannot be known at all: the .zfx
+// carries AE's preset as opaque base64, and nothing in ExtendScript can
+// enumerate the effects or animated properties back out of those bytes. Older
+// .zfx files therefore have no `contents` block, and the panel says so rather
+// than reporting zero.
+//
+// Names only, and capped: this rides inside every preset file, so it must stay
+// small. The counts are exact even when the name lists are truncated.
+var _MAX_LISTED = 24;
+
+function _captureContents(layer) {
+    var out = { effects: [], effectCount: 0, animated: [], animatedCount: 0 };
+
+    var par = null;
+    try { par = layer.property("ADBE Effect Parade"); } catch (e) { par = null; }
+    if (par) {
+        var n = 0;
+        try { n = par.numProperties; } catch (e2) { n = 0; }
+        out.effectCount = n;
+        for (var i = 1; i <= n && out.effects.length < _MAX_LISTED; i++) {
+            // The user's own name for the instance, not the matchName: two
+            // dropdowns called "Cursor Default" and "Cursor Hover" are the
+            // thing worth seeing, and they share a matchName.
+            try { out.effects.push(String(par.property(i).name || "")); } catch (e3) {}
+        }
+    }
+
+    // Animated = carries keyframes. A static value that the preset also stores
+    // is not worth listing; what someone wants to know before applying is what
+    // will MOVE.
+    _walkExprProps(layer, [], [], function (pr) {
+        var k = 0;
+        try { k = pr.numKeys; } catch (e4) { return; }
+        if (!k) return;
+        out.animatedCount++;
+        if (out.animated.length < _MAX_LISTED) {
+            try { out.animated.push(String(pr.name || "")); } catch (e5) {}
+        }
+    }, 0);
+
+    return out;
+}
+
 function _captureDropdowns(layer) {
     var out = [];
     _walkNative(layer, [], false, function (p, segs) {
@@ -1713,6 +1867,8 @@ function zae_savePresetPlus(params) {
         // a harmless rewrite of the same items, and if it does not, this is what
         // saves them.
         var drops = _captureDropdowns(layers[0]);
+        // Read from the live layer, before AE's dialog runs.
+        var contents = _captureContents(layers[0]);
 
         var narrowed = 0;
         try { narrowed = comp.selectedProperties ? comp.selectedProperties.length : 0; } catch (eSP) {}
@@ -1758,7 +1914,11 @@ function zae_savePresetPlus(params) {
                 data:     _b64encode(bin)
             },
             expressions: exprs,
-            dropdowns:   drops
+            dropdowns:   drops,
+            // Effect and animated-property names, so the browser can describe
+            // the file without decoding the payload. Additive: an older reader
+            // ignores it, and this reader tolerates its absence.
+            contents:    contents
         };
 
         if (!_writeText(zfx, JSON.stringify(doc))) {
@@ -1976,6 +2136,9 @@ function zae_readPresetPlus(params) {
             source: doc.source || null,
             kind: (doc.payload && doc.payload.kind) || "ffx",
             expressions: nExpr,
+            // null for a .zfx written before contents were recorded, so the
+            // panel can say "not recorded" instead of showing a false zero.
+            contents: doc.contents || null,
             effects: (doc.effects || []).length,
             properties: props.length,
             payloadBytes: (doc.payload && doc.payload.bytes) || 0
@@ -2459,6 +2622,57 @@ function zae_exportImagePreview(params) {
     }
 }
 
+// Every extension the panel treats as part of an asset.
+function _assetExts() {
+    var out = [_ZFX_EXT, "ffx", "aep"];
+    for (var i = 0; i < _PREVIEW_EXTS.length; i++) out.push(_PREVIEW_EXTS[i]);
+    return out;
+}
+
+// Every file that makes up one asset in `dir`.
+//
+// Two kinds, and move/rename/delete all need both:
+//   * the base-name set, "<name>.zfx" / ".ffx" / ".aep" and its previews
+//   * presets ATTACHED to it, "<name>__<label>.zfx" and their own sidecars
+//
+// Attached presets are drawn as part of the composition's card, so an action on
+// that card has to reach them. Rename especially: the link IS the file name, so
+// renaming the comp without renaming its presets' prefixes would silently
+// orphan every one of them.
+//
+// `rename` is the new base name when the caller is renaming; each entry then
+// carries the name it should take, prefix rewritten for attached presets.
+function _assetFiles(dir, name, rename) {
+    var out = [], entries;
+    try { entries = dir.getFiles(); } catch (e) { return out; }
+    if (!entries) return out;
+
+    var wanted = _assetExts();
+    var lower  = String(name).toLowerCase();
+    var pre    = (String(name) + _OWNER_SEP).toLowerCase();
+
+    for (var i = 0; i < entries.length; i++) {
+        var e = entries[i];
+        if (e instanceof Folder) continue;
+        var n = _baseName(e), ext = _extOf(n), b = _stripExt(n), bl = b.toLowerCase();
+        if (!_inList(wanted, ext)) continue;
+
+        var owned;
+        if (bl === lower) owned = false;
+        else if (bl.length > pre.length && bl.substring(0, pre.length) === pre) owned = true;
+        else continue;
+
+        out.push({
+            file: e, name: n, owned: owned,
+            newName: rename
+                ? (owned ? rename + _OWNER_SEP + b.substring(pre.length) + "." + ext
+                         : rename + "." + ext)
+                : n
+        });
+    }
+    return out;
+}
+
 // Move an asset — every file sharing its base name — into another category.
 //
 // "The asset" is the .ffx/.aep plus its preview, so all of them travel
@@ -2502,19 +2716,10 @@ function zae_moveAsset(params) {
         }
 
         var i;
-        var wanted = [_ZFX_EXT, "ffx", "aep"];
-        for (i = 0; i < _PREVIEW_EXTS.length; i++) wanted.push(_PREVIEW_EXTS[i]);
-
-        var entries = src.getFiles() || [];
-        var moves = [], lower = name.toLowerCase();
-        for (i = 0; i < entries.length; i++) {
-            var e = entries[i];
-            if (e instanceof Folder) continue;
-            var n = _baseName(e);
-            if (_stripExt(n).toLowerCase() !== lower) continue;
-            if (!_inList(wanted, _extOf(n))) continue;
-            moves.push({ file: e, name: n });
-        }
+        // Attached presets travel with the composition they belong to: they are
+        // drawn as part of its card, and leaving them behind would strand them
+        // in the old category as loose cards.
+        var moves = _assetFiles(src, name, null);
         if (!moves.length) return _result(false, "No files found for " + name + ".");
 
         // Refuse up front rather than half-moving: check every destination.
@@ -2727,18 +2932,11 @@ function zae_deleteAsset(params) {
         var dir = folder ? new Folder(rootFolder.fsName + "/" + folder) : rootFolder;
         if (!dir.exists) return _result(false, "Folder not found: " + folder);
 
-        var i, wanted = [_ZFX_EXT, "ffx", "aep"];
-        for (i = 0; i < _PREVIEW_EXTS.length; i++) wanted.push(_PREVIEW_EXTS[i]);
-
-        var entries = dir.getFiles() || [], targets = [], lower = name.toLowerCase();
-        for (i = 0; i < entries.length; i++) {
-            var e = entries[i];
-            if (e instanceof Folder) continue;
-            var n = _baseName(e);
-            if (_stripExt(n).toLowerCase() !== lower) continue;
-            if (!_inList(wanted, _extOf(n))) continue;
-            targets.push({ file: e, name: n });
-        }
+        // Includes any preset attached to this composition. They are part of
+        // the card being deleted, so leaving them would resurrect them as loose
+        // cards the moment the owning .aep was gone. The panel names the count
+        // in its confirmation.
+        var i, targets = _assetFiles(dir, name, null);
         if (!targets.length) return _result(false, "No files found for " + name + ".");
 
         // remove() returns false rather than throwing, so a preview still held
@@ -2865,18 +3063,9 @@ function zae_renameAsset(params) {
                 : rootFolder;
         if (!dir.exists) return _result(false, "Folder not found: " + (bundle || folder));
 
-        var i, wanted = [_ZFX_EXT, "ffx", "aep"];
-        for (i = 0; i < _PREVIEW_EXTS.length; i++) wanted.push(_PREVIEW_EXTS[i]);
-
-        var entries = dir.getFiles() || [], targets = [], lower = from.toLowerCase();
-        for (i = 0; i < entries.length; i++) {
-            var e = entries[i];
-            if (e instanceof Folder) continue;
-            var n = _baseName(e), ext = _extOf(n);
-            if (_stripExt(n).toLowerCase() !== lower) continue;
-            if (!_inList(wanted, ext)) continue;
-            targets.push({ file: e, newName: to + "." + ext });
-        }
+        // `to` is passed through, so an attached preset's prefix is rewritten
+        // with the composition's new name and the link survives the rename.
+        var i, targets = _assetFiles(dir, from, to);
         if (!targets.length) return _result(false, "No files found for " + from + ".");
 
         // Check every destination first, so a clash can't leave the set split

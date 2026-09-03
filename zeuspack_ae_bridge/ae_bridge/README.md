@@ -51,6 +51,38 @@ card, not two.
 
 Precedence is **`.zfx` › `.ffx` › `.aep`** — see [The .zfx format](#the-zfx-format).
 
+### Presets that belong to a composition
+
+A `.zfx` named `<comp>__<label>` is attached to the composition of that name in
+the same folder, instead of getting a card of its own:
+
+```
+Cursors.aep                    the composition        ← one card
+Cursors__Hover Effects.zfx       its preset
+Cursors__Click.zfx               its preset
+```
+
+That card carries the blue **`Comp`** badge *and* a green **`FX+`** badge with
+the number attached. Double-clicking it asks whether to add the composition or
+apply one of its presets; right-click offers the same choices.
+
+- **Same folder only.** The preset and the `.aep` must sit in the same
+  directory. A `.zfx` one level down, or up in the parent, keeps its own card.
+  The scan works a folder at a time, so two categories can each hold a
+  `Cursors.aep` and neither will pick up the other's presets.
+- **Two underscores, deliberately.** A single `_`, a dash or a dot all turn up
+  inside ordinary preset names, and a false pairing would hide a preset inside a
+  card it has nothing to do with.
+- **The prefix must match an `.aep` that is really a `Comp` card.** If a `.zfx`
+  or `.ffx` shares the `.aep`'s own name, that `.aep` is the preset's preview
+  project instead, so nothing attaches and the would-be attachment keeps its own
+  card rather than disappearing.
+- **A prefix matching no composition is left alone**, so a preset is never
+  swallowed by a comp that is not there.
+- **Move, rename and delete act on the whole card.** Renaming the composition
+  rewrites its presets' prefixes too, which is what keeps the link alive; the
+  delete confirmation names how many go with it.
+
 **An `.aep` with no matching `.ffx` is its own asset**, a *composition*. It can
 have a preview too:
 
@@ -81,9 +113,16 @@ Zoom Blur folder/            ← the asset
 
 That folder is read as **one `Comp` asset in the category it sits in** — it does
 not become a row in the rail. A folder qualifies when it holds **exactly one
-`.aep`, no `.ffx`**, and at least one corroborating sign: a `(Footage)` folder, a
-`… Report.txt`, or the `<name> folder` naming. A category that simply holds
-several projects has more than one `.aep`, so it never matches.
+`.aep`** and no preset that does not belong to it, plus at least one
+corroborating sign: a `(Footage)` folder, a `… Report.txt`, or the
+`<name> folder` naming. A category that simply holds several projects has more
+than one `.aep`, so it never matches.
+
+**A preset named `<project>__<label>` inside a collected folder is attached to
+its project**, exactly as it would be for loose files, and does not disqualify
+the folder. Any *other* `.ffx` or `.zfx` in there still does: that marks the
+folder as a preset directory rather than one collected asset, and it becomes a
+category row instead.
 
 The preview is whatever preview file is inside the bundle — one named after the
 project wins, anything else is a fallback, so exporting a preview works exactly
@@ -714,7 +753,7 @@ be open, which is a bigger change than a thumbnail.
 in this repo's own `CSXS/manifest.xml`. Shipping an update is one commit:
 
 ```xml
-<ExtensionManifest ... ExtensionBundleVersion="1.0.6"
+<ExtensionManifest ... ExtensionBundleVersion="1.0.7"
 ```
 
 On launch the panel reads that file raw from GitHub and compares it with the

@@ -36,6 +36,8 @@
   var promptMsg    = document.getElementById("promptMsg");
   var promptCancel = document.getElementById("promptCancel");
   var listEl     = document.getElementById("list");
+  var findInput  = document.getElementById("findInput");
+  var findCount  = document.getElementById("findCount");
   var applyBtn    = document.getElementById("applyBtn");
   var applyOutBtn = document.getElementById("applyOutBtn");
   var menuEl     = document.getElementById("menu");
@@ -52,7 +54,6 @@
   var recenterBtn = document.getElementById("recenterBtn");
   var decomposeBtn = document.getElementById("decomposeBtn");
   var toolGrip    = document.getElementById("toolGrip");
-  var centerCfgBtn = document.getElementById("centerCfgBtn");
   var mainEl      = document.getElementById("main");
 
   var connected = null;   // tri-state so the first result always renders
@@ -205,7 +206,7 @@
   // ExtensionBundleVersion in CSXS/manifest.xml: the update check tests
   // INEQUALITY against the repo's manifest, so a stale value here reports a
   // phantom "update available" against a repo that has not moved.
-  var PANEL_VERSION   = "1.0.6";
+  var PANEL_VERSION   = "1.0.7";
 
   var updateBtn = document.getElementById("updateBtn");
 
@@ -300,6 +301,8 @@
   var knownFolders = [];  // every subfolder the scan visited, even empty ones
   var collapsedCats = {}; // folder path -> true while its children are hidden
   var activeFolder = null; // null = all folders
+  var searchTerm   = "";   // exactly what was typed, for echoing back
+  var searchTerms  = [];   // lowercased words, all of which must match
   var selectedIdx = -1;   // index into `view`
   var dragIndex   = -1;   // card being dragged onto a category, or -1
   var currentDir  = "";
@@ -412,6 +415,11 @@
           : '<img draggable="false" src="' + esc(fileUrl(p.preview, p.previewMtime)) + '" alt="">');
 
     var tags = '<span class="tag ' + cls + '">' + label + "</span>";
+    // A composition that owns presets ("Cursors.aep" plus
+    // "Cursors__Hover Effects.zfx") is one card carrying both, so it gets the
+    // Comp badge AND an FX+ badge with how many are attached.
+    var own = (p.presets && p.presets.length) ? p.presets.length : 0;
+    if (own) tags += '<span class="tag zfx">FX+' + (own > 1 ? " " + own : "") + "</span>";
     if (!p.preview) tags += '<span class="tag">no preview</span>';
 
     return '<div class="thumb">' + media + '<span class="tags">' + tags + "</span></div>";
@@ -630,18 +638,158 @@
     });
   }
 
+  // ── Search ───────────────────────────────────────────────────
+  // Every typed word has to appear somewhere in the name or its category path.
+  // AND rather than OR, so a second word narrows instead of widening, and
+  // order-independent, so "pop glow" still finds "Glow Pop".
+  function matchesSearch(p) {
+    if (!searchTerms.length) return true;
+    var hay = (String(p.name || "") + " " + String(p.folder || "")).toLowerCase();
+    for (var i = 0; i < searchTerms.length; i++) {
+      if (hay.indexOf(searchTerms[i]) === -1) return false;
+    }
+    return true;
+  }
+
+  function setSearch(raw) {
+    searchTerm = String(raw === undefined || raw === null ? "" : raw);
+    var t = searchTerm.toLowerCase().replace(/^\s+|\s+$/g, "");
+    searchTerms = t ? t.split(/\s+/) : [];
+    // Only write back when it differs, so setting it programmatically does not
+    // fight the caret while someone is typing.
+    if (findInput.value !== searchTerm) findInput.value = searchTerm;
+    applyFilter();
+  }
+
+  // Deliberately NOT persisted. A search restored on launch would hide most of
+  // the library with no obvious cause.
+  function syncFindCount() {
+    findCount.textContent = searchTerms.length ? String(view.length) : "";
+  }
+
+  // Why the grid is empty, specifically.
+  //
+  // "No match" inside a filtered category is a dead end: the preset may well
+  // exist one row up in the rail. Counting what the category filter is hiding
+  // turns that into a next step.
+  function emptyMessage() {
+    if (!presets.length) return "Nothing in this preset folder";
+    if (!searchTerms.length) return "No presets in this category";
+
+    var hidden = 0, i;
+    for (i = 0; i < presets.length; i++) {
+      if (!matchesSearch(presets[i])) continue;
+      if (activeFolder === null || inFolder(presets[i], activeFolder)) continue;
+      hidden++;
+    }
+    // esc() before it reaches innerHTML: this is whatever the user typed.
+    var m = "No match for “" + esc(searchTerm) + "”";
+    if (hidden) {
+      m += "<br>" + hidden + " match" + (hidden === 1 ? "" : "es")
+         + " in other categories (pick All presets)";
+    }
+    return m;
+  }
+
   function applyFilter() {
     view = [];
     for (var i = 0; i < presets.length; i++) {
-      if (activeFolder === null || inFolder(presets[i], activeFolder)) view.push(presets[i]);
+      var p = presets[i];
+      if (activeFolder !== null && !inFolder(p, activeFolder)) continue;
+      if (!matchesSearch(p)) continue;
+      view.push(p);
     }
+    syncFindCount();
     renderList();
     select(-1);          // clears the selection AND both buttons, in one place
   }
 
+  // ── .zfx card tooltips ───────────────────────────────────────
+  // What a preset actually contains is the question a shared library raises
+  // constantly, and for a .zfx the file itself can answer it. Read lazily on
+  // hover, never during the scan: one evalScript per .zfx would make opening a
+  // large folder crawl, and most cards are never pointed at.
+  //
+  // path -> tooltip text. A cached "" means the read failed, so it is not
+  // retried on every hover; the card keeps its plain path tooltip.
+  var zfxInfo = {};
+
+  // A short list of what the preset actually holds. Deliberately not the
+  // provenance (source comp, save date, AE version, expression engine): that
+  // is metadata about the file, and the question in front of the grid is what
+  // the preset will DO.
+  function listLine(label, count, names) {
+    if (!count) return label + ": none";
+    var line = label + ": " + count;
+    if (names && names.length) {
+      line += "  (" + names.join(", ") + (names.length < count ? ", …" : "") + ")";
+    }
+    return line;
+  }
+
+  function describeZfx(p, d) {
+    var lines = [p.name], src = d.source || {}, c = d.contents || null;
+
+    // Written by the removed Quick Save. Saying so on hover beats finding out
+    // from an error after clicking Apply.
+    if (String(d.kind) === "native") {
+      lines.push("Written by Quick Save, which was removed. Re-save it with "
+               + "Save Animation+ before it can be applied.");
+    }
+
+    if (c) {
+      lines.push(listLine("Effects", c.effectCount || 0, c.effects));
+      lines.push(listLine("Animated properties", c.animatedCount || 0, c.animated));
+    } else {
+      // Contents were not recorded until they were added to the save path, and
+      // they cannot be recovered from the payload. Better to say that than to
+      // print "Effects: none" about a preset that is full of them.
+      lines.push("Effects and properties were not recorded when this was saved."
+               + " Re-save it to see them.");
+    }
+    lines.push("Expressions: " + d.expressions);
+
+    // Saved from several layers by a build before the one-layer rule. Those
+    // restore only the first layer's expressions, so it is worth knowing
+    // before you rely on the preset rather than after.
+    if (src.layers && src.layers.length > 1) {
+      lines.push("Saved from " + src.layers.length + " layers by an older build; "
+               + "only the first layer's expressions restore.");
+    }
+    if (src.selectedProperties) {
+      lines.push("AE saved " + src.selectedProperties + " selected propert"
+               + (src.selectedProperties === 1 ? "y" : "ies") + ", not the whole layer.");
+    }
+
+    lines.push(p.path);
+    // A title attribute renders newlines, so the tooltip is a small block
+    // rather than one long line.
+    return lines.join("\n");
+  }
+
+  function requestZfxInfo(p, card) {
+    if (zfxInfo.hasOwnProperty(p.path)) {
+      if (zfxInfo[p.path]) card.title = zfxInfo[p.path];
+      return;                       // already read, or already failed
+    }
+    zfxInfo[p.path] = "";           // claim it up front, so re-hovering while
+                                    // the read is in flight does not stack up
+    callHost("zae_readPresetPlus", { path: p.path }, function (r) {
+      if (!r.ok || !r.data) return; // leaves the "" marker: do not retry
+      var t = describeZfx(p, r.data);
+      zfxInfo[p.path] = t;
+      // The grid may have been rebuilt since the hover, so re-check that this
+      // card still shows this asset before writing to it.
+      if (card.parentNode && view[Number(card.getAttribute("data-i"))] &&
+          view[Number(card.getAttribute("data-i"))].path === p.path) {
+        card.title = t;
+      }
+    });
+  }
+
   function renderList() {
     if (!view.length) {
-      showMessage(presets.length ? "No presets in this folder" : "No .ffx files in this folder");
+      showMessage(emptyMessage());
       return;
     }
 
@@ -650,7 +798,9 @@
     for (var i = 0; i < view.length; i++) {
       var p = view[i];
       // Folder is shown by the category list above, not repeated per card.
-      html += '<div class="card" draggable="true" data-i="' + i + '" title="' + esc(p.path) + '">'
+      // Falls back to the path until the .zfx has been read on hover.
+      var tip = zfxInfo[p.path] || p.path;
+      html += '<div class="card" draggable="true" data-i="' + i + '" title="' + esc(tip) + '">'
             +   thumbHtml(p)
             +   '<div class="meta"><span class="nm">' + esc(p.name) + "</span></div>"
             + "</div>";
@@ -668,9 +818,17 @@
       });
       // Double-click = "use this asset", the grid's fast path: apply a preset,
       // import a composition.
-      card.addEventListener("dblclick", function () {
+      card.addEventListener("dblclick", function (ev) {
         var i = Number(this.getAttribute("data-i"));
         select(i);
+        var a = view[i];
+        // A composition with presets attached has more than one "use me", so
+        // ask instead of guessing. Everything else keeps the straight-through
+        // fast path.
+        if (a && a.kind === "comp" && a.presets && a.presets.length) {
+          openUseMenu(i, ev.clientX, ev.clientY);
+          return;
+        }
         useSelected();
       });
       // Drag a card onto a category row to move the asset there.
@@ -694,6 +852,19 @@
         select(i);
         openMenu(i, ev.clientX, ev.clientY);
       });
+
+      // A .zfx can describe itself; ask the file the first time it is hovered.
+      //
+      // view[k], NOT p: this loop is separate from the one that built the
+      // html, so `p` here is still whatever the LAST iteration of that loop
+      // left behind (var is function-scoped). Cards render in view order, so
+      // k indexes the asset this card is showing.
+      var asset = view[k];
+      if (asset && asset.kind === "presetplus") {
+        (function (a, el) {
+          el.addEventListener("mouseenter", function () { requestZfxInfo(a, el); });
+        })(asset, card);
+      }
 
       // Hover playback is redundant while every card is already looping.
       if (video && !autoplayAll) {
@@ -719,6 +890,11 @@
         };
       }
     }
+
+    // How many cards there are decides whether the grid has a scrollbar, which
+    // is 6px off the width one card per row can take. Re-settle against what
+    // was just rendered.
+    applyCardSize();
   }
 
   // Is this folder path still one the rail will draw a row for? Guards the
@@ -765,6 +941,10 @@
       currentDir = r.data.path;
       pathSelect.title = currentDir;
       renderRoots(currentRootId());
+      // A rescan means the files may have been re-saved, so the tooltips read
+      // from them are no longer trustworthy. Cheap to drop: they are re-read
+      // lazily, and only for cards someone actually points at.
+      zfxInfo = {};
       presets = r.data.presets || [];
       declaredCats = r.data.categories || null;
       knownFolders = r.data.folders || [];
@@ -1152,40 +1332,86 @@
 
   // 100 still gives two columns at the 240px docked minimum once the rail and
   // the grid's 6px scrollbar are subtracted.
-  var CARD_MIN = 72, CARD_MAX = 200, CARD_DEFAULT = 100;
+  var CARD_MIN = 72, CARD_DEFAULT = 100;
+  // The top of the slider is not a fixed width: it is "one card per row", i.e.
+  // whatever the grid happens to be wide. That ceiling moves with the panel,
+  // the category rail and the tool strip, so it is measured rather than stored
+  // — and the preference is remembered as this sentinel, not as the px width
+  // it resolved to, so widening the panel keeps giving one card per row.
+  var CARD_FIT = "fit";
   var SIZE_KEY = "zae.cardSize";
   // The size control used to be a Small/Medium/Big dropdown; map those stored
   // values so an existing install doesn't reset to the default.
   var LEGACY_SIZES = { small: 76, medium: 100, big: 140 };
+  var LIST_PAD = 4;   // must match .list's padding
 
-  function applyCardSize(w) {
-    if (LEGACY_SIZES.hasOwnProperty(w)) w = LEGACY_SIZES[w];
-    w = Math.max(CARD_MIN, Math.min(CARD_MAX, Math.round(Number(w) || CARD_DEFAULT)));
+  // Same split as toolsWant: the REQUEST is kept apart from the width it was
+  // clamped to, so a narrow panel does not quietly become the new preference.
+  var cardWant = CARD_DEFAULT;   // a number, or CARD_FIT
+  var cardMax  = 200;            // last measured ceiling
+
+  // What one card gets when it has the row to itself. clientWidth already
+  // excludes a scrollbar that is currently showing.
+  function fitCardWidth() {
+    if (!listEl) return CARD_MIN;
+    return Math.max(CARD_MIN, listEl.clientWidth - LIST_PAD * 2);
+  }
+
+  function setCardVars(w) {
     var s = document.documentElement.style;
     s.setProperty("--card-w", w + "px");
     // Definite px, so grid rows size exactly to content — a percentage-based
     // aspect box would contribute 0 to intrinsic sizing and clip the name.
     s.setProperty("--thumb-h", Math.round(w * PREVIEW_RATIO) + "px");
-    if (sizeSlider && Number(sizeSlider.value) !== w) sizeSlider.value = w;
-    return w;
+  }
+
+  // `w` omitted = re-apply the remembered request. Callers use that after a
+  // layout change, when the ceiling has moved but the request has not.
+  function applyCardSize(w) {
+    if (w !== undefined) {
+      if (LEGACY_SIZES.hasOwnProperty(w)) w = LEGACY_SIZES[w];
+      cardWant = (w === CARD_FIT) ? CARD_FIT
+               : Math.max(CARD_MIN, Math.round(Number(w) || CARD_DEFAULT));
+    }
+    cardMax = fitCardWidth();
+    var out = (cardWant === CARD_FIT) ? cardMax : Math.min(cardWant, cardMax);
+    setCardVars(out);
+    // Going full width can summon a scrollbar (or dismiss one), which moves the
+    // ceiling by the scrollbar's 6px. Reading clientWidth flushes layout, so
+    // the second answer is the settled one; without this the card overflows and
+    // is silently clipped by the grid's overflow-x:hidden.
+    if (cardWant === CARD_FIT) {
+      var again = fitCardWidth();
+      if (again !== cardMax) { cardMax = again; out = again; setCardVars(out); }
+    }
+    if (sizeSlider) {
+      sizeSlider.max = cardMax;
+      if (Number(sizeSlider.value) !== out) sizeSlider.value = out;
+    }
+    return out;
   }
 
   function initCardSize() {
     var saved = null;
     try { saved = localStorage.getItem(SIZE_KEY); } catch (e) {}
-    var w = applyCardSize(saved === null ? CARD_DEFAULT : saved);
+    if (sizeSlider) { sizeSlider.min = CARD_MIN; sizeSlider.step = 1; }
+    applyCardSize(saved === null ? CARD_DEFAULT : saved);
     if (sizeSlider) {
-      sizeSlider.min = CARD_MIN;
-      sizeSlider.max = CARD_MAX;
-      sizeSlider.value = w;
       sizeSlider.addEventListener("input", function () {
-        var v = applyCardSize(this.value);
+        // Dragged to the far end = one card per row, remembered as such: the
+        // px value there is only true for the panel's current width.
+        var atTop = Number(this.value) >= Number(this.max);
+        applyCardSize(atTop ? CARD_FIT : this.value);
         // Menu coords are pinned to the viewport; resizing the cards moves them
         // out from under an open menu.
         closeMenu();
-        try { localStorage.setItem(SIZE_KEY, String(v)); } catch (e2) {}
+        try { localStorage.setItem(SIZE_KEY, String(cardWant)); } catch (e2) {}
       });
     }
+    // The ceiling is the grid's width, so every layout change moves it. Panel
+    // resizes reach us only through this event; the grips and the section
+    // toggles call applyCardSize() themselves.
+    window.addEventListener("resize", function () { applyCardSize(); });
   }
 
   // ── Category rail width (drag handle) ────────────────────────
@@ -1218,7 +1444,10 @@
       var startW = catsEl.getBoundingClientRect().width;
       catGrip.className = "catgrip open drag";
 
-      function onMove(e) { applyCatsWidth(startW + (e.clientX - startX)); }
+      function onMove(e) {
+        applyCatsWidth(startW + (e.clientX - startX));
+        applyCardSize();   // the rail took width from the grid; the ceiling moved
+      }
       function onUp() {
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
@@ -1356,9 +1585,13 @@
   // than the disabled attribute — a disabled button swallows pointer events, so
   // its tooltip would never appear, and those are the items that most need to
   // explain themselves.
-  function item(label, enabled, fn, tip) {
+  // html: the label is already markup (used to bold an asset name inside an
+  // otherwise plain sentence). Callers passing true must esc() anything that
+  // came from a filename.
+  function item(label, enabled, fn, tip, html) {
     var b = document.createElement("button");
-    b.textContent = label;
+    if (html) b.innerHTML = label;
+    else b.textContent = label;
     if (tip) b.title = tip;
     if (enabled) b.addEventListener("click", function () { closeMenu(); fn(); });
     else b.className = "off";
@@ -1439,6 +1672,46 @@
     var vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
     menuEl.style.left = Math.max(2, Math.min(x, vw - mw - 2)) + "px";
     menuEl.style.top  = Math.max(2, Math.min(y, vh - mh - 2)) + "px";
+  }
+
+  // Double-click on a composition that owns presets: import the comp, or apply
+  // one of the presets that belong to it. The asset name is bold inside each
+  // otherwise-plain sentence (item()'s html flag), so it has to be esc()'d.
+  function openUseMenu(i, x, y) {
+    var p = view[i];
+    if (!p) return;
+    menuEl.innerHTML = "";
+
+    item("Add <b>" + esc(p.name) + "</b> to Comp", true, function () { addToComp(i); },
+      "Imports the composition into the open comp", true);
+
+    sep();
+    for (var n = 0; n < p.presets.length; n++) {
+      // Captured per iteration: the loop variable would have moved on by the
+      // time anything is clicked.
+      (function (preset) {
+        item("Apply <b>" + esc(preset.name) + "</b>", true, function () {
+          applyOwnedPreset(p, preset, false);
+        }, preset.path, true);
+      })(p.presets[n]);
+    }
+
+    menuEl.className = "menu open";
+    var mw = menuEl.offsetWidth, mh = menuEl.offsetHeight;
+    var vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
+    menuEl.style.left = Math.max(2, Math.min(x, vw - mw - 2)) + "px";
+    menuEl.style.top  = Math.max(2, Math.min(y, vh - mh - 2)) + "px";
+  }
+
+  // Attached presets are always .zfx, so they always take the richer path.
+  function applyOwnedPreset(comp, preset, reverse) {
+    var label = (reverse ? "Apply Out " : "Apply ") + preset.name;
+    applyBtn.disabled = true; applyOutBtn.disabled = true;
+    callHost("zae_applyPresetPlus", { path: preset.path, reverse: !!reverse }, function (r) {
+      applyBtn.disabled = false; applyOutBtn.disabled = false;
+      log(label + " (from " + comp.name + ") → " + r.message, r.ok ? "ok" : "err");
+      flash(r.ok ? preset.name + " ✓" : r.message, !r.ok);
+    });
   }
 
   // The host refuses a folder that still holds anything, so the failure path
@@ -1584,12 +1857,42 @@
   document.addEventListener("click", function (ev) {
     if (menuEl.className.indexOf("open") !== -1 && !menuEl.contains(ev.target)) closeMenu();
   });
+  // Typing in a field owns its own keys; a shortcut must never eat a character
+  // someone is trying to put into a name.
+  function inTextField(t) {
+    if (!t || !t.tagName) return false;
+    var tag = String(t.tagName).toUpperCase();
+    return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+  }
+
   document.addEventListener("keydown", function (ev) {
+    // "/" jumps to search, the way it does in a browser. Opens the browser
+    // first if it is closed, since searching a hidden grid would look broken.
+    var slash = (ev.key === "/") || (!ev.key && ev.keyCode === 191);
+    if (slash && !ev.ctrlKey && !ev.altKey && !ev.metaKey && !inTextField(ev.target)) {
+      ev.preventDefault();
+      if (presetsEl.className.indexOf("open") === -1) setPresetsOpen(true, false);
+      try { findInput.focus(); findInput.select(); } catch (e) {}
+      return;
+    }
+
     if (ev.keyCode !== 27) return;
     closeMenu();
+    if (typeof settingsOpen === "function" && settingsOpen()) closeSettings();
     // The confirmation bar hides the input, so there is no focused field to
     // catch Escape the way the other prompt modes do.
     if (promptMode === "confirmdelete") closePrompt();
+  });
+
+  findInput.addEventListener("input", function () { setSearch(this.value); });
+  findInput.addEventListener("keydown", function (ev) {
+    if (ev.keyCode !== 27) return;                 // Escape
+    ev.preventDefault();
+    // Stop the document handler running too: the first Escape should clear the
+    // search, not also act on whatever else is open.
+    ev.stopPropagation();
+    if (this.value) setSearch("");                 // first Escape clears
+    else this.blur();                              // a second one lets go
   });
   // A menu pinned to viewport coords would detach from its card on scroll.
   listEl.addEventListener("scroll", closeMenu);
@@ -1667,47 +1970,15 @@
 
   var CENTER_LABEL = { bounds: "Bounding box", anchor: "Anchor point" };
 
-  function syncCenterTitle() {
-    centerCfgBtn.title = "Null placement: " + CENTER_LABEL[groupCenter]
-                       + " (click to change)";
-  }
-
+  // Null placement now lives in the Settings modal; the group's inline gear is
+  // gone. setGroupCenter stays: Group and Recenter read groupCenter, and the
+  // modal writes it through here.
   function setGroupCenter(mode) {
     groupCenter = (mode === "anchor") ? "anchor" : "bounds";
-    syncCenterTitle();
     try { localStorage.setItem(CENTER_KEY, groupCenter); } catch (e2) {}
     log("Null placement: " + CENTER_LABEL[groupCenter], "ok");
     flash("Null placement: " + CENTER_LABEL[groupCenter]);
   }
-
-  // Reuses the grid's floating menu rather than an inline panel: the strip is
-  // 76px wide at its narrowest, which is not enough for two readable labels.
-  function openCenterMenu(x, y) {
-    menuEl.innerHTML = "";
-    function opt(id, label, tip) {
-      item((groupCenter === id ? "✓ " : "    ") + label, true,
-        function () { setGroupCenter(id); }, tip);
-    }
-    opt("bounds", "Bounding box",
-      "Centre the null on the selection's visual bounding box. Falls back to "
-      + "anchor points when nothing has a measurable rect (3D layers, cameras, lights).");
-    opt("anchor", "Anchor point",
-      "Centre the null on the average of the layers' own anchor points. Ignores "
-      + "layer size, so a large background does not pull the handle off-centre.");
-
-    menuEl.className = "menu open";
-    var mw = menuEl.offsetWidth, mh = menuEl.offsetHeight;
-    var vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
-    menuEl.style.left = Math.max(2, Math.min(x, vw - mw - 2)) + "px";
-    menuEl.style.top  = Math.max(2, Math.min(y, vh - mh - 2)) + "px";
-  }
-
-  centerCfgBtn.addEventListener("click", function (ev) {
-    ev.stopPropagation();   // the document handler would shut it again
-    var r = this.getBoundingClientRect();
-    openCenterMenu(r.left, r.bottom + 2);
-  });
-  syncCenterTitle();
 
   groupBtn.addEventListener("click", function () {
     runTool("zae_groupLayers", "Group", { center: groupCenter });
@@ -1779,7 +2050,10 @@
       var startW = toolsEl.getBoundingClientRect().width;
       toolGrip.className = "toolgrip open drag";
 
-      function onMove(e) { applyToolsWidth(startW - (e.clientX - startX)); }
+      function onMove(e) {
+        applyToolsWidth(startW - (e.clientX - startX));
+        applyCardSize();   // the strip took width from the grid; the ceiling moved
+      }
       function onUp() {
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
@@ -1820,6 +2094,7 @@
     // Re-clamp from the remembered request: the space available to the strip
     // changed with the layout, but what the user asked for did not.
     applyToolsWidth();
+    applyCardSize();
   }
 
   toolsBtn.addEventListener("click", function () {
@@ -1877,6 +2152,7 @@
     syncHeight();
     // The strip shares the row with the browser, so its ceiling moved.
     applyToolsWidth();
+    applyCardSize();
     try { localStorage.setItem(PRESETS_KEY, open ? "1" : "0"); } catch (e) {}
     if (!open) return;
     if (deferScan) setTimeout(initPresets, 200);
@@ -1885,6 +2161,81 @@
 
   presetBtn.addEventListener("click", function () {
     setPresetsOpen(presetsEl.className.indexOf("open") === -1, false);
+  });
+
+  // ── Settings modal (gear button in the top bar) ─────────────
+  // Gathers the persistent preferences that otherwise live on scattered
+  // quick-toggles (the Loop button, the tools gear, the status dot). Each
+  // control drives the SAME setter and localStorage key as its quick-toggle,
+  // so the two never drift apart.
+  var settingsBtn     = document.getElementById("settingsBtn");
+  var settingsModal   = document.getElementById("settingsModal");
+  var settingsClose   = document.getElementById("settingsClose");
+  var settingsVersion = document.getElementById("settingsVersion");
+  var setPlayback     = document.getElementById("setPlayback");
+  var setCenterGrp    = document.getElementById("setCenter");
+  var setStatusGrp    = document.getElementById("setStatus");
+
+  // Paint each two-option group so the active choice is highlighted. Called on
+  // open and after any change, so a setting flipped elsewhere shows correctly.
+  function markSeg(group, value) {
+    if (!group) return;
+    var opts = group.getElementsByClassName("segopt");
+    for (var i = 0; i < opts.length; i++) {
+      var on = opts[i].getAttribute("data-v") === value;
+      opts[i].className = on ? "segopt on" : "segopt";
+    }
+  }
+  function syncSettings() {
+    markSeg(setPlayback, autoplayAll ? "loop" : "hover");
+    markSeg(setCenterGrp, groupCenter);
+    markSeg(setStatusGrp, statusShown ? "on" : "off");
+  }
+
+  function openSettings() {
+    closeMenu();
+    if (settingsVersion) {
+      settingsVersion.textContent = "ZeusPack " + PANEL_VERSION
+        + (hostVersion ? "  ·  AE " + hostVersion : "");
+    }
+    syncSettings();
+    settingsModal.className = "modal open";
+    if (settingsBtn) settingsBtn.className = "ico on";
+  }
+  function closeSettings() {
+    settingsModal.className = "modal";
+    if (settingsBtn) settingsBtn.className = "ico";
+  }
+  function settingsOpen() { return settingsModal.className.indexOf("open") !== -1; }
+
+  if (settingsBtn) settingsBtn.addEventListener("click", function () {
+    if (settingsOpen()) closeSettings();
+    else openSettings();
+  });
+
+  if (setPlayback) setPlayback.addEventListener("click", function (ev) {
+    var v = ev.target.getAttribute && ev.target.getAttribute("data-v");
+    if (!v) return;
+    setAutoplay(v === "loop", true);
+    syncSettings();
+  });
+  if (setCenterGrp) setCenterGrp.addEventListener("click", function (ev) {
+    var v = ev.target.getAttribute && ev.target.getAttribute("data-v");
+    if (!v) return;
+    setGroupCenter(v);
+    syncSettings();
+  });
+  if (setStatusGrp) setStatusGrp.addEventListener("click", function (ev) {
+    var v = ev.target.getAttribute && ev.target.getAttribute("data-v");
+    if (!v) return;
+    setStatusShown(v === "on");
+    syncSettings();
+  });
+
+  if (settingsClose) settingsClose.addEventListener("click", closeSettings);
+  // Click on the dimmed backdrop (the overlay itself, never the card) closes.
+  settingsModal.addEventListener("click", function (ev) {
+    if (ev.target === settingsModal) closeSettings();
   });
 
   if (typeof fetch !== "function") {
