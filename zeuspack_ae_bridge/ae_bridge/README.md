@@ -688,7 +688,8 @@ Host constants in `jsx/host.jsx`:
 | `_MAX_DEPTH` | `4` | Scan recursion depth |
 | `_ZFX_EXT` / `_ZFX_VERSION` | `zfx` / `1` | Preset format extension and version |
 | `_GROUP_TAG` | `zeusgroup` | `Layer.comment` prefix marking a group null |
-| `_CEP_SYSTEM_DIR` | `C:\Program Files (x86)\…\CEP\extensions` | Where updates install |
+| `_CEP_USER_DIR` | `%APPDATA%\Adobe\CEP\extensions` | Per-user CEP folder (used by the installed-version check) |
+| `_CEP_SYSTEM_DIR` | `C:\Program Files (x86)\…\CEP\extensions` | System CEP folder (reference; `install.bat` prefers it) |
 
 Persisted in `localStorage`: card size, rail width, tool strip width, the chosen
 root, Loop/Hover, which panels are open, and the status-text toggle.
@@ -753,7 +754,7 @@ be open, which is a bigger change than a thumbnail.
 in this repo's own `CSXS/manifest.xml`. Shipping an update is one commit:
 
 ```xml
-<ExtensionManifest ... ExtensionBundleVersion="1.0.8"
+<ExtensionManifest ... ExtensionBundleVersion="1.0.9"
 ```
 
 On launch the panel reads that file raw from GitHub and compares it with the
@@ -767,32 +768,43 @@ mismatch as one behind it, and both are worth knowing about — the tooltip name
 both versions, so which way round it is stays obvious:
 
 ```
-Repo has 1.0.6, this panel is 1.0.5 — click to install (needs administrator rights)
+Repo has 1.0.6, this panel is 1.0.5 — click to install
 ```
 
 ### What clicking it does
 
+The button **downloads, it does not install** — so there is exactly one
+installer (`install.bat`) and one install destination, and the two can't drift
+apart.
+
 1. Downloads `https://github.com/<repo>/archive/refs/heads/main.zip`.
    GitHub has no API for fetching a single folder, so the whole archive comes
-   down and only `zeuspack_ae_bridge/ae_bridge` is copied out.
-2. Copies that folder into
-   **`C:\Program Files (x86)\Common Files\Adobe\CEP\extensions\zeuspack_ae_bridge`**.
-3. Reports the version now on disk, and asks you to restart After Effects.
+   down and the `zeuspack_ae_bridge/` folder is copied out.
+2. Unpacks it into your **Downloads** folder as
+   **`Downloads\ZeusPack-<version>\`** — the ready-to-run installer:
+   `install.bat`, `operator.ps1`, and `ae_bridge/`.
+3. Opens that folder in Explorer and tells you to run `install.bat`.
 
-That destination is not writable by a normal user, so the copy runs in an
-**elevated PowerShell child process** and Windows raises the UAC prompt.
-Declining it is reported as *"Nothing was installed"* rather than passing
-silently.
+`install.bat` is then the single installer that copies into the CEP folder and
+sets `PlayerDebugMode`, exactly as it did for the first install. The download
+runs in a **plain (non-elevated) PowerShell** — the Downloads folder is yours,
+so no UAC, no `Program Files` permissions to fight. (An earlier design installed
+straight into the CEP folder from the panel; it collided with `install.bat`'s
+own destination and — when it targeted `Program Files` — failed with
+*"Access denied"*.)
 
 Notes:
 
-- **After Effects is blocked while it runs.** The elevated process is waited on
-  so the result can be verified against the disk rather than trusted from an
-  exit code — `callSystem` reports those unreliably, and a cancelled UAC prompt
-  surfaces no error at all.
+- **After Effects is blocked while it downloads.** The process is waited on so
+  the result can be checked from the log the script writes rather than trusted
+  from an exit code — `callSystem` reports those unreliably.
+- The Downloads folder is resolved from the shell-folder registry (it can be
+  relocated off the profile), falling back to `%USERPROFILE%\Downloads`.
 - The script travels as **`-EncodedCommand`** (base64 UTF-16LE), which sidesteps
-  quoting at all three levels — `callSystem` → `powershell` → `Start-Process`.
-  Paths with spaces, `&` or quotes need no escaping.
+  quoting at both levels — `callSystem` → `powershell`. Paths with spaces, `&` or
+  quotes need no escaping.
+- The badge stays visible after downloading: nothing is installed until you run
+  `install.bat` and restart AE, after which the version check clears it.
 - Failures are appended to `%TEMP%\zeuspack_update.log`, and the panel echoes
   the last error into its own log.
 - **Windows only.** Elsewhere it refuses and tells you to copy `ae_bridge/` by

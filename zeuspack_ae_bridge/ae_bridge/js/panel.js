@@ -209,7 +209,7 @@
   // ExtensionBundleVersion in CSXS/manifest.xml: the update check tests
   // INEQUALITY against the repo's manifest, so a stale value here reports a
   // phantom "update available" against a repo that has not moved.
-  var PANEL_VERSION   = "1.0.8";
+  var PANEL_VERSION   = "1.0.9";
 
   var updateBtn = document.getElementById("updateBtn");
 
@@ -233,22 +233,23 @@
     return 0;
   }
 
-  // Downloads the repo archive and copies ae_bridge/ into the system-wide CEP
-  // folder. That path is under Program Files, so the host runs the copy in an
-  // elevated child process — Windows raises the UAC prompt, and declining it is
-  // reported as "nothing was installed" rather than a silent no-op.
+  // The button DOWNLOADS the new version into the user's Downloads folder and
+  // opens it — it does not install. install.bat inside that folder is the one
+  // installer (it handles the CEP folder and PlayerDebugMode). So the badge is
+  // left showing: nothing is installed until the user runs install.bat and
+  // restarts AE, after which the version check clears it on next launch.
   function runUpdate(remote) {
     updateBtn.disabled = true;
-    flash("Updating to " + remote + "…");
+    flash("Downloading " + remote + "…");
     log("Update → downloading " + UPDATE_REPO + "@" + UPDATE_BRANCH
-        + " and installing to the system CEP folder…");
-    log("  Accept the Windows elevation prompt. After Effects is blocked until it finishes.");
+        + " to your Downloads folder…");
+    log("  After Effects is blocked until the download finishes.");
 
-    callHost("zae_installUpdate", { branch: UPDATE_BRANCH }, function (r) {
+    callHost("zae_downloadUpdate", { branch: UPDATE_BRANCH, version: remote }, function (r) {
       updateBtn.disabled = false;
       log("Update → " + r.message, r.ok ? "ok" : "err");
-      flash(r.ok ? "Updated, restart After Effects" : r.message, !r.ok);
-      if (r.ok) updateBtn.style.display = "none";
+      if (r.ok) log("  Then run install.bat in that folder and restart After Effects.");
+      flash(r.ok ? "Downloaded — run install.bat" : r.message, !r.ok);
     });
   }
 
@@ -256,7 +257,7 @@
     var mine = installedVersion();
     updateBtn.style.display = "";
     updateBtn.title = "Repo has " + remote + ", this panel is " + mine
-                    + " (click to install, needs administrator rights)";
+                    + " (click to install)";
     updateBtn.onclick = function () { runUpdate(remote); };
     log("Update available: " + remote + " (running " + mine + ")", "ok");
   }

@@ -4688,20 +4688,27 @@ function zae_decompose(params) {
 // compares it with what is installed, and this installs the difference.
 //
 // GitHub has no API for downloading one folder, so the whole repo archive is
-// fetched and only zeuspack_ae_bridge/ae_bridge is copied out of it.
+// fetched and the zeuspack_ae_bridge/ folder is copied out of it.
 //
-// The destination is the SYSTEM-wide CEP folder under Program Files, which is
-// not writable by a normal user — so the work happens in an elevated PowerShell
-// child process and Windows raises the UAC prompt.
+// The Update button does NOT install. It unpacks that folder (install.bat +
+// operator.ps1 + ae_bridge/) into the user's Downloads and opens it; the
+// bundled install.bat is the single installer that copies into the CEP folder
+// and sets PlayerDebugMode. One install path, no admin fight here, and no
+// second destination to drift out of sync with the manual installer.
 var _UPDATE_REPO    = "explainervid-glitch/zeusanimation-library";
 var _UPDATE_BRANCH  = "main";
 var _EXT_FOLDER     = "zeuspack_ae_bridge";
 var _CEP_SYSTEM_DIR = "C:\\Program Files (x86)\\Common Files\\Adobe\\CEP\\extensions";
+// Per-user CEP folder. The current user owns it, so writing here needs no admin
+// rights and raises no UAC prompt — this is where the updater installs. AE loads
+// extensions from here as well as from the system folder. Folder.userData is
+// %APPDATA% (C:\Users\<user>\AppData\Roaming) on Windows, matching $env:APPDATA.
+var _CEP_USER_DIR   = Folder.userData.fsName + "\\Adobe\\CEP\\extensions";
 
 // PowerShell's -EncodedCommand takes base64 of UTF-16LE. Going through it
 // sidesteps quoting entirely — the script travels as one opaque token, so paths
-// with spaces, quotes or & need no escaping at any of the three levels
-// (callSystem → powershell → Start-Process).
+// with spaces, quotes or & need no escaping at either level
+// (callSystem → powershell).
 function _psEncode(script) {
     var bytes = "";
     for (var i = 0; i < script.length; i++) {
@@ -4721,7 +4728,7 @@ function _manifestVersionOf(file) {
 // What is actually on disk in the system CEP folder right now.
 function zae_installedExtensionVersion(params) {
     try {
-        var dir = (params && params.dir) ? String(params.dir) : _CEP_SYSTEM_DIR;
+        var dir = (params && params.dir) ? String(params.dir) : _CEP_USER_DIR;
         var f = new File(dir + "/" + _EXT_FOLDER + "/CSXS/manifest.xml");
         if (!f.exists) {
             return _result(true, "not installed", { installed: false, version: "", path: f.fsName });
@@ -4733,25 +4740,30 @@ function zae_installedExtensionVersion(params) {
     }
 }
 
-function zae_installUpdate(params) {
+function zae_downloadUpdate(params) {
     try {
         params = params || {};
         if (String($.os).indexOf("Windows") === -1) {
-            return _result(false, "Automatic install is Windows-only. Copy ae_bridge/ into the CEP extensions folder by hand.");
+            return _result(false, "Automatic download is Windows-only. Download the repo from GitHub and run install.bat by hand.");
         }
 
-        var branch = params.branch ? String(params.branch) : _UPDATE_BRANCH;
-        var target = _CEP_SYSTEM_DIR + "\\" + _EXT_FOLDER;
-        var url    = "https://github.com/" + _UPDATE_REPO + "/archive/refs/heads/" + branch + ".zip";
+        var branch  = params.branch ? String(params.branch) : _UPDATE_BRANCH;
+        // Only the version is interpolated into a folder name, so strip anything
+        // that is not safe for a path segment.
+        var version = params.version
+            ? String(params.version).replace(/[^0-9A-Za-z.\-]/g, "_")
+            : branch;
+        var url     = "https://github.com/" + _UPDATE_REPO + "/archive/refs/heads/" + branch + ".zip";
+        var folder  = "ZeusPack-" + version;
 
-        var before = _manifestVersionOf(new File(target + "/CSXS/manifest.xml"));
-
-        // Runs elevated. Everything it needs is baked in — it takes no
-        // arguments, so there is nothing for the shell to mangle.
-        var inner = ""
+        // Downloads and unpacks the installer folder (install.bat + operator.ps1
+        // + ae_bridge/) into the user's Downloads, then opens it. It installs
+        // nothing itself — install.bat is the one installer. Non-elevated: the
+        // Downloads folder is the user's own, so no UAC.
+        var script = ""
           + "$ErrorActionPreference='Stop';"
           + "$log = Join-Path $env:TEMP 'zeuspack_update.log';"
-          + "Set-Content -Path $log -Value ('ZeusPack update ' + (Get-Date));"
+          + "Set-Content -Path $log -Value ('ZeusPack download ' + (Get-Date));"
           + "try {"
           + "  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;"
           + "  $zip  = Join-Path $env:TEMP 'zeuspack_update.zip';"
@@ -4761,52 +4773,46 @@ function zae_installUpdate(params) {
           + "  if (Test-Path $work) { Remove-Item $work -Recurse -Force }"
           + "  Expand-Archive -Path $zip -DestinationPath $work -Force;"
           + "  $root = Get-ChildItem $work -Directory | Select-Object -First 1;"
-          + "  $from = Join-Path $root.FullName 'zeuspack_ae_bridge\\ae_bridge';"
-          + "  if (-not (Test-Path $from)) { throw ('ae_bridge not found in the archive: ' + $from) }"
-          + "  $target = '" + target + "';"
-          + "  if (-not (Test-Path $target)) { New-Item -ItemType Directory -Path $target -Force | Out-Null }"
-          + "  Add-Content $log ('Copying to ' + $target);"
-          + "  Copy-Item -Path (Join-Path $from '*') -Destination $target -Recurse -Force;"
+          + "  $from = Join-Path $root.FullName 'zeuspack_ae_bridge';"
+          + "  if (-not (Test-Path $from)) { throw ('zeuspack_ae_bridge not found in the archive: ' + $from) }"
+          // Resolve the real Downloads folder — it can be relocated off the
+          // profile — from the shell-folder registry (GUID is Downloads),
+          // falling back to %USERPROFILE%\Downloads.
+          + "  $dl = (Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders' -ErrorAction SilentlyContinue).'{374DE290-123F-4565-9164-39C4925E467B}';"
+          + "  if (-not $dl) { $dl = Join-Path $env:USERPROFILE 'Downloads' }"
+          + "  if (-not (Test-Path $dl)) { New-Item -ItemType Directory -Path $dl -Force | Out-Null }"
+          + "  $dest = Join-Path $dl '" + folder + "';"
+          + "  if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }"
+          + "  New-Item -ItemType Directory -Path $dest -Force | Out-Null;"
+          + "  Copy-Item -Path (Join-Path $from '*') -Destination $dest -Recurse -Force;"
           + "  Remove-Item $zip -Force -ErrorAction SilentlyContinue;"
           + "  Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue;"
-          + "  Add-Content $log 'OK';"
+          + "  Add-Content $log ('SAVED: ' + $dest);"
+          + "  Start-Process explorer.exe $dest;"
           + "} catch {"
           + "  Add-Content $log ('ERROR: ' + $_.Exception.Message);"
           + "  exit 1;"
           + "}";
 
-        // -Wait so the result can be verified against the disk before reporting;
-        // AE is blocked for the download, which the panel says up front.
-        var outer = "Start-Process -FilePath powershell.exe -Verb RunAs -Wait "
-                  + "-ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand','"
-                  + _psEncode(inner) + "'";
-
         try {
             system.callSystem("powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand "
-                            + _psEncode(outer));
+                            + _psEncode(script));
         } catch (eRun) {
-            return _result(false, "Could not start the installer: " + eRun.toString());
+            return _result(false, "Could not start the download: " + eRun.toString());
         }
 
-        // callSystem's exit code is unreliable across hosts, and UAC can be
-        // cancelled without any error surfacing — so believe the disk.
-        var after = _manifestVersionOf(new File(target + "/CSXS/manifest.xml"));
+        // callSystem's exit code is unreliable across hosts, so believe the log
+        // the script wrote — the SAVED line carries the folder it landed in.
         var logTxt = _readText(new File(Folder.temp.fsName + "/zeuspack_update.log")) || "";
-        var failed = /ERROR: /.test(logTxt);
-
-        if (!after) {
-            return _result(false, "Nothing was installed. The elevation prompt was declined, or the "
-                         + "install failed." + (failed ? " " + logTxt.replace(/[\r\n]+/g, " ") : ""));
+        var saved  = /SAVED:\s*(.+)/.exec(logTxt);
+        if (/ERROR: /.test(logTxt) || !saved) {
+            return _result(false, "Download failed."
+                         + (logTxt ? " " + logTxt.replace(/[\r\n]+/g, " ") : ""));
         }
-        if (before && after === before && failed) {
-            return _result(false, "Install failed, the existing copy is untouched: "
-                         + logTxt.replace(/[\r\n]+/g, " "));
-        }
-
-        return _result(true, "Installed " + after + " to " + target
-                     + (before ? " (was " + before + ")" : " (fresh install)")
-                     + ". Restart After Effects to load it.",
-                     { version: after, previous: before, path: target });
+        var dest = String(saved[1]).replace(/[\r\n]+$/, "");
+        return _result(true, "Downloaded to " + dest
+                     + ". Run install.bat in that folder to finish, then restart After Effects.",
+                     { path: dest, version: version });
     } catch (e) {
         return _result(false, "Exception: " + e.toString());
     }
