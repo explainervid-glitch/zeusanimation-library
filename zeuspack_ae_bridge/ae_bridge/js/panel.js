@@ -209,7 +209,7 @@
   // ExtensionBundleVersion in CSXS/manifest.xml: the update check tests
   // INEQUALITY against the repo's manifest, so a stale value here reports a
   // phantom "update available" against a repo that has not moved.
-  var PANEL_VERSION   = "1.0.10";
+  var PANEL_VERSION   = "1.0.11";
 
   var updateBtn = document.getElementById("updateBtn");
 

@@ -4730,13 +4730,21 @@ function zae_downloadUpdate(params) {
         var url     = "https://github.com/" + _UPDATE_REPO + "/archive/refs/heads/" + branch + ".zip";
         var folder  = "ZeusPack-" + version;
 
+        // The log path is baked in from Folder.temp (the exact path the host
+        // reads back), NOT $env:TEMP inside PowerShell: a process AE spawns can
+        // inherit a different TEMP, so the host would read an empty/absent log
+        // and report a bare "Download failed" while the real error (or the
+        // SAVED line) sat in a file it never looked at.
+        var logPath = Folder.temp.fsName + "\\zeuspack_update.log";
+        var logLit  = logPath.replace(/'/g, "''");   // PS single-quote escape
+
         // Downloads and unpacks the installer folder (install.bat + operator.ps1
         // + ae_bridge/) into the user's Downloads, then opens it. It installs
         // nothing itself — install.bat is the one installer. Non-elevated: the
         // Downloads folder is the user's own, so no UAC.
         var script = ""
           + "$ErrorActionPreference='Stop';"
-          + "$log = Join-Path $env:TEMP 'zeuspack_update.log';"
+          + "$log = '" + logLit + "';"
           + "Set-Content -Path $log -Value ('ZeusPack download ' + (Get-Date));"
           + "try {"
           + "  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;"
@@ -4768,20 +4776,24 @@ function zae_downloadUpdate(params) {
           + "  exit 1;"
           + "}";
 
+        var out = "";
         try {
-            system.callSystem("powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand "
+            out = system.callSystem("powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand "
                             + _psEncode(script));
         } catch (eRun) {
             return _result(false, "Could not start the download: " + eRun.toString());
         }
 
-        // callSystem's exit code is unreliable across hosts, so believe the log
-        // the script wrote — the SAVED line carries the folder it landed in.
-        var logTxt = _readText(new File(Folder.temp.fsName + "/zeuspack_update.log")) || "";
-        var saved  = /SAVED:\s*(.+)/.exec(logTxt);
-        if (/ERROR: /.test(logTxt) || !saved) {
+        // Believe the log the script wrote (its SAVED line carries the folder it
+        // landed in). callSystem's own captured output is the fallback for when
+        // the log itself could not be read.
+        var logTxt = _readText(new File(logPath)) || "";
+        var report = logTxt || (out ? String(out) : "");
+        var saved  = /SAVED:\s*(.+)/.exec(report);
+        if (/ERROR: /.test(report) || !saved) {
             return _result(false, "Download failed."
-                         + (logTxt ? " " + logTxt.replace(/[\r\n]+/g, " ") : ""));
+                         + (report ? " " + report.replace(/[\r\n]+/g, " ")
+                                   : " (no output from PowerShell; check Preferences > Scripting & Expressions > Allow Scripts to Write Files and Access Network)"));
         }
         var dest = String(saved[1]).replace(/[\r\n]+$/, "");
         return _result(true, "Downloaded to " + dest
