@@ -2549,7 +2549,14 @@
   // than pushed as NaN.
   function ctlNumber(labelText, cur, onset) {
     var inp = ctlInput(cur.value);
-    function commit() { var v = Number(inp.value); if (isFinite(v)) onset(v); }
+    function fmt(x) { return String(Math.round(Number(x) * 1000) / 1000); }
+    function commit() {
+      var v = Number(inp.value);
+      if (isFinite(v)) onset(v, function (stored) {
+        var s = Number(stored);
+        if (isFinite(s)) inp.value = fmt(s);   // show what AE clamped it to
+      });
+    }
     inp.addEventListener("change", commit);
     attachScrub(inp, commit);
     return ctlKeyedTag(ctlRow(labelText, inp), cur);
@@ -2591,7 +2598,15 @@
         if (!isFinite(v)) { ok = false; break; }   // don't push a half-typed axis
         out.push(v);
       }
-      if (ok) onset(out);
+      if (ok) onset(out, function (stored) {
+        // Reflect AE's clamped array back into each axis field.
+        if (stored && typeof stored.length === "number") {
+          for (var m = 0; m < inputs.length && m < stored.length; m++) {
+            var s = Number(stored[m]);
+            if (isFinite(s)) { inputs[m].value = String(Math.round(s * 1000) / 1000); ctlFit(inputs[m]); }
+          }
+        }
+      });
     }
     for (var j = 0; j < inputs.length; j++) {
       (function (inp) {
@@ -2649,7 +2664,7 @@
             return s;
           })());
         } else {
-          var onset = function (v) { pushBound(c.sig, v); };
+          var onset = function (v, applyBack) { pushBound(c.sig, v, applyBack); };
           var enumOpts = TX_ENUM_BY_MN[c.mn];
           if (enumOpts && c.dims === 1) {
             row = ctlDropdown(c.label, enumOpts, c, onset);
@@ -2671,12 +2686,17 @@
     }
   }
 
-  function pushBound(sig, value) {
+  // applyBack (optional) receives the value AE actually stored (post-clamp) so
+  // the field can correct itself to the real value.
+  function pushBound(sig, value, applyBack) {
     callHost("zae_setBoundControl",
       { path: controlZfxPath, sig: sig, value: value },
       function (r) {
         log("Control → " + r.message, r.ok ? "ok" : "err");
-        if (!r.ok) flash(r.message, true);
+        if (!r.ok) { flash(r.message, true); return; }
+        if (applyBack && r.data && r.data.value !== undefined && r.data.value !== null) {
+          try { applyBack(r.data.value); } catch (e) {}
+        }
       });
   }
 

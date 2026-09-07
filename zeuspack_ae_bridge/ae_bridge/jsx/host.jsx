@@ -1219,6 +1219,38 @@ function _writeText(file, txt) {
     } catch (e) { try { file.close(); } catch (e2) {} return false; }
 }
 
+// Crash-safe replace: write a sibling temp, move the original aside, swap the
+// temp in, then drop the backup. There is no moment where the destination is
+// truncated in place, so an interruption leaves either the old file intact or a
+// recoverable .zpkbak — important for .zfx files that carry the whole .ffx
+// payload, which a half-finished write would destroy.
+function _writeTextAtomic(orig, txt) {
+    try {
+        var origPath = orig.fsName;
+        var destName = new File(origPath).name;      // name portion, same folder
+        var tmp = new File(origPath + ".zpktmp");
+        var bak = new File(origPath + ".zpkbak");
+
+        try { if (tmp.exists) tmp.remove(); } catch (eT) {}
+        if (!_writeText(tmp, txt)) { try { tmp.remove(); } catch (e0) {} return false; }
+        var okLen = true; try { okLen = tmp.length > 0; } catch (eL) {}
+        if (!okLen) { try { tmp.remove(); } catch (e1) {} return false; }
+
+        var hadOrig = false; try { hadOrig = orig.exists; } catch (eE) {}
+        if (hadOrig) {
+            try { if (bak.exists) bak.remove(); } catch (eB) {}
+            if (!new File(origPath).rename(bak.name)) { try { tmp.remove(); } catch (e2) {} return false; }
+        }
+        if (!tmp.rename(destName)) {                  // origPath is free now
+            if (hadOrig) { try { new File(bak.fsName).rename(destName); } catch (eR) {} }
+            try { tmp.remove(); } catch (e3) {}
+            return false;
+        }
+        if (hadOrig) { try { bak.remove(); } catch (e4) {} }
+        return true;
+    } catch (e) { return false; }
+}
+
 // Walk to leaf properties, tracking BOTH addressing schemes as we go.
 //
 // matchName chain ("ADBE Transform Group" → "ADBE Position") is the stable
@@ -5070,6 +5102,33 @@ function _pathSig(chain) {
     return s.join(".");
 }
 
+// The layer that owns a property — climb parentProperty until the object has no
+// propertyIndex (that's the layer). Mirrors _propPath's climb so it agrees with
+// how paths are built.
+function _propLayer(prop) {
+    var p = prop, guard = 0;
+    while (p && guard++ < 40) {
+        var pi = 0;
+        try { pi = p.propertyIndex; } catch (e) { pi = 0; }
+        if (!pi) return p;                    // no propertyIndex => the layer
+        var par = null;
+        try { par = p.parentProperty; } catch (e2) { par = null; }
+        if (!par) return p;
+        p = par;
+    }
+    return null;
+}
+
+// Same layer? Compare index within the (single) active comp — object identity is
+// not reliable across ExtendScript wrappers.
+function _sameLayer(a, b) {
+    if (!a || !b) return false;
+    var ia = -1, ib = -2;
+    try { ia = a.index; } catch (e) {}
+    try { ib = b.index; } catch (e2) {}
+    return ia === ib;
+}
+
 function _resolvePath(layer, chain) {
     var p = layer;
     for (var i = 0; i < chain.length; i++) {
@@ -5146,6 +5205,21 @@ function _stampTextLayer(layer, zfxPath) {
     } catch (e2) {}
     try {
         var t = 0; try { t = layer.inPoint; } catch (eIn) {}
+        // setValueAtTime overwrites any marker already at that exact time. The
+        // Zeus stamps were just removed above, so any remaining key here is a
+        // user marker — nudge forward until the slot is free so we never clobber
+        // one at the layer's in-point.
+        var guard = 0;
+        while (guard++ < 16) {
+            var clash = false, n2 = 0;
+            try { n2 = mk.numKeys; } catch (eN) { n2 = 0; }
+            for (var j = 1; j <= n2; j++) {
+                var kt = null; try { kt = mk.keyTime(j); } catch (eKt) {}
+                if (kt !== null && Math.abs(kt - t) < 1e-4) { clash = true; break; }
+            }
+            if (!clash) break;
+            t += 0.001;
+        }
         var mv = new MarkerValue(_TEXT_PREFIX + _presetNameFromPath(zfxPath));
         try {
             var pobj = {}; pobj[_TEXT_PARAM] = String(zfxPath);
@@ -5193,29 +5267,42 @@ function zae_bindProperties(params) {
         params = params || {};
         var comp = _activeComp();
         if (!comp) return _result(false, "Open a composition and select some properties.");
-        // Target the applied preset on the layer (its marker) if there is one;
-        // otherwise the selected card passed from the panel.
-        var tgt = _targetZfx(_firstSelectedLayer(), params.path);
-        var zfxPath = tgt.path;
-        if (!zfxPath) return _result(false, "Apply a Text preset to this layer first, or select a Text card, then Bind.");
-        var f = new File(zfxPath);
-        if (!f.exists) return _result(false, "Preset not found: " + zfxPath);
 
+        // Collect the selected leaf properties (not groups). Use the comp-wide
+        // selection so it works whether or not the layer bar itself is selected.
         var selP = [];
         try { selP = comp.selectedProperties || []; } catch (e) {}
-
-        var leaves = [];
+        var allLeaves = [];
         for (var i = 0; i < selP.length; i++) {
             var pr = selP[i], isGroup = false;
             try {
                 isGroup = (pr.propertyType === PropertyType.INDEXED_GROUP ||
                            pr.propertyType === PropertyType.NAMED_GROUP);
             } catch (e2) {}
-            if (!isGroup) leaves.push(pr);
+            if (!isGroup) allLeaves.push(pr);
         }
-        if (!leaves.length) {
+        if (!allLeaves.length) {
             return _result(false, "Select one or more properties (not groups) in the timeline, then Bind.");
         }
+
+        // Derive the target layer FROM the selected properties (the layer that
+        // owns the first one), then keep only leaves on that same layer. This
+        // fixes two leaks: a second selected layer bleeding its properties in,
+        // and a bar-selected layer that differs from where the properties are.
+        var layer = _propLayer(allLeaves[0]);
+        if (!layer) return _result(false, "Could not resolve the layer for the selected properties.");
+        var leaves = [];
+        for (var q = 0; q < allLeaves.length; q++) {
+            if (_sameLayer(_propLayer(allLeaves[q]), layer)) leaves.push(allLeaves[q]);
+        }
+
+        // Target the applied preset on that layer (its marker) if there is one;
+        // otherwise the selected card passed from the panel.
+        var tgt = _targetZfx(layer, params.path);
+        var zfxPath = tgt.path;
+        if (!zfxPath) return _result(false, "Apply a Text preset to this layer first, or select a Text card, then Bind.");
+        var f = new File(zfxPath);
+        if (!f.exists) return _result(false, "Preset not found: " + zfxPath);
 
         var doc = _parseJson(_readText(f) || "");
         if (!doc || doc.format !== _ZFX_FORMAT) {
@@ -5235,7 +5322,7 @@ function zae_bindProperties(params) {
             have[sig] = true; added++;
         }
         doc.boundProps = bound;
-        if (!_writeText(f, JSON.stringify(doc))) return _result(false, "Could not write " + f.fsName);
+        if (!_writeTextAtomic(f, JSON.stringify(doc))) return _result(false, "Could not write " + f.fsName);
 
         return _result(true, "Bound " + added + " propert" + (added === 1 ? "y" : "ies")
                      + " (" + bound.length + " total)", { count: bound.length, added: added });
@@ -5339,7 +5426,18 @@ function zae_setBoundControl(params) {
         if (keyed) prop.setValueAtTime(comp.time, val);
         else       prop.setValue(val);
         app.endUndoGroup();
-        return _result(true, "set " + bp.label, { sig: sig, value: val, keyed: keyed });
+
+        // Report back what AE actually stored — it clamps (Opacity 0–100, etc.),
+        // so the panel should show the clamped value, not the raw request.
+        var actual = val, dims = 1;
+        try {
+            var rv = {}; _readPropValue(rv, prop);
+            if (!rv.missing && rv.value !== undefined && rv.value !== null) {
+                actual = rv.value; dims = rv.dims || 1;
+            }
+            if (rv.keyed !== undefined) keyed = rv.keyed;
+        } catch (eRB) {}
+        return _result(true, "set " + bp.label, { sig: sig, value: actual, dims: dims, keyed: keyed });
     } catch (e) {
         try { app.endUndoGroup(); } catch (e2) {}
         return _result(false, "Exception: " + e.toString());
@@ -5357,7 +5455,7 @@ function zae_unbindProperty(params) {
         var bound = (doc && doc.boundProps) || [], out = [];
         for (var i = 0; i < bound.length; i++) if (bound[i].sig !== sig) out.push(bound[i]);
         doc.boundProps = out;
-        if (!_writeText(f, JSON.stringify(doc))) return _result(false, "Could not write preset.");
+        if (!_writeTextAtomic(f, JSON.stringify(doc))) return _result(false, "Could not write preset.");
         return _result(true, "Unbound", { count: out.length });
     } catch (e) {
         return _result(false, "Exception: " + e.toString());

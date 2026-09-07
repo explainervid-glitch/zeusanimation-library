@@ -895,7 +895,18 @@ Only when that fails does it fall back to copying the tree and deleting the
 original — and a collected `(Footage)` folder can be large, with AE frozen
 throughout. A part-finished copy is rolled back rather than left behind.
 
----
+**Reordering or deleting text animators can break a bound control.** A Control
+panel binding stores a path to the property as a `{propertyIndex, matchName}`
+chain (see [The .zfx format](#the-zfx-format)). For every property except the
+animator itself, the `matchName` is a stable, unique id that survives an index
+shift. But *all* text animators share one `matchName` — `ADBE Text Animator` —
+so the only thing that distinguishes "Animator 2" from "Animator 1" is its
+index. Delete or reorder animators above a bound one and that index now points
+elsewhere: the control either drives the **wrong animator's** property (its
+`matchName` still matches, so nothing flags it) or reports the property as *not
+on this layer*. Re-bind the control to fix it. This does not affect a layer with
+a single animator, which is the usual case — and it is inherent to how AE
+addresses indexed groups, not a bug in a specific operation.
 
 ## File layout
 
