@@ -49,6 +49,7 @@
     --card-w:96px; --thumb-h:54px;
     --cats-w:84px;              /* category rail, dragged by its right edge */
     --tools-w:92px;             /* tool strip, dragged by its left edge */
+    --control-w:240px;          /* text control panel, dragged by its right edge */
 
     /* Corner rounding for all panel chrome, routed through one knob so the
        whole UI can be flipped between rounded and sharp in one place. Set to
@@ -181,6 +182,80 @@
   }
   .loglines .ok  { color:var(--ok); }
   .loglines .err { color:var(--err); }
+
+  /* ── Text Control panel ──────────────────────────────────────
+     A column to the LEFT of the preset browser (both can be open at once). It
+     scrolls on its own and takes a fixed slice of the row; presets fill the
+     rest. Font sizes are a notch larger than the grid so the values read
+     comfortably. */
+  .control {
+    display:none; flex:0 0 var(--control-w); min-width:0; flex-direction:column;
+    min-height:0; overflow-y:auto; overflow-x:hidden;
+    background:#151515; border:1px solid var(--border); border-radius:var(--r);
+    padding:5px 7px;
+  }
+  .control.open { display:flex; }
+  /* Fills the whole row when nothing else is open (like the tool strip's solo). */
+  .main.cwide .control { flex:1 1 auto; }
+  /* Right-edge grip that resizes the control panel against the browser. Mirrors
+     the tool strip's grip; only shown when both share the row. */
+  .ctrlgrip { display:none; flex:0 0 7px; position:relative; cursor:col-resize; }
+  .ctrlgrip.open { display:block; }
+  .ctrlgrip::after {
+    content:""; position:absolute; top:0; bottom:0; left:3px; width:1px; background:var(--border);
+  }
+  .ctrlgrip:hover::after, .ctrlgrip.drag::after { background:var(--accent); }
+  .ctlbar {
+    flex:0 0 auto; display:flex; align-items:center; gap:6px;
+    padding-bottom:6px; margin-bottom:6px; border-bottom:1px solid #2a2a2a;
+  }
+  .ctltitle { flex:1; min-width:0; font-size:13px; font-weight:600; color:var(--text);
+              white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .ctlbody { display:flex; flex-direction:column; gap:4px; }
+  .ctlempty { font-size:12px; color:var(--muted); padding:4px 2px; line-height:1.4; }
+  /* A bound property whose path can't be found on the active layer. */
+  .ctlmissing { font-size:11px; color:var(--muted); font-style:italic; }
+  /* A left-aligned list: the label reads from the left edge, the value follows.
+     Right-click a row to remove the binding. */
+  .ctlrow { display:flex; align-items:center; gap:8px; }
+  .ctllabel { flex:0 0 92px; font-size:12px; color:var(--muted); text-align:left; }
+  /* Dropdowns keep a box (the one control that needs an obvious hit target) but
+     size to their content rather than filling the row. */
+  .ctlrow select {
+    flex:0 1 auto; width:auto; min-width:96px; max-width:calc(100% - 100px);
+    height:24px; padding:0 6px;
+    background:#1b1b1b; border:1px solid var(--border); border-radius:var(--r-sm);
+    color:var(--text); font:inherit; font-size:12px; outline:none;
+  }
+  .ctlrow select:hover, .ctlrow select:focus { border-color:var(--accent); }
+
+  /* Scrubbable numeric value — no box, blue, drag left/right to change (see
+     attachScrub in panel.js). These are type=text (not number) so click-to-
+     select-all and double-click-to-caret work — number inputs expose no
+     selection API. */
+  .ctlnum {
+    flex:0 0 auto; height:24px;
+    background:transparent; border:0; border-radius:var(--r-sm);
+    color:#5aa9f0; font:inherit; font-size:12px; outline:none; cursor:ew-resize;
+  }
+  .ctlnum:focus { background:#1b1b1b; cursor:text; }
+  .ctlrow > .ctlnum { width:64px; padding:0 2px; }        /* single value */
+  .ctlvec .ctlnum { width:auto; min-width:0; padding:0; text-align:left; } /* axes */
+
+  /* Animator picker sits above the controls when a layer has more than one. */
+  .ctlanim { margin-bottom:2px; }
+  .ctlkeyed { flex:0 0 auto; font-size:10px; color:var(--muted); }
+  /* "Properties" divider before the animator's added properties. */
+  .ctlhead {
+    font-size:11px; font-weight:600; letter-spacing:.06em; text-transform:uppercase;
+    color:var(--muted); margin-top:4px; padding-top:6px; border-top:1px solid #2a2a2a;
+  }
+  /* Multi-component property shown tight with commas, like AE: "0,-48,0".
+     Each axis auto-sizes to its content (width set inline by ctlFit). */
+  .ctlvec { flex:0 1 auto; display:flex; align-items:center; gap:0; }
+  .ctlcomma { flex:0 0 auto; color:#5aa9f0; font-size:12px; padding:0; }
+  /* A checkbox must not stretch like the value inputs do. */
+  .ctlrow input[type=checkbox] { flex:0 0 auto; width:15px; height:15px; }
 
   /* Preset browser + tool strip, side by side. Hidden outright when both are
      closed — an empty flex:1 row would otherwise hold the panel open. */
@@ -392,6 +467,9 @@
   .tag.aep { color:#8fb0ff; }   /* composition */
   .tag.ffx { color:#fbbf24; }   /* animation preset */
   .tag.zfx { color:#4ade80; }   /* ZeusPack preset — .ffx payload + expressions */
+  /* NOT ".txt": that class is the text-INPUT style (border + focus ring), and a
+     badge sharing it inherited an unwanted 1px border. */
+  .tag.text { color:#f0a0e0; }  /* Text preset — a .zfx tagged as text */
 
   /* Right-click menu — plain div, since CEP's native menu API is panel-wide
      and can't vary per card. */
@@ -596,6 +674,13 @@
       <span>Presets</span>
     </button>
 
+    <!-- Toggle the text Control panel (live controls for the selected text layer) -->
+    <button class="ico lbl" id="controlBtn" title="Text controls for the selected text layer">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+           stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="14" y2="18"/><circle cx="9" cy="6" r="2" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="2" fill="currentColor" stroke="none"/><circle cx="8" cy="18" r="2" fill="currentColor" stroke="none"/></svg>
+      <span>Control</span>
+    </button>
+
     <!-- Toggle layer tools -->
     <button class="ico lbl" id="toolsBtn" title="Layer tools (group, ungroup, recenter)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
@@ -632,9 +717,42 @@
        closed, so an empty flex:1 row cannot hold the panel open. -->
   <div class="main" id="main">
 
+  <!-- ── Text Control panel ── : the properties bound to the selected Text
+       preset, read live from the active layer, sitting to the LEFT of the
+       preset browser. It resizes via its right-edge grip and fills the whole
+       panel when nothing else is open. Right-click a bound property to remove
+       it. Bind (+) saves the AE-selected properties into the preset. -->
+  <div class="control" id="control">
+    <div class="ctlbar">
+      <span class="ctltitle" id="ctlTitle">Text controls</span>
+      <button class="ico" id="ctlBind" title="Bind the properties selected in AE's timeline to this Text preset">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+             stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      </button>
+      <button class="ico" id="ctlUndo" title="Undo the last change in After Effects">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M3 13a9 9 0 1 0 3-7.7L3 8"/></svg>
+      </button>
+      <button class="ico" id="ctlRefresh" title="Read the selected layer again">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg>
+      </button>
+    </div>
+    <div class="ctlbody" id="ctlBody">
+      <div class="ctlempty">Select a Text preset card, then bind properties to it.</div>
+    </div>
+  </div>
+  <!-- Drag to resize the control panel against the browser. -->
+  <div class="ctrlgrip" id="ctrlGrip" title="Drag to resize"></div>
+
   <!-- ── Preset browser ── -->
   <div class="presets" id="presets">
     <div class="row">
+      <!-- Copy the current folder's path to the clipboard -->
+      <button class="ico" id="copyPathBtn" title="Copy folder path">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg>
+      </button>
       <select class="path" id="pathSelect" title=""></select>
       <button class="ico lbl" id="loopBtn" title="Preview playback">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"

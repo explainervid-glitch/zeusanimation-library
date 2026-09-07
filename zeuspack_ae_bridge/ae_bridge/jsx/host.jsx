@@ -674,6 +674,23 @@ function _bundlePreview(folder, base) {
     return best;
 }
 
+// Is this .zfx a Text preset? Reads only the file's HEAD, not the whole thing:
+// the base64 payload can be megabytes, and the scan may hit hundreds of files.
+// assetType is written near the top of the doc (see zae_savePresetPlus), so a
+// small read finds it. Absent (older files) reads back as FX+.
+function _zfxIsText(file) {
+    try {
+        var f = (file instanceof File) ? file : new File(file);
+        if (!f.exists) return false;
+        f.encoding = "UTF-8";
+        if (!f.open("r")) return false;
+        var head = "";
+        try { head = f.read(1024); } catch (eR) { head = ""; }
+        f.close();
+        return /"assetType"\s*:\s*"text"/.test(String(head));
+    } catch (e) { return false; }
+}
+
 // Recursive .ffx walk. Collects previews per directory so a folder is only
 // listed once no matter how many presets it holds.
 // `allowed` (an array, or null) gates which TOP-LEVEL folders are entered.
@@ -767,7 +784,8 @@ function _walkPresets(folder, depth, relPrefix, acc, allowed) {
         var label = zb.substring(cut + _OWNER_SEP.length).replace(/^\s+|\s+$/g, "");
         if (!label) continue;
         if (!owned[ownerKey]) owned[ownerKey] = [];
-        owned[ownerKey].push({ name: label, path: zfx[j].file.fsName, base: zb });
+        owned[ownerKey].push({ name: label, path: zfx[j].file.fsName, base: zb,
+                               textType: _zfxIsText(zfx[j].file) });
         isOwned[zb.toLowerCase()] = true;
     }
 
@@ -781,6 +799,7 @@ function _walkPresets(folder, depth, relPrefix, acc, allowed) {
         pv = previews[key] || null;
         acc.presets.push({
             kind:        "presetplus",          // ZeusPack preset (.zfx)
+            textType:    _zfxIsText(zfx[j].file), // Text preset vs plain FX+
             name:        zfx[j].base,
             path:        zfx[j].file.fsName,
             folder:      relPrefix || "",
@@ -1868,6 +1887,11 @@ function zae_savePresetPlus(params) {
             format:  _ZFX_FORMAT,
             version: _ZFX_VERSION,
             name:    base,
+            // "text" or "fx". Kept near the top of the JSON on purpose: the
+            // scan reads only the file's head to tell Text presets from FX+
+            // without decoding the base64 payload lower down. Absent on older
+            // files, which read back as "fx".
+            assetType: (params && String(params.assetType) === "text") ? "text" : "fx",
             created: _nowIso(),
             app: {
                 name:             "After Effects",
@@ -2033,6 +2057,16 @@ function zae_applyPresetPlus(params) {
 
         if (!r || !r.applied) return _result(false, "Could not apply to the selected layer(s).");
 
+        // Text preset: stamp each layer so the Control panel can find this .zfx
+        // from the layer alone (auto-link), no card reselection needed.
+        if (String(doc.assetType) === "text") {
+            app.beginUndoGroup("ZeusPack: tag text layer");
+            for (var si = 0; si < layers.length; si++) {
+                try { _stampTextLayer(layers[si], f.fsName); } catch (eStamp) {}
+            }
+            app.endUndoGroup();
+        }
+
         var name = String(doc.name || _stripExt(_baseName(f)));
         var msg  = "Applied " + name + " to " + r.applied + " layer"
                  + (r.applied === 1 ? "" : "s") + _applyMsgTail(r, reverse);
@@ -2108,6 +2142,7 @@ function zae_readPresetPlus(params) {
             name: doc.name || "", version: doc.version || 0,
             created: doc.created || "", app: doc.app || null,
             source: doc.source || null,
+            assetType: doc.assetType || "fx",
             kind: (doc.payload && doc.payload.kind) || "ffx",
             expressions: nExpr,
             // null for a .zfx written before contents were recorded, so the
@@ -4801,6 +4836,549 @@ function zae_downloadUpdate(params) {
                      { path: dest, version: version });
     } catch (e) {
         return _result(false, "Exception: " + e.toString());
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  TEXT CONTROLS  (Control panel)
+// ═══════════════════════════════════════════════════════════════
+// A live view of the selected text layer's animator Range Selector(s) —
+// Based On (characters/words/lines), Units, Offset, Start, End — that the
+// panel can read and write. CEP cannot subscribe to AE, so the panel reads on
+// demand (open / Refresh) and writes each edit through zae_setTextControl.
+//
+// matchNames used (documented, but wrapped in try/catch so a version that
+// differs degrades to "not readable" rather than throwing):
+//   Text group      ADBE Text Properties
+//   Animators       ADBE Text Animators        (each: .name)
+//   Selectors       ADBE Text Selectors        (first = the Range Selector)
+//   Start/End/Offset ADBE Text Percent Start / End / Offset
+//   Advanced group  ADBE Text Range Advanced
+//     Based On      ADBE Text Range Type2   1=Characters 2=Chars(no spaces) 3=Words 4=Lines
+//     Units         ADBE Text Range Units   1=Percentage 2=Index
+
+function _activeComp() {
+    var it = app.project ? app.project.activeItem : null;
+    return (it instanceof CompItem) ? it : null;
+}
+
+// First selected layer that is a text layer, or null.
+function _activeTextLayer() {
+    var comp = _activeComp();
+    if (!comp) return null;
+    var sel = comp.selectedLayers || [];
+    for (var i = 0; i < sel.length; i++) {
+        try { if (sel[i].property("ADBE Text Properties")) return sel[i]; } catch (e) {}
+    }
+    return null;
+}
+
+// { value, keyed } for a property named mn under parent, or null if absent.
+function _txGet(parent, mn) {
+    try {
+        var p = parent.property(mn);
+        if (!p) return null;
+        var keyed = false;
+        try { keyed = p.numKeys > 0; } catch (e) {}
+        return { value: p.value, keyed: keyed };
+    } catch (e2) { return null; }
+}
+
+function zae_readTextControls(params) {
+    try {
+        var comp = _activeComp();
+        if (!comp) return _result(true, "No active composition.", { isText: false });
+        var sel = comp.selectedLayers || [];
+        if (!sel.length) return _result(true, "Select a text layer.", { isText: false });
+
+        var layer = _activeTextLayer();
+        if (!layer) return _result(true, "The selected layer is not a text layer.", { isText: false });
+
+        var tp = layer.property("ADBE Text Properties");
+        var animGroup = null;
+        try { animGroup = tp.property("ADBE Text Animators"); } catch (eA) { animGroup = null; }
+
+        var animators = [];
+        var nA = 0;
+        if (animGroup) { try { nA = animGroup.numProperties; } catch (eN) { nA = 0; } }
+        for (var k = 1; k <= nA; k++) {
+            var an = animGroup.property(k);
+            var sels = null, rng = null;
+            try { sels = an.property("ADBE Text Selectors"); } catch (eS) {}
+            if (sels) { try { rng = sels.property(1); } catch (eR) {} }
+
+            var rec = { index: k, name: String(an.name || ("Animator " + k)),
+                        hasRange: !!rng, selector: {}, props: [] };
+
+            // Range Selector ▸ Advanced controls (Start/End/Offset are left off
+            // on purpose — see _TX_ADV_MN for the matchNames).
+            if (rng) {
+                var adv = null;
+                try { adv = rng.property("ADBE Text Range Advanced"); } catch (eAdv) {}
+                if (adv) {
+                    for (var ak in _TX_ADV_MN) {
+                        if (!_TX_ADV_MN.hasOwnProperty(ak)) continue;
+                        var got = _txGet(adv, _TX_ADV_MN[ak]);
+                        if (got) rec.selector[ak] = got;
+                    }
+                }
+            }
+
+            // The animator's ADDED properties — whatever was put on it from the
+            // "Animate" menu (Position, Scale, Opacity, Tracking, Fill Color…).
+            // Read generically: 1-D values come back as a number, multi-D as an
+            // array, so the panel can render the right number of inputs.
+            var aprops = null;
+            try { aprops = an.property("ADBE Text Animator Properties"); } catch (eP) {}
+            if (aprops) {
+                var nP = 0; try { nP = aprops.numProperties; } catch (eNP) { nP = 0; }
+                for (var pi = 1; pi <= nP; pi++) {
+                    var pr = aprops.property(pi);
+                    var rp = { index: pi, name: String(pr.name || ("Property " + pi)) };
+                    try {
+                        var v = pr.value;
+                        if (v !== null && typeof v === "object" && typeof v.length === "number") {
+                            var arr = [];
+                            for (var d = 0; d < v.length; d++) arr.push(v[d]);
+                            rp.value = arr; rp.dims = arr.length;
+                        } else {
+                            rp.value = v; rp.dims = 1;
+                        }
+                    } catch (eVal) { rp.value = null; rp.dims = 0; }
+                    try { rp.keyed = pr.numKeys > 0; } catch (eKk) { rp.keyed = false; }
+                    rec.props.push(rp);
+                }
+            }
+            animators.push(rec);
+        }
+        return _result(true, "ok", {
+            isText: true, layer: String(layer.name || ""), animators: animators
+        });
+    } catch (e) {
+        return _result(false, "Exception: " + e.toString());
+    }
+}
+
+// Range Selector ▸ Advanced controls, by matchName. Start/End/Offset are
+// deliberately excluded. These matchNames are documented but unverified on
+// every AE version; anything missing is simply skipped (read) or reported (set)
+// rather than throwing, so a rename degrades gracefully.
+//   basedOn  1=Characters 2=Chars(no spaces) 3=Words 4=Lines
+//   units    1=Percentage 2=Index
+//   mode     1=Add 2=Subtract 3=Intersect 4=Min 5=Max 6=Difference
+//   shape    1=Square 2=Ramp Up 3=Ramp Down 4=Triangle 5=Round 6=Smooth
+//   amount / easeHigh / easeLow  numeric (%)
+//   randomize  checkbox (0/1)
+var _TX_ADV_MN = {
+    basedOn:   "ADBE Text Range Type2",
+    units:     "ADBE Text Range Units",
+    mode:      "ADBE Text Selector Mode",
+    amount:    "ADBE Text Selector Max Amount",
+    shape:     "ADBE Text Range Shape",
+    easeHigh:  "ADBE Text Range Ease High",
+    easeLow:   "ADBE Text Range Ease Low",
+    randomize: "ADBE Text Randomize Order"
+};
+
+function zae_setTextControl(params) {
+    try {
+        params = params || {};
+        var idx    = Number(params.index) || 0;
+        var target = String(params.target || "selector");
+        if (!idx) return _result(false, "No animator specified.");
+
+        var comp  = _activeComp();
+        var layer = _activeTextLayer();
+        if (!comp || !layer) return _result(false, "Select a text layer first.");
+
+        var animator = layer.property("ADBE Text Properties")
+                            .property("ADBE Text Animators").property(idx);
+
+        var prop, label;
+        if (target === "prop") {
+            // An added animator property (Position, Scale, Opacity, …).
+            var pIdx = Number(params.propIndex) || 0;
+            if (!pIdx) return _result(false, "No property specified.");
+            prop = animator.property("ADBE Text Animator Properties").property(pIdx);
+            label = prop ? String(prop.name || "property") : "property";
+        } else {
+            // A Range Selector ▸ Advanced control.
+            var key = String(params.key || "");
+            var mn = _TX_ADV_MN[key];
+            if (!mn) return _result(false, "Unknown control: " + key);
+            var adv = animator.property("ADBE Text Selectors").property(1)
+                             .property("ADBE Text Range Advanced");
+            prop = adv.property(mn);
+            label = key;
+        }
+        if (!prop) return _result(false, "That control is not on this animator.");
+
+        // A number, or an array for a multi-dimensional property (Position, etc).
+        var val = params.value;
+        if (val === null || val === undefined) return _result(false, "No value to set.");
+
+        app.beginUndoGroup("ZeusPack: text control");
+        // A keyframed property rejects setValue; drop a key at the playhead so
+        // the edit lands instead of throwing.
+        var keyed = false;
+        try { keyed = prop.numKeys > 0; } catch (eK) {}
+        if (keyed) prop.setValueAtTime(comp.time, val);
+        else       prop.setValue(val);
+        app.endUndoGroup();
+
+        return _result(true, "set " + label,
+                     { index: idx, target: target, value: val, keyed: keyed });
+    } catch (e) {
+        try { app.endUndoGroup(); } catch (e2) {}
+        return _result(false, "Exception: " + e.toString());
+    }
+}
+
+// Trigger After Effects' own Undo. The keyboard shortcut goes to whichever app
+// has focus, so a panel edit can't be undone with Ctrl+Z while the panel is
+// focused — this runs AE's Undo directly. 16 is AE's stable menu-command id for
+// Undo (17 is Redo); executeCommand ignores focus.
+// ═══════════════════════════════════════════════════════════════
+//  BOUND CONTROLS  (Control panel v2)
+// ═══════════════════════════════════════════════════════════════
+// A Text preset (.zfx) can bind a chosen set of properties. The Control panel
+// shows ONLY those, reading/writing their live values on the active layer. The
+// binding is a per-level {propertyIndex, matchName} chain from the layer down:
+// the index resolves indexed groups (which animator), the matchName is the
+// fallback when indices shift and how known enums are recognised.
+
+function _propPath(prop) {
+    var chain = [], p = prop, guard = 0;
+    while (p && guard++ < 40) {
+        var pi = 0;
+        try { pi = p.propertyIndex; } catch (e) { pi = 0; }
+        if (!pi) break;                     // reached the layer (no propertyIndex)
+        var mn = "", nm = "";
+        try { mn = String(p.matchName || ""); } catch (e2) {}
+        try { nm = String(p.name || ""); } catch (e3) {}
+        chain.unshift({ idx: pi, mn: mn, nm: nm });
+        var par = null;
+        try { par = p.parentProperty; } catch (e4) { par = null; }
+        p = par;
+    }
+    return chain;
+}
+
+function _pathSig(chain) {
+    var s = [];
+    for (var i = 0; i < chain.length; i++) s.push(chain[i].idx);
+    return s.join(".");
+}
+
+function _resolvePath(layer, chain) {
+    var p = layer;
+    for (var i = 0; i < chain.length; i++) {
+        var step = chain[i], next = null;
+        try { next = p.property(step.idx); } catch (e) {}
+        if ((!next || (step.mn && next.matchName !== step.mn)) && step.mn) {
+            var byName = null;
+            try { byName = p.property(step.mn); } catch (e2) {}
+            if (byName) next = byName;      // index moved; non-indexed groups still resolve
+        }
+        if (!next) return null;
+        p = next;
+    }
+    return p;
+}
+
+function _firstSelectedLayer() {
+    var comp = _activeComp();
+    if (!comp) return null;
+    var sel = comp.selectedLayers || [];
+    return sel.length ? sel[0] : null;
+}
+
+// Read a property's live value into a control record.
+function _readPropValue(rec, prop) {
+    try {
+        var v = prop.value;
+        if (v !== null && typeof v === "object" && typeof v.length === "number") {
+            var arr = [];
+            for (var d = 0; d < v.length; d++) arr.push(v[d]);
+            rec.value = arr; rec.dims = arr.length;
+        } else {
+            rec.value = v; rec.dims = 1;
+        }
+    } catch (eV) { rec.missing = true; }
+    try { rec.keyed = prop.numKeys > 0; } catch (eK) {}
+    return rec;
+}
+
+// ── Layer stamp ──────────────────────────────────────────────────────────────
+// Applying a Text preset drops a marker on the layer (the way Animation Composer
+// marks applied layers) so the Control panel can show the right bound controls
+// from the layer alone — no need to reselect the preset card. The marker COMMENT
+// is a clean "ZeusPack | <preset name>" for the timeline; the .zfx path is stashed
+// in the marker's hidden parameters so it stays out of the visible label.
+// Re-applying replaces the stamp rather than stacking markers.
+var _TEXT_PREFIX = "ZeusPack | ";        // visible marker comment prefix
+var _TEXT_STAMP  = "ZeusPack Text ▸ ";   // legacy comment prefix (path in comment)
+var _TEXT_PARAM  = "zfxPath";            // marker-parameter key holding the path
+
+// "W:\...\Down Fade.zfx" -> "Down Fade"
+function _presetNameFromPath(zfxPath) {
+    var s = String(zfxPath || "");
+    var slash = Math.max(s.lastIndexOf("/"), s.lastIndexOf("\\"));
+    if (slash >= 0) s = s.substring(slash + 1);
+    if (s.length > 4 && s.substring(s.length - 4).toLowerCase() === ".zfx") s = s.substring(0, s.length - 4);
+    return s;
+}
+
+function _isZeusStamp(comment) {
+    return comment.indexOf(_TEXT_PREFIX) === 0 || comment.indexOf(_TEXT_STAMP) === 0;
+}
+
+function _stampTextLayer(layer, zfxPath) {
+    var mk = null;
+    try { mk = layer.property("ADBE Marker"); } catch (e) { return false; }
+    if (!mk) return false;
+    try {
+        for (var i = mk.numKeys; i >= 1; i--) {
+            var c = "";
+            try { c = String(mk.keyValue(i).comment || ""); } catch (eC) {}
+            if (_isZeusStamp(c)) { try { mk.removeKey(i); } catch (eR) {} }
+        }
+    } catch (e2) {}
+    try {
+        var t = 0; try { t = layer.inPoint; } catch (eIn) {}
+        var mv = new MarkerValue(_TEXT_PREFIX + _presetNameFromPath(zfxPath));
+        try {
+            var pobj = {}; pobj[_TEXT_PARAM] = String(zfxPath);
+            mv.setParameters(pobj);
+        } catch (ePar) {}
+        mk.setValueAtTime(t, mv);
+        return true;
+    } catch (e3) { return false; }
+}
+
+function _textStampOf(layer) {
+    var mk = null;
+    try { mk = layer.property("ADBE Marker"); } catch (e) { return ""; }
+    if (!mk) return "";
+    var n = 0; try { n = mk.numKeys; } catch (e2) { n = 0; }
+    for (var i = 1; i <= n; i++) {
+        var mv = null, c = "";
+        try { mv = mk.keyValue(i); c = String(mv.comment || ""); } catch (eC) {}
+        // New format: path lives in the marker parameters.
+        if (c.indexOf(_TEXT_PREFIX) === 0) {
+            var p = "";
+            try {
+                var pr = mv.getParameters();
+                if (pr && pr[_TEXT_PARAM]) p = String(pr[_TEXT_PARAM]);
+            } catch (eP) {}
+            if (p) return p;
+        }
+        // Legacy format: path was written straight into the comment.
+        if (c.indexOf(_TEXT_STAMP) === 0) return c.substring(_TEXT_STAMP.length);
+    }
+    return "";
+}
+
+// The .zfx the Control panel/Bind should act on: the active layer's stamp wins
+// (auto-link); the selected card is the fallback.
+function _targetZfx(layer, cardPath) {
+    var st = layer ? _textStampOf(layer) : "";
+    return { path: st || String(cardPath || ""), source: st ? "layer" : (cardPath ? "card" : "none") };
+}
+
+// Save the properties currently selected in the timeline into a .zfx's binding
+// list (append + dedupe by path signature).
+function zae_bindProperties(params) {
+    try {
+        params = params || {};
+        var comp = _activeComp();
+        if (!comp) return _result(false, "Open a composition and select some properties.");
+        // Target the applied preset on the layer (its marker) if there is one;
+        // otherwise the selected card passed from the panel.
+        var tgt = _targetZfx(_firstSelectedLayer(), params.path);
+        var zfxPath = tgt.path;
+        if (!zfxPath) return _result(false, "Apply a Text preset to this layer first, or select a Text card, then Bind.");
+        var f = new File(zfxPath);
+        if (!f.exists) return _result(false, "Preset not found: " + zfxPath);
+
+        var selP = [];
+        try { selP = comp.selectedProperties || []; } catch (e) {}
+
+        var leaves = [];
+        for (var i = 0; i < selP.length; i++) {
+            var pr = selP[i], isGroup = false;
+            try {
+                isGroup = (pr.propertyType === PropertyType.INDEXED_GROUP ||
+                           pr.propertyType === PropertyType.NAMED_GROUP);
+            } catch (e2) {}
+            if (!isGroup) leaves.push(pr);
+        }
+        if (!leaves.length) {
+            return _result(false, "Select one or more properties (not groups) in the timeline, then Bind.");
+        }
+
+        var doc = _parseJson(_readText(f) || "");
+        if (!doc || doc.format !== _ZFX_FORMAT) {
+            return _result(false, _baseName(f) + " is not a ZeusPack preset.");
+        }
+        var bound = doc.boundProps || [], have = {};
+        for (var b = 0; b < bound.length; b++) have[bound[b].sig] = true;
+
+        var added = 0;
+        for (var k = 0; k < leaves.length; k++) {
+            var chain = _propPath(leaves[k]);
+            if (!chain.length) continue;
+            var sig = _pathSig(chain);
+            if (have[sig]) continue;
+            var label = String(leaves[k].name || "Property");
+            bound.push({ sig: sig, label: label, path: chain });
+            have[sig] = true; added++;
+        }
+        doc.boundProps = bound;
+        if (!_writeText(f, JSON.stringify(doc))) return _result(false, "Could not write " + f.fsName);
+
+        return _result(true, "Bound " + added + " propert" + (added === 1 ? "y" : "ies")
+                     + " (" + bound.length + " total)", { count: bound.length, added: added });
+    } catch (e) {
+        return _result(false, "Exception: " + e.toString());
+    }
+}
+
+// A cheap fingerprint of the current selection so the panel can poll for layer
+// changes without doing the full (expensive) bound-controls read every tick.
+// It changes when the active comp, the first selected layer, or that layer's
+// applied-preset stamp changes — i.e. exactly when the Control panel should
+// re-read. It deliberately ignores the playhead so scrubbing/playback is quiet.
+function zae_selectionSig() {
+    try {
+        var comp = _activeComp();
+        if (!comp) return _result(true, "ok", { sig: "no-comp" });
+        var layer = _firstSelectedLayer();
+        if (!layer) return _result(true, "ok", { sig: "comp:" + comp.id });
+        var stamp = "";
+        try { stamp = _textStampOf(layer); } catch (eS) {}
+        var idx = 0; try { idx = layer.index; } catch (eI) {}
+        var sig = "comp:" + comp.id + "|layer:" + idx + "|" + String(layer.name || "") + "|zfx:" + stamp;
+        return _result(true, "ok", { sig: sig });
+    } catch (e) {
+        return _result(false, "Exception: " + e.toString());
+    }
+}
+
+// The controls to show: each bound property resolved on the active layer.
+function zae_readBoundControls(params) {
+    try {
+        params = params || {};
+        var layer = _firstSelectedLayer();
+        // The applied preset on the layer (its marker) wins; the selected card
+        // is the fallback. So once a preset is applied, selecting the layer is
+        // enough — no need to reselect its card.
+        var tgt = _targetZfx(layer, params.path);
+        var zfxPath = tgt.path;
+        if (!zfxPath) {
+            return _result(true, "No preset.", { controls: [], bound: 0, hasLayer: !!layer,
+                                                 zfxPath: "", presetName: "", source: "none" });
+        }
+        var f = new File(zfxPath);
+        if (!f.exists) {
+            return _result(true, "The bound preset file is missing.",
+                         { controls: [], bound: 0, hasLayer: !!layer,
+                           zfxPath: "", presetName: "", source: tgt.source });
+        }
+        var doc = _parseJson(_readText(f) || "");
+        if (!doc || doc.format !== _ZFX_FORMAT) return _result(false, _baseName(f) + " is not a ZeusPack preset.");
+        var bound = doc.boundProps || [];
+        var presetName = String(doc.name || _stripExt(_baseName(f)));
+
+        var controls = [];
+        for (var i = 0; i < bound.length; i++) {
+            var bp = bound[i];
+            var mn = (bp.path && bp.path.length) ? bp.path[bp.path.length - 1].mn : "";
+            var rec = { sig: bp.sig, label: bp.label, mn: mn };
+            if (layer) {
+                var prop = _resolvePath(layer, bp.path || []);
+                if (prop) _readPropValue(rec, prop);
+                else rec.missing = true;
+            } else {
+                rec.missing = true;
+            }
+            controls.push(rec);
+        }
+        return _result(true, "ok", {
+            controls: controls, bound: bound.length,
+            hasLayer: !!layer, layer: layer ? String(layer.name || "") : "",
+            zfxPath: zfxPath, presetName: presetName, source: tgt.source
+        });
+    } catch (e) {
+        return _result(false, "Exception: " + e.toString());
+    }
+}
+
+function zae_setBoundControl(params) {
+    try {
+        params = params || {};
+        var zfxPath = String(params.path || ""), sig = String(params.sig || "");
+        var val = params.value;
+        if (!zfxPath || !sig) return _result(false, "Missing binding reference.");
+        if (val === null || val === undefined) return _result(false, "No value to set.");
+        var f = new File(zfxPath);
+        if (!f.exists) return _result(false, "Preset not found.");
+        var doc = _parseJson(_readText(f) || "");
+        var bound = (doc && doc.boundProps) || [], bp = null;
+        for (var i = 0; i < bound.length; i++) if (bound[i].sig === sig) { bp = bound[i]; break; }
+        if (!bp) return _result(false, "That binding is no longer in the preset.");
+
+        var comp = _activeComp(), layer = _firstSelectedLayer();
+        if (!comp || !layer) return _result(false, "Select the layer first.");
+        var prop = _resolvePath(layer, bp.path || []);
+        if (!prop) return _result(false, "That property is not on this layer.");
+
+        app.beginUndoGroup("ZeusPack: text control");
+        var keyed = false;
+        try { keyed = prop.numKeys > 0; } catch (eK) {}
+        if (keyed) prop.setValueAtTime(comp.time, val);
+        else       prop.setValue(val);
+        app.endUndoGroup();
+        return _result(true, "set " + bp.label, { sig: sig, value: val, keyed: keyed });
+    } catch (e) {
+        try { app.endUndoGroup(); } catch (e2) {}
+        return _result(false, "Exception: " + e.toString());
+    }
+}
+
+function zae_unbindProperty(params) {
+    try {
+        params = params || {};
+        var zfxPath = String(params.path || ""), sig = String(params.sig || "");
+        if (!zfxPath || !sig) return _result(false, "Missing binding reference.");
+        var f = new File(zfxPath);
+        if (!f.exists) return _result(false, "Preset not found.");
+        var doc = _parseJson(_readText(f) || "");
+        var bound = (doc && doc.boundProps) || [], out = [];
+        for (var i = 0; i < bound.length; i++) if (bound[i].sig !== sig) out.push(bound[i]);
+        doc.boundProps = out;
+        if (!_writeText(f, JSON.stringify(doc))) return _result(false, "Could not write preset.");
+        return _result(true, "Unbound", { count: out.length });
+    } catch (e) {
+        return _result(false, "Exception: " + e.toString());
+    }
+}
+
+function zae_undo(params) {
+    try {
+        app.executeCommand(16);
+        return _result(true, "Undo");
+    } catch (e) {
+        return _result(false, "Could not undo: " + e.toString());
+    }
+}
+
+function zae_redo(params) {
+    try {
+        app.executeCommand(17);
+        return _result(true, "Redo");
+    } catch (e) {
+        return _result(false, "Could not redo: " + e.toString());
     }
 }
 

@@ -26,6 +26,14 @@
   var testBtn = document.getElementById("testBtn");
   var logBtn  = document.getElementById("logBtn");
 
+  var controlBtn = document.getElementById("controlBtn");
+  var controlEl  = document.getElementById("control");
+  var ctlBody    = document.getElementById("ctlBody");
+  var ctlTitle   = document.getElementById("ctlTitle");
+  var ctlRefresh = document.getElementById("ctlRefresh");
+  var ctlUndo    = document.getElementById("ctlUndo");
+  var ctlBind    = document.getElementById("ctlBind");
+
   var presetBtn  = document.getElementById("presetBtn");
   var presetsEl  = document.getElementById("presets");
   var pathSelect = document.getElementById("pathSelect");
@@ -209,7 +217,7 @@
   // ExtensionBundleVersion in CSXS/manifest.xml: the update check tests
   // INEQUALITY against the repo's manifest, so a stale value here reports a
   // phantom "update available" against a repo that has not moved.
-  var PANEL_VERSION   = "1.0.11";
+  var PANEL_VERSION   = "1.0.12";
 
   var updateBtn = document.getElementById("updateBtn");
 
@@ -353,6 +361,8 @@
     // Reversing keyframes only means anything for a preset.
     applyOutBtn.style.display = isComp ? "none" : "";
     applyOutBtn.disabled = !p;
+    // The Control panel binds to the selected Text card, so it follows selection.
+    if (typeof refreshControlForSelection === "function") refreshControlForSelection();
   }
 
   function showMessage(html, isErr) {
@@ -414,8 +424,12 @@
     // never shows as "aep".
     var isComp = p.kind === "comp";
     var isPlus = p.kind === "presetplus";
-    var cls    = isComp ? "aep" : isPlus ? "zfx" : "ffx";   // colour class
-    var label  = isComp ? "Comp" : isPlus ? "FX+" : "FX";   // what the user reads
+    // A Text preset is a .zfx tagged "text" at save time (a text-layer
+    // animation). It applies exactly like FX+, but reads as its own type so it
+    // is easy to spot and pairs with the Control panel.
+    var isText = isPlus && p.textType;
+    var cls    = isComp ? "aep" : isText ? "text" : isPlus ? "zfx" : "ffx";   // colour class
+    var label  = isComp ? "Comp" : isText ? "Text" : isPlus ? "FX+" : "FX";  // what the user reads
 
     var media = !p.preview
       ? '<span class="ph">' + label + "</span>"
@@ -737,6 +751,10 @@
 
   function describeZfx(p, d) {
     var lines = [p.name], src = d.source || {}, c = d.contents || null;
+
+    if (d.assetType === "text" || p.textType) {
+      lines.push("Text preset — tweak its character/word/line range in the Control panel.");
+    }
 
     // Written by the removed Quick Save. Saying so on hover beats finding out
     // from an error after clicking Apply.
@@ -1131,6 +1149,26 @@
     else { presetsLoaded = false; initPresets(); }
   });
 
+  // Copy the current folder path to the clipboard. execCommand rather than
+  // navigator.clipboard: the latter needs a secure origin, which the panel's
+  // file:// page is not, so it silently fails in CEF.
+  var copyPathBtn = document.getElementById("copyPathBtn");
+  copyPathBtn.addEventListener("click", function () {
+    if (!currentDir) { flash("No folder to copy", true); return; }
+    var ok = false;
+    try {
+      var ta = document.createElement("textarea");
+      ta.value = currentDir;
+      ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+    } catch (e) { ok = false; }
+    flash(ok ? "Path copied ✓" : "Could not copy the path", !ok);
+    if (ok) log("Copied path → " + currentDir, "ok");
+  });
+
   // ── Name prompt (shared by New Category and Add Asset) ───────
   var promptMode = "category";
   var promptIdx  = -1;          // asset being renamed, for mode "rename"
@@ -1337,13 +1375,15 @@
   // way to get animation-preset bytes, and those bytes are what keeps the
   // format lossless. The difference is on either side of it: expressions are
   // read off the live layer first, and the .ffx is folded into the .zfx after.
-  function savePresetPlus() {
+  function savePresetPlus(assetType) {
     if (!currentDir) { flash("Pick a preset folder first", true); return; }
+    var isText = assetType === "text";
     flash("Waiting for AE's save dialog…");
-    log("Save .zfx → opening After Effects' Save Animation Preset dialog…");
+    log("Save " + (isText ? "Text " : "") + ".zfx → opening After Effects' Save Animation Preset dialog…");
     log("  Name it and save anywhere. The panel files it into " + targetLabel() + " afterwards.");
     callHost("zae_savePresetPlus", {
-      root: currentDir, category: targetCategory()
+      root: currentDir, category: targetCategory(),
+      assetType: isText ? "text" : "fx"
     }, function (r) {
       log("Save .zfx → " + r.message, r.ok ? "ok" : "err");
       flash(r.ok ? (r.data && r.data.name ? r.data.name + " ✓" : "Saved ✓") : r.message, !r.ok);
@@ -1470,7 +1510,7 @@
     // The ceiling is the grid's width, so every layout change moves it. Panel
     // resizes reach us only through this event; the grips and the section
     // toggles call applyCardSize() themselves.
-    window.addEventListener("resize", function () { applyCardSize(); });
+    window.addEventListener("resize", function () { applyControlWidth(); applyCardSize(); });
   }
 
   // ── Category rail width (drag handle) ────────────────────────
@@ -1872,14 +1912,20 @@
     var into = targetLabel();
     // The richer format first — it embeds the .ffx, so it keeps everything the
     // legacy command does and adds expressions on top.
-    item("Save Animation+ (.zfx)", !!currentDir, savePresetPlus,
+    item("Save Animation+ (.zfx)", !!currentDir, function () { savePresetPlus("fx"); },
       "ONE selected layer → " + into + ". Embeds AE's own preset data, so nothing is "
       + "lost, and captures expressions on top. Select a single layer (or just the "
       + "properties/effects on it); expressions are stored by property path, which "
       + "cannot tell two layers apart.");
 
-    item("Save Animation (.ffx) ", !!currentDir, saveAnimationPreset,
-      "AE selection → " + into + " (plain AE preset, no expression capture)");
+    item("Save Text Animation+ (.zfx)", !!currentDir, function () { savePresetPlus("text"); },
+      "Same as Save Animation+, but tags the preset as Text. Use it for a text "
+      + "layer's animation — it gets the Text badge and pairs with the Control panel.");
+
+    // Hidden for now (not needed) — kept so it can be restored later. To bring
+    // it back, uncomment this item(). saveAnimationPreset() is left in place.
+    // item("Save Animation (.ffx) ", !!currentDir, saveAnimationPreset,
+    //   "AE selection → " + into + " (plain AE preset, no expression capture)");
 
     item("Save Animation Comp (.aep)", !!currentDir, saveCompAsPreset,
       "Collect Files: the whole open project → " + into);
@@ -2127,19 +2173,73 @@
     });
   }
 
+  // ── Control panel width (drag handle) ────────────────────────
+  // Mirrors the tool strip: a remembered request width, clamped against the
+  // room the browser needs. When the control panel is solo (nothing else open)
+  // it ignores this and fills the row via .main.cwide.
+  var ctrlGrip = document.getElementById("ctrlGrip");
+  var CONTROL_MIN = 150, CONTROL_DEFAULT = 240;
+  var CONTROL_W_KEY = "zae.controlWidth";
+  var controlWant = CONTROL_DEFAULT;
+
+  function applyControlWidth(w) {
+    if (w !== undefined) {
+      controlWant = Math.max(CONTROL_MIN, Math.round(Number(w) || CONTROL_DEFAULT));
+    }
+    var out = controlWant;
+    var avail = mainEl ? mainEl.clientWidth : 0;
+    var presetsOpen = presetsEl.className.indexOf("open") !== -1;
+    if (avail && presetsOpen) {
+      out = Math.min(out, Math.max(CONTROL_MIN, avail - PRESETS_MIN - GRIP_W));
+    }
+    document.documentElement.style.setProperty("--control-w", out + "px");
+    return out;
+  }
+
+  function initControlWidth() {
+    var saved = null;
+    try { saved = localStorage.getItem(CONTROL_W_KEY); } catch (e) {}
+    applyControlWidth(saved === null ? CONTROL_DEFAULT : saved);
+
+    ctrlGrip.addEventListener("pointerdown", function (ev) {
+      ev.preventDefault();
+      closeMenu();
+      var startX = ev.clientX;
+      var startW = controlEl.getBoundingClientRect().width;
+      ctrlGrip.className = "ctrlgrip open drag";
+
+      function onMove(e) {
+        applyControlWidth(startW + (e.clientX - startX));  // drag right = wider
+        applyCardSize();   // control took width from the grid; the ceiling moved
+      }
+      function onUp() {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        ctrlGrip.className = "ctrlgrip open";
+        try { localStorage.setItem(CONTROL_W_KEY, String(controlWant)); } catch (e2) {}
+      }
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    });
+  }
+
   // The wrapper is shown only while something inside it is open — an empty
   // flex:1 row would otherwise hold the panel open at full height.
   function syncMain() {
     var presetsOpen = presetsEl.className.indexOf("open") !== -1;
     var toolsOpen   = toolsEl.className.indexOf("open") !== -1;
-    var cls = (presetsOpen || toolsOpen) ? "main open" : "main";
+    var controlOpen = controlEl.className.indexOf("open") !== -1;
+    var cls = (presetsOpen || toolsOpen || controlOpen) ? "main open" : "main";
     // Solo: the strip has the row to itself, so it takes the whole width and
-    // the drag grip goes away — there is nothing left to resize against.
-    // Keyed on the BROWSER alone, because the log sits in its own full-width
-    // row below and never competes for horizontal space; folding it in here
-    // would leave the strip pinned narrow beside a wide empty gap.
-    if (toolsOpen && !presetsOpen) cls += " solo";
+    // the drag grip goes away — there is nothing left to resize against. Only
+    // when neither the browser NOR the control panel shares the row.
+    if (toolsOpen && !presetsOpen && !controlOpen) cls += " solo";
+    // cwide: the control panel fills the row when the browser is closed.
+    if (controlOpen && !presetsOpen) cls += " cwide";
     mainEl.className = cls;
+    // The control grip only matters when the control panel and the browser
+    // share the row (something to resize against).
+    ctrlGrip.className = (controlOpen && presetsOpen) ? "ctrlgrip open" : "ctrlgrip";
   }
 
   function setToolsOpen(open) {
@@ -2182,11 +2282,15 @@
     var presetsOpen = presetsEl.className.indexOf("open") !== -1;
     var toolsOpen   = toolsEl.className.indexOf("open") !== -1;
     var logOpen     = logEl.className.indexOf("open") !== -1;
+    var controlOpen = controlEl.className.indexOf("open") !== -1;
 
-    var h = presetsOpen ? PRESETS_H
+    // Control lives IN the main row now (left of the browser), so it makes the
+    // row tall like the browser rather than adding a band of its own.
+    var tall = presetsOpen || controlOpen;
+    var h = tall        ? PRESETS_H
           : toolsOpen   ? TOOLS_ONLY_H
           :               COLLAPSED_H;
-    if (logOpen) h += presetsOpen ? 100 : (EXPANDED_H - COLLAPSED_H);
+    if (logOpen) h += tall ? 100 : (EXPANDED_H - COLLAPSED_H);
     setPanelHeight(h);
   }
 
@@ -2197,6 +2301,384 @@
     logBtn.title = open ? "Hide log" : "Show log";
     syncHeight();
   });
+
+  // ── Text Control panel ───────────────────────────────────────
+  // Shows the properties BOUND to the selected Text preset (.zfx), read live
+  // from the active layer. Bind saves the AE-selected properties into that .zfx;
+  // each edit is pushed to AE via zae_setBoundControl. CEP can't watch AE, so
+  // the panel reads on open, on selection change, and on Refresh.
+  var CONTROL_KEY = "zae.controlOpen";
+  // Enum labels for known Range-Selector matchNames (see TX_ENUM_BY_MN below).
+  var BASED_ON = [
+    { v: 1, label: "Characters" },
+    { v: 2, label: "Characters excl. spaces" },
+    { v: 3, label: "Words" },
+    { v: 4, label: "Lines" }
+  ];
+  var TX_UNITS = [ { v: 1, label: "Percentage" }, { v: 2, label: "Index" } ];
+  var TX_MODE  = [
+    { v: 1, label: "Add" }, { v: 2, label: "Subtract" }, { v: 3, label: "Intersect" },
+    { v: 4, label: "Min" }, { v: 5, label: "Max" }, { v: 6, label: "Difference" }
+  ];
+  var TX_SHAPE = [
+    { v: 1, label: "Square" }, { v: 2, label: "Ramp Up" }, { v: 3, label: "Ramp Down" },
+    { v: 4, label: "Triangle" }, { v: 5, label: "Round" }, { v: 6, label: "Smooth" }
+  ];
+  // The Control panel binds to the selected Text card. controlZfxPath is that
+  // card's .zfx; the panel shows only the properties bound in it.
+  var controlZfxPath = "";
+  // Known enum / checkbox properties get a dropdown / checkbox instead of a
+  // plain number, keyed by matchName.
+  var TX_ENUM_BY_MN = {
+    "ADBE Text Range Type2":   BASED_ON,
+    "ADBE Text Range Units":   TX_UNITS,
+    "ADBE Text Selector Mode": TX_MODE,
+    "ADBE Text Range Shape":   TX_SHAPE
+  };
+  var TX_CHECKBOX_MN = { "ADBE Text Randomize Order": true };
+
+  // Control now sits in the main row (left of the browser), so opening it no
+  // longer closes anything — both can be open — but it does reshape the row.
+  function setControlOpen(open) {
+    controlEl.className = open ? "control open" : "control";
+    controlBtn.className = open ? "ico lbl on" : "ico lbl";
+    controlBtn.title = open ? "Hide controls" : "Bound controls for the selected Text preset";
+    syncMain();
+    syncHeight();
+    applyControlWidth();  // re-clamp from the remembered request
+    applyToolsWidth();    // control took a slice of the row, so the ceilings moved
+    applyCardSize();
+    try { localStorage.setItem(CONTROL_KEY, open ? "1" : "0"); } catch (e) {}
+    if (open) { readControlPanel(); startSelPoll(); }
+    else stopSelPoll();
+  }
+
+  controlBtn.addEventListener("click", function () {
+    setControlOpen(controlEl.className.indexOf("open") === -1);
+  });
+  ctlRefresh.addEventListener("click", readControlPanel);
+
+  // Auto-follow the AE selection: CEP has no "layer selected" event, so (like
+  // Animation Composer) we poll a cheap signature while the panel is open and
+  // only do the full re-read when the active comp / selected layer / applied
+  // preset actually changes — so picking a different layer refreshes the panel
+  // without hitting Refresh.
+  var SEL_POLL_MS = 600;
+  var selPollTimer = null, lastSelSig = null, selPollBusy = false;
+
+  function pollSelection() {
+    if (selPollBusy) return;
+    try { if (document.hidden) return; } catch (eH) {}
+    // Don't yank a field the user is editing or scrubbing (mousedown focuses it).
+    var ae = document.activeElement;
+    if (ae && controlEl.contains(ae) && ae !== controlEl) return;
+    selPollBusy = true;
+    callHost("zae_selectionSig", {}, function (r) {
+      selPollBusy = false;
+      if (!r || !r.ok) return;
+      var sig = (r.data && r.data.sig) || "";
+      if (lastSelSig === null) { lastSelSig = sig; return; }  // baseline (open already read)
+      if (sig !== lastSelSig) { lastSelSig = sig; readControlPanel(); }
+    });
+  }
+  function startSelPoll() {
+    if (selPollTimer) return;
+    lastSelSig = null;                       // rebaseline on the next tick
+    selPollTimer = setInterval(pollSelection, SEL_POLL_MS);
+  }
+  function stopSelPoll() {
+    if (selPollTimer) { clearInterval(selPollTimer); selPollTimer = null; }
+    lastSelSig = null;
+  }
+
+  // The Control panel targets the selected Text (.zfx) card, or null.
+  function activeTextCard() {
+    var p = (selectedIdx >= 0) ? view[selectedIdx] : null;
+    return (p && p.kind === "presetplus" && p.textType) ? p : null;
+  }
+
+  // Called from select(): keep the panel in step with the grid selection.
+  function refreshControlForSelection() {
+    if (controlEl.className.indexOf("open") !== -1) readControlPanel();
+  }
+
+  // Bind: save the properties selected in AE's timeline into this Text preset.
+  ctlBind.addEventListener("click", function () {
+    if (!controlZfxPath) { flash("Select a Text preset card first", true); return; }
+    ctlBind.disabled = true;
+    callHost("zae_bindProperties", { path: controlZfxPath }, function (r) {
+      ctlBind.disabled = false;
+      log("Bind → " + r.message, r.ok ? "ok" : "err");
+      flash(r.ok ? r.message : r.message, !r.ok);
+      if (r.ok) { zfxInfo = {}; readControlPanel(); }   // .zfx changed
+    });
+  });
+
+  // AE keeps its own undo stack; our edits are wrapped in undo groups, but the
+  // keyboard shortcut goes to whichever app has focus — so from the panel we
+  // trigger AE's Undo directly, then re-read so the values reflect the revert.
+  ctlUndo.addEventListener("click", function () {
+    callHost("zae_undo", {}, function (r) {
+      log("Undo → " + r.message, r.ok ? "ok" : "err");
+      if (!r.ok) { flash(r.message, true); return; }
+      readControlPanel();
+    });
+  });
+
+  function ctlMessage(msg) {
+    ctlBody.innerHTML = '<div class="ctlempty">' + esc(msg) + "</div>";
+  }
+
+  function readControlPanel() {
+    // The host resolves the target .zfx: the applied preset on the active layer
+    // (its marker) wins; the selected Text card is the fallback. So this works
+    // straight from a stamped layer with no card selected.
+    var card = activeTextCard();
+    ctlMessage("Reading…");
+    callHost("zae_readBoundControls", { path: card ? card.path : "" }, function (r) {
+      if (!r.ok) { ctlBind.disabled = true; ctlMessage(r.message || "Could not read the preset."); return; }
+      var d = r.data || {};
+      controlZfxPath = d.zfxPath || "";
+      ctlBind.disabled = !controlZfxPath;
+      ctlTitle.textContent = d.presetName || (card ? card.name : "Text controls");
+      if (!controlZfxPath) {
+        ctlMessage("Apply a Text preset to a layer and select the layer — or select a Text card — then bind properties.");
+        return;
+      }
+      renderBoundControls(d);
+    });
+  }
+
+  function ctlRow(labelText, control) {
+    var row = document.createElement("div"); row.className = "ctlrow";
+    var lab = document.createElement("span"); lab.className = "ctllabel";
+    lab.textContent = labelText;
+    row.appendChild(lab); row.appendChild(control);
+    return row;
+  }
+
+  function ctlKeyedTag(row, cur) {
+    if (cur && cur.keyed) {
+      var kk = document.createElement("span");
+      kk.className = "ctlkeyed"; kk.textContent = "keyed";
+      row.appendChild(kk);
+    }
+    return row;
+  }
+
+  // A dropdown for an enum selector control. `onset(value)` does the push.
+  function ctlDropdown(labelText, opts, cur, onset) {
+    var sel = document.createElement("select");
+    for (var i = 0; i < opts.length; i++) {
+      var o = document.createElement("option");
+      o.value = String(opts[i].v); o.textContent = opts[i].label;
+      if (Number(cur.value) === opts[i].v) o.selected = true;
+      sel.appendChild(o);
+    }
+    sel.addEventListener("change", function () { onset(Number(this.value)); });
+    return ctlKeyedTag(ctlRow(labelText, sel), cur);
+  }
+
+  // Scrub a number input by dragging it left/right, like AE's Effect Controls.
+  // A plain click still focuses it for typing — a drag only starts once the
+  // pointer has actually moved. `commit` reads the input and pushes the value;
+  // it fires live (rAF-throttled) during the drag and once more on release.
+  function attachScrub(input, commit) {
+    input.addEventListener("mousedown", function (e) {
+      if (e.button !== 0) return;
+      var startX = e.clientX, startVal = Number(input.value) || 0, moved = false;
+      function move(ev) {
+        var dx = ev.clientX - startX;
+        if (!moved && Math.abs(dx) < 3) return;   // let a click stay a click
+        moved = true;
+        ev.preventDefault();                       // no text-selection while dragging
+        document.body.style.cursor = "ew-resize";
+        // Shift = coarse (x10), Ctrl/Alt = fine (x0.1), otherwise 1 unit / pixel.
+        var f = ev.shiftKey ? 10 : (ev.ctrlKey || ev.altKey) ? 0.1 : 1;
+        // Update the field live for feedback, but DON'T push mid-drag: one push
+        // on release = one AE undo step for the whole drag (and no evalScript
+        // round-trip lag while dragging).
+        input.value = String(Math.round((startVal + dx * f) * 1000) / 1000);
+      }
+      function up() {
+        window.removeEventListener("mousemove", move);
+        window.removeEventListener("mouseup", up);
+        document.body.style.cursor = "";
+        input._scrubbed = moved;                   // tell the click handler
+        if (moved) commit();                       // push the final value once
+      }
+      window.addEventListener("mousemove", move);
+      window.addEventListener("mouseup", up);
+    });
+
+    // AE-style click editing: a single click selects the whole value (type to
+    // overwrite); a double-click collapses to a caret (insert). Skipped right
+    // after a scrub-drag, which is not a click.
+    input.addEventListener("click", function (e) {
+      if (input._scrubbed) { input._scrubbed = false; return; }
+      if (e.detail >= 2) return;                   // the dblclick handler takes over
+      try { input.select(); } catch (_s) {}
+    });
+    input.addEventListener("dblclick", function () {
+      try { var p = input.selectionEnd; input.setSelectionRange(p, p); } catch (_d) {}
+    });
+  }
+
+  // Size a scrub field to its content so multi-axis values read tight, the way
+  // AE shows them: "0,-48,0".
+  function ctlFit(input) {
+    // Count "-" as roughly half a digit so "-48" doesn't leave a gap; a small
+    // buffer keeps the caret from clipping the last digit.
+    var s = String(input.value);
+    var w = s.replace(/-/g, "").length + (s.indexOf("-") >= 0 ? 0.5 : 0);
+    input.style.width = (Math.max(1, w) + 0.15) + "ch";
+  }
+
+  // A scrub value field. type=text (not number) so the selection API works for
+  // click-to-select-all and double-click-to-caret; inputmode keeps a numeric
+  // keypad on touch.
+  function ctlInput(value) {
+    var inp = document.createElement("input");
+    inp.type = "text"; inp.className = "ctlnum";
+    inp.setAttribute("inputmode", "decimal");
+    inp.value = String(Math.round(Number(value) * 1000) / 1000);
+    return inp;
+  }
+
+  // A single number input (scrubbable + typeable). Bad text is ignored rather
+  // than pushed as NaN.
+  function ctlNumber(labelText, cur, onset) {
+    var inp = ctlInput(cur.value);
+    function commit() { var v = Number(inp.value); if (isFinite(v)) onset(v); }
+    inp.addEventListener("change", commit);
+    attachScrub(inp, commit);
+    return ctlKeyedTag(ctlRow(labelText, inp), cur);
+  }
+
+  // A checkbox (AE checkbox properties store 0/1).
+  function ctlCheckbox(labelText, cur, onset) {
+    var inp = document.createElement("input");
+    inp.type = "checkbox";
+    inp.checked = !!(cur.value === true || Number(cur.value) === 1);
+    inp.addEventListener("change", function () { onset(this.checked ? 1 : 0); });
+    return ctlKeyedTag(ctlRow(labelText, inp), cur);
+  }
+
+  // A multi-dimensional property (Position [x,y], Scale [x,y], colour [r,g,b,a]):
+  // one number input per component, laid out in a single row. Any edit gathers
+  // all components and pushes the whole array.
+  function ctlVector(labelText, values, cur, onset) {
+    var row = document.createElement("div"); row.className = "ctlrow";
+    var lab = document.createElement("span"); lab.className = "ctllabel";
+    lab.textContent = labelText; row.appendChild(lab);
+    var wrap = document.createElement("span"); wrap.className = "ctlvec";
+    var inputs = [];
+    for (var i = 0; i < values.length; i++) {
+      if (i > 0) {
+        var comma = document.createElement("span");
+        comma.className = "ctlcomma"; comma.textContent = ",";
+        wrap.appendChild(comma);
+      }
+      var inp = ctlInput(values[i]);
+      ctlFit(inp);
+      inp.addEventListener("input", function () { ctlFit(this); });   // grow while typing
+      wrap.appendChild(inp); inputs.push(inp);
+    }
+    function gather() {
+      var out = [], ok = true;
+      for (var k = 0; k < inputs.length; k++) {
+        var v = Number(inputs[k].value);
+        if (!isFinite(v)) { ok = false; break; }   // don't push a half-typed axis
+        out.push(v);
+      }
+      if (ok) onset(out);
+    }
+    for (var j = 0; j < inputs.length; j++) {
+      (function (inp) {
+        inp.addEventListener("change", gather);
+        attachScrub(inp, function () { ctlFit(inp); gather(); });   // resize as the scrub changes it
+      })(inputs[j]);
+    }
+    row.appendChild(wrap);
+    return ctlKeyedTag(row, cur);
+  }
+
+  // Remove one binding from the .zfx (reached by right-clicking its row).
+  function unbindControl(sig) {
+    callHost("zae_unbindProperty", { path: controlZfxPath, sig: sig }, function (r) {
+      log("Unbind → " + r.message, r.ok ? "ok" : "err");
+      if (r.ok) { zfxInfo = {}; readControlPanel(); }
+      else flash(r.message, true);
+    });
+  }
+
+  // Right-click menu on a bound-property row: remove it.
+  function openControlRowMenu(sig, label, x, y) {
+    menuEl.innerHTML = "";
+    dangerItem("Remove “" + label + "”", function () { unbindControl(sig); },
+      "Removes this control from the Text preset");
+    menuEl.className = "menu open";
+    var mw = menuEl.offsetWidth, mh = menuEl.offsetHeight;
+    var vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight;
+    menuEl.style.left = Math.max(2, Math.min(x, vw - mw - 2)) + "px";
+    menuEl.style.top  = Math.max(2, Math.min(y, vh - mh - 2)) + "px";
+  }
+
+  function renderBoundControls(d) {
+    ctlBody.innerHTML = "";
+    var controls = d.controls || [];
+    if (!controls.length) {
+      ctlMessage("No properties bound yet. In AE, select the properties you want, then click Bind selected properties.");
+      return;
+    }
+    if (!d.hasLayer) {
+      var note = document.createElement("div");
+      note.className = "ctlempty";
+      note.textContent = "Select the text layer in AE to read and edit these.";
+      ctlBody.appendChild(note);
+    }
+
+    for (var i = 0; i < controls.length; i++) {
+      (function (c) {
+        var row;
+        if (c.missing || c.value === null || c.value === undefined) {
+          // Bound, but not resolvable on the active layer right now.
+          row = ctlRow(c.label, (function () {
+            var s = document.createElement("span");
+            s.className = "ctlmissing"; s.textContent = d.hasLayer ? "not on this layer" : "—";
+            return s;
+          })());
+        } else {
+          var onset = function (v) { pushBound(c.sig, v); };
+          var enumOpts = TX_ENUM_BY_MN[c.mn];
+          if (enumOpts && c.dims === 1) {
+            row = ctlDropdown(c.label, enumOpts, c, onset);
+          } else if (TX_CHECKBOX_MN[c.mn] && c.dims === 1) {
+            row = ctlCheckbox(c.label, c, onset);
+          } else if (c.dims > 1 && c.value && c.value.length) {
+            row = ctlVector(c.label, c.value, c, onset);
+          } else {
+            row = ctlNumber(c.label, c, onset);
+          }
+        }
+        // Right-click the row to remove the binding (no visible × button).
+        row.addEventListener("contextmenu", function (ev) {
+          ev.preventDefault();
+          openControlRowMenu(c.sig, c.label, ev.clientX, ev.clientY);
+        });
+        ctlBody.appendChild(row);
+      })(controls[i]);
+    }
+  }
+
+  function pushBound(sig, value) {
+    callHost("zae_setBoundControl",
+      { path: controlZfxPath, sig: sig, value: value },
+      function (r) {
+        log("Control → " + r.message, r.ok ? "ok" : "err");
+        if (!r.ok) flash(r.message, true);
+      });
+  }
 
   var PRESETS_KEY = "zae.presetsOpen";
 
@@ -2209,8 +2691,10 @@
     presetBtn.title = open ? "Hide presets" : "Browse .ffx presets and .aep compositions";
     syncMain();
     syncHeight();
-    // The strip shares the row with the browser, so its ceiling moved.
+    // The strip and the control panel share the row with the browser, so their
+    // ceilings moved.
     applyToolsWidth();
+    applyControlWidth();
     applyCardSize();
     try { localStorage.setItem(PRESETS_KEY, open ? "1" : "0"); } catch (e) {}
     if (!open) return;
@@ -2306,6 +2790,7 @@
   initCardSize();
   initCatsWidth();
   initToolsWidth();
+  initControlWidth();
   setStatusShown(statusShown);   // paints the saved choice onto the row
   setAutoplay(autoplayAll, false);
 
@@ -2315,8 +2800,13 @@
   try { savedTools = localStorage.getItem(TOOLS_KEY); } catch (e) {}
   setToolsOpen(savedTools === "1");
 
+  // Control panel starts closed; restore if it was left open.
+  var savedControl = null;
+  try { savedControl = localStorage.getItem(CONTROL_KEY); } catch (e) {}
+  if (savedControl === "1") setControlOpen(true);
+
   // Browser is open by default; after that the panel remembers whether it was
-  // left open, so closing it isn't undone on every launch.
+  // left open. Control can be open at the same time (it sits beside it).
   var savedOpen = null;
   try { savedOpen = localStorage.getItem(PRESETS_KEY); } catch (e) {}
   setPresetsOpen(savedOpen === null ? true : savedOpen === "1", true);
