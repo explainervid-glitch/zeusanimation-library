@@ -217,7 +217,7 @@
   // ExtensionBundleVersion in CSXS/manifest.xml: the update check tests
   // INEQUALITY against the repo's manifest, so a stale value here reports a
   // phantom "update available" against a repo that has not moved.
-  var PANEL_VERSION   = "1.0.12";
+  var PANEL_VERSION   = "1.0.13";
 
   var updateBtn = document.getElementById("updateBtn");
 
@@ -312,6 +312,10 @@
   var declaredCats = null; // categories.json contents, or null when absent
   var knownFolders = [];  // every subfolder the scan visited, even empty ones
   var collapsedCats = {}; // folder path -> true while its children are hidden
+  // Lucide chevron-right (collapsed) / chevron-down (expanded) for category rows
+  // that have subcategories. Same inline-SVG style as the toolbar icons.
+  var CHEVRON_RIGHT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>';
+  var CHEVRON_DOWN  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
   var activeFolder = null; // null = all folders
   var searchTerm   = "";   // exactly what was typed, for echoing back
   var searchTerms  = [];   // lowercased words, all of which must match
@@ -559,7 +563,8 @@
       var label = parts.length ? parts[parts.length - 1] : "(Uncategorize)";
       var toggle = hasKids[f]
         ? '<span class="catToggle" data-toggle="' + esc(f) + '" title="'
-          + (collapsedCats[f] ? "Expand" : "Collapse") + '">' + (collapsedCats[f] ? "▸" : "▾") + "</span>"
+          + (collapsedCats[f] ? "Expand" : "Collapse") + '">'
+          + (collapsedCats[f] ? CHEVRON_RIGHT : CHEVRON_DOWN) + "</span>"
         : '<span class="catToggle spacer"></span>';
       html += '<div class="cat' + (f === "" ? " root" : "")
             +   (activeFolder === f ? " sel" : "") + '" data-f="' + esc(f) + '"'
@@ -1912,23 +1917,26 @@
     var into = targetLabel();
     // The richer format first — it embeds the .ffx, so it keeps everything the
     // legacy command does and adds expressions on top.
-    item("Save Animation+ (.zfx)", !!currentDir, function () { savePresetPlus("fx"); },
+    // The coloured word in each label matches that asset's card badge:
+    // FX+ green (.zfx), Text pink (.text), Comp blue (.aep). Classes (not inline
+    // colour) so the word turns white on hover and dims when the item is off.
+    item('Save <span class="mtag-fx">Animation+</span>', !!currentDir, function () { savePresetPlus("fx"); },
       "ONE selected layer → " + into + ". Embeds AE's own preset data, so nothing is "
       + "lost, and captures expressions on top. Select a single layer (or just the "
       + "properties/effects on it); expressions are stored by property path, which "
-      + "cannot tell two layers apart.");
+      + "cannot tell two layers apart.", true);
 
-    item("Save Text Animation+ (.zfx)", !!currentDir, function () { savePresetPlus("text"); },
+    item('Save <span class="mtag-text">Text Animation+</span>', !!currentDir, function () { savePresetPlus("text"); },
       "Same as Save Animation+, but tags the preset as Text. Use it for a text "
-      + "layer's animation — it gets the Text badge and pairs with the Control panel.");
+      + "layer's animation — it gets the Text badge and pairs with the Control panel.", true);
 
     // Hidden for now (not needed) — kept so it can be restored later. To bring
     // it back, uncomment this item(). saveAnimationPreset() is left in place.
     // item("Save Animation (.ffx) ", !!currentDir, saveAnimationPreset,
     //   "AE selection → " + into + " (plain AE preset, no expression capture)");
 
-    item("Save Animation Comp (.aep)", !!currentDir, saveCompAsPreset,
-      "Collect Files: the whole open project → " + into);
+    item('Save <span class="mtag-comp">Comp Asset</span>', !!currentDir, saveCompAsPreset,
+      "Collect Files: the whole open project → " + into, true);
 
     item("Add Asset (New Project)", !!currentDir, function () { openPrompt("asset"); },
       ASSET_W + "×" + ASSET_H + " @ " + ASSET_FPS + "fps → " + into);

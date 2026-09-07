@@ -492,6 +492,17 @@
      its title tooltip never shows — and the unavailable items are exactly the
      ones whose tooltip explains why. */
   .menu button.off { color:#5a5a5a; cursor:default; }
+  /* Coloured asset word in a Save item, matching that asset's card badge. */
+  .menu button .mtag-fx   { color:#4ade80; }   /* FX+  (.zfx badge)  */
+  .menu button .mtag-text { color:#f0a0e0; }   /* Text (.text badge) */
+  .menu button .mtag-comp { color:#8fb0ff; }   /* Comp (.aep badge)  */
+  /* On hover the whole row goes white; on a disabled row it dims with the row. */
+  .menu button:hover:not(.off) .mtag-fx,
+  .menu button:hover:not(.off) .mtag-text,
+  .menu button:hover:not(.off) .mtag-comp { color:#fff; }
+  .menu button.off .mtag-fx,
+  .menu button.off .mtag-text,
+  .menu button.off .mtag-comp { color:inherit; }
   /* Destructive action — the item only opens a confirmation, it never acts. */
   .menu button.danger { color:var(--err); }
   .menu button.danger:hover { background:var(--err); color:#fff; }
@@ -637,12 +648,13 @@
      up. It owns its own click (stopPropagation'd in panel.js) so toggling
      never also selects the row or changes the grid's filter. */
   .cat .catToggle {
-    flex-shrink:0; width:14px; text-align:center;
-    font-size:12px; color:var(--text); cursor:pointer;
-    /* line-height:1 so the taller glyph does not push the row height up: the
-       10px label at 1.4 stays the tallest thing in the row. */
+    flex-shrink:0; width:14px;
+    color:var(--text); cursor:pointer;
+    /* Center the chevron SVG in the fixed-width box without adding row height. */
+    display:inline-flex; align-items:center; justify-content:center;
     line-height:1;
   }
+  .cat .catToggle svg { width:12px; height:12px; display:block; }
   .cat .catToggle:hover { color:var(--text); }
   .cat .catToggle.spacer { visibility:hidden; cursor:default; }
   .cat.sel .catToggle { color:#fff; opacity:.8; }
