@@ -1445,11 +1445,36 @@ function _applyPresetCore(comp, layers, f, opts) {
         }, 0);
     }
 
+    // Effect-stack depth per layer before apply: the preset's effects append to
+    // the tail, so this marks where they start for the name restore below.
+    var effBefore = [];
+    if (opts.effectNames && opts.effectNames.length) {
+        for (i = 0; i < layers.length; i++) {
+            var cnt = 0, par = null;
+            try { par = layers[i].property("ADBE Effect Parade"); } catch (eP) {}
+            if (par) { try { cnt = par.numProperties; } catch (eN) {} }
+            effBefore[i] = cnt;
+        }
+    }
+
     var applied = 0;
     for (i = 0; i < layers.length; i++) {
         try { layers[i].applyPreset(f); applied++; } catch (e2) {}
     }
     if (!applied) return { applied: 0 };
+
+    // Put back the custom effect names AE's .ffx dropped (.zfx only — the .ffx
+    // path passes no list). Cheap and safe: if AE already kept a name this
+    // rewrites the same string. effectDiag captures the first layer's result so
+    // the caller can report why a rename did or did not land.
+    var renamedEffects = 0, effectDiag = null;
+    if (opts.effectNames && opts.effectNames.length) {
+        for (i = 0; i < layers.length; i++) {
+            var rn = _restoreEffectNames(layers[i], effBefore[i] || 0, opts.effectNames);
+            renamedEffects += rn.renamed;
+            if (i === 0) effectDiag = rn;
+        }
+    }
 
     // .zfx restores its expressions here — before the trim, so the audit at
     // the end judges them against the final keyframe state.
@@ -1507,6 +1532,7 @@ function _applyPresetCore(comp, layers, f, opts) {
         applied: applied, fresh: fresh.length,
         trimmedProps: trimmedProps, trimmedKeys: trimmedKeys,
         reversedProps: reversedProps, cmdId: cmdId,
+        renamedEffects: renamedEffects, effectDiag: effectDiag,
         expr: expr, restored: restored
     };
 }
@@ -1707,6 +1733,94 @@ function _captureContents(layer) {
     }, 0);
 
     return out;
+}
+
+// Custom (renamed) effect names, in Effect Parade order, so they can be put
+// back after applyPreset() — AE's .ffx does NOT carry an effect instance's
+// renamed name (a Slider renamed "Base Scale" applies back as "Slider Control").
+// Unlike _captureContents (display-only, name-only, capped), this rides the
+// apply path and pairs each name with its matchName so restore can verify it is
+// renaming the right effect.
+function _captureEffectNames(layer) {
+    var out = [], par = null;
+    try { par = layer.property("ADBE Effect Parade"); } catch (e) { return out; }
+    if (!par) return out;
+    var n = 0; try { n = par.numProperties; } catch (e2) { return out; }
+    for (var i = 1; i <= n; i++) {
+        var ef = null; try { ef = par.property(i); } catch (e3) { continue; }
+        if (!ef) continue;
+        var mn = "", nm = "";
+        try { mn = String(ef.matchName || ""); } catch (e4) {}
+        try { nm = String(ef.name || ""); } catch (e5) {}
+        out.push({ mn: mn, name: nm });
+    }
+    return out;
+}
+
+// After applyPreset() has appended the preset's effects to a layer, restore the
+// custom names AE dropped. The preset's effects are the appended tail (indices
+// beforeCount+1 .. now). Two passes so it tolerates the applied order or count
+// drifting from the captured list:
+//   1. positional — captured[j] onto tail[j] when their matchNames agree;
+//   2. by matchName — any captured name not yet placed goes to the first unused
+//      tail effect of the same type.
+// The matchName check throughout means a slot is skipped, never mis-renamed.
+// Returns { renamed, added, tailMN } — tailMN is the applied tail's matchNames,
+// for diagnostics when nothing matches.
+function _restoreEffectNames(layer, beforeCount, list) {
+    var res = { renamed: 0, added: 0, tailMN: [] };
+    if (!list || !list.length) return res;
+    var par = null;
+    try { par = layer.property("ADBE Effect Parade"); } catch (e) { return res; }
+    if (!par) return res;
+    var n = 0; try { n = par.numProperties; } catch (e2) { return res; }
+    var added = n - beforeCount;
+    res.added = added;
+    if (added <= 0) return res;
+
+    var tail = [];
+    for (var k = beforeCount + 1; k <= n; k++) {
+        var ef = null; try { ef = par.property(k); } catch (e3) { ef = null; }
+        tail.push(ef);
+        var tmn = ""; try { tmn = ef ? String(ef.matchName || "") : ""; } catch (e4) {}
+        res.tailMN.push(tmn);
+    }
+
+    function mnOf(ef) { try { return String(ef.matchName || ""); } catch (e) { return ""; } }
+    function setName(ef, nm) {
+        try { if (String(ef.name) !== String(nm)) { ef.name = String(nm); return true; } } catch (e) {}
+        return false;
+    }
+
+    var usedTail = {}, placedList = {}, j, t;
+    // Pass 1: positional, matchName-checked.
+    for (j = 0; j < list.length && j < tail.length; j++) {
+        if (!tail[j]) continue;
+        if (list[j].mn && mnOf(tail[j]) === list[j].mn) {
+            if (setName(tail[j], list[j].name)) res.renamed++;
+            usedTail[j] = true; placedList[j] = true;
+        }
+    }
+    // Pass 2: match remaining captured names to any unused tail slot by type.
+    for (j = 0; j < list.length; j++) {
+        if (placedList[j]) continue;
+        for (t = 0; t < tail.length; t++) {
+            if (usedTail[t] || !tail[t]) continue;
+            if (list[j].mn && mnOf(tail[t]) === list[j].mn) {
+                if (setName(tail[t], list[j].name)) res.renamed++;
+                usedTail[t] = true; placedList[j] = true;
+                break;
+            }
+        }
+    }
+    return res;
+}
+
+// Join a captured effectNames list's matchNames, for the apply diagnostic.
+function _effectNameMNs(list) {
+    var out = [];
+    for (var i = 0; i < (list ? list.length : 0); i++) out.push(String(list[i].mn || "?"));
+    return out.join(", ");
 }
 
 function _captureDropdowns(layer) {
@@ -1945,6 +2059,9 @@ function zae_savePresetPlus(params) {
             },
             expressions: exprs,
             dropdowns:   drops,
+            // Custom effect (instance) names to restore after apply — AE's .ffx
+            // drops them. In Effect Parade order, matched on apply by matchName.
+            effectNames: _captureEffectNames(layers[0]),
             // Effect and animated-property names, so the browser can describe
             // the file without decoding the payload. Additive: an older reader
             // ignores it, and this reader tolerates its absence.
@@ -2064,6 +2181,7 @@ function zae_applyPresetPlus(params) {
             r = _applyPresetCore(comp, layers, tmp, {
                 reverse: reverse,
                 trim: params.trim !== false,
+                effectNames: doc.effectNames,
                 onApplied: function (ls) {
                     // Dropdown item lists are deliberately NOT replayed here.
                     //
@@ -2134,6 +2252,19 @@ function zae_applyPresetPlus(params) {
                  + curEngine + " (File ▸ Project Settings ▸ Expressions)";
         }
 
+        // Effect-name restore diagnostics — visible in the log so a rename that
+        // did not land can be traced without a debugger.
+        var capNames = (doc.effectNames || []).length;
+        if (capNames) {
+            var dg = r.effectDiag || { renamed: 0, added: 0, tailMN: [] };
+            msg += ". Effect names: captured " + capNames + ", renamed " + (r.renamedEffects || 0)
+                 + " (preset added " + (dg.added || 0) + " effect" + ((dg.added === 1) ? "" : "s") + ")";
+            if (capNames && !(r.renamedEffects) && dg.tailMN && dg.tailMN.length) {
+                msg += " [applied types: " + dg.tailMN.join(", ")
+                     + "; wanted: " + _effectNameMNs(doc.effectNames) + "]";
+            }
+        }
+
         return _result(true, msg, {
             applied: r.applied, comp: comp.name, name: name,
             trimmedProps: r.trimmedProps, trimmedKeys: r.trimmedKeys,
@@ -2142,6 +2273,8 @@ function zae_applyPresetPlus(params) {
             expressionsMissing:  restored ? restored.missing : 0,
             expressionsFailed:   restored ? restored.failed : 0,
             expressionsBroken:   r.expr ? r.expr.broken : 0,
+            effectNamesCaptured: capNames, effectsRenamed: r.renamedEffects || 0,
+            effectsAdded: r.effectDiag ? r.effectDiag.added : 0,
             missingRefs: missingRefs,
             sourceEngine: srcEngine, engine: curEngine
         });
@@ -3757,6 +3890,14 @@ function _makeGroupNull(comp, name) {
     var n = comp.layers.addNull(comp.duration);
     try { n.name = name; } catch (eN) {}
     try { n.property("ADBE Transform Group").property("ADBE Anchor Point").setValue([50, 50]); } catch (eA) {}
+    // Visible timeline marker on the spawned null, matching the Text-layer stamp
+    // style ("ZeusPack | <name>"). This is cosmetic/identifying — the machine
+    // recognition of a group null still rides on its layer comment (_GROUP_TAG).
+    try {
+        var mk = n.property("ADBE Marker");
+        var t = 0; try { t = n.inPoint; } catch (eIn) {}
+        if (mk) mk.setValueAtTime(t, new MarkerValue(_TEXT_PREFIX + String(name)));
+    } catch (eMk) {}
     return n;
 }
 

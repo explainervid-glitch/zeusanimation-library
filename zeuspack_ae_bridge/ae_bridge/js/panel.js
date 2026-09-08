@@ -49,8 +49,9 @@
   var previewObserver = null;
   var findInput  = document.getElementById("findInput");
   var findCount  = document.getElementById("findCount");
-  var applyBtn    = document.getElementById("applyBtn");
-  var applyOutBtn = document.getElementById("applyOutBtn");
+  var applyBtn    = document.getElementById("applyBtn");     // primary: full apply
+  var applyInBtn  = document.getElementById("applyInBtn");   // entrance-only (trim)
+  var applyOutBtn = document.getElementById("applyOutBtn");  // entrance, reversed
   var menuEl     = document.getElementById("menu");
   var sizeSlider = document.getElementById("sizeSlider");
   var catsEl     = document.getElementById("cats");
@@ -316,6 +317,8 @@
   // that have subcategories. Same inline-SVG style as the toolbar icons.
   var CHEVRON_RIGHT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>';
   var CHEVRON_DOWN  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
+  // Lucide sticky-note — marks a bundle card (a comp with attached .zfx presets).
+  var STICKY_NOTE   = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11l5-5V5a2 2 0 0 0-2-2Z"/><path d="M15 21v-5a2 2 0 0 1 2-2h5"/></svg>';
   var activeFolder = null; // null = all folders
   var searchTerm   = "";   // exactly what was typed, for echoing back
   var searchTerms  = [];   // lowercased words, all of which must match
@@ -360,9 +363,11 @@
     // The button follows the asset kind rather than going dead on compositions.
     var p = (i >= 0) ? view[i] : null;
     var isComp = !!(p && p.kind === "comp");
-    applyBtn.textContent = isComp ? "Add to comp" : "Apply In";
+    applyBtn.textContent = isComp ? "Add to comp" : "Apply";
     applyBtn.disabled = !p;
-    // Reversing keyframes only means anything for a preset.
+    // In (entrance-only) and Out (reversed) only mean anything for a preset.
+    applyInBtn.style.display = isComp ? "none" : "";
+    applyInBtn.disabled = !p;
     applyOutBtn.style.display = isComp ? "none" : "";
     applyOutBtn.disabled = !p;
     // The Control panel binds to the selected Text card, so it follows selection.
@@ -372,9 +377,10 @@
   function showMessage(html, isErr) {
     listEl.className = "list msg";
     listEl.innerHTML = '<div class="empty-list"' + (isErr ? ' style="color:#f85149"' : "") + ">" + html + "</div>";
-    // BOTH buttons. Only Apply In used to be switched off here, so Apply Out
-    // stayed live over an empty grid and still had a stale `view` behind it.
+    // ALL apply buttons. One left live over an empty grid would still have a
+    // stale `view` behind it.
     applyBtn.disabled = true;
+    applyInBtn.disabled = true;
     applyOutBtn.disabled = true;
   }
 
@@ -448,7 +454,16 @@
     if (own) tags += '<span class="tag zfx">FX+' + (own > 1 ? " " + own : "") + "</span>";
     if (!p.preview) tags += '<span class="tag">no preview</span>';
 
-    return '<div class="thumb">' + media + '<span class="tags">' + tags + "</span></div>";
+    // A bundle — a comp that carries attached "<name>__<label>.zfx" presets — is
+    // more than one asset in a single card. Flag it with a sticky-note in the
+    // top-left corner; clicking it opens the "which to apply" menu.
+    var bundleMark = own
+      ? '<span class="stickynote" title="Bundle: ' + own + ' attached preset'
+        + (own === 1 ? "" : "s") + ' — click to choose what to apply">' + STICKY_NOTE + "</span>"
+      : "";
+
+    return '<div class="thumb">' + media + bundleMark
+         + '<span class="tags">' + tags + "</span></div>";
   }
 
   // ── Folder categories ────────────────────────────────────────
@@ -921,6 +936,22 @@
         select(i);
         openMenu(i, ev.clientX, ev.clientY);
       });
+
+      // The bundle sticky-note opens the same "which to apply" menu as a
+      // double-click, without applying anything by itself. stopPropagation so it
+      // doesn't also fall through to the card's own click (plain select).
+      (function (cardEl) {
+        var sticky = cardEl.getElementsByClassName("stickynote")[0];
+        if (!sticky) return;
+        sticky.addEventListener("click", function (ev) {
+          ev.stopPropagation();
+          var i = Number(cardEl.getAttribute("data-i"));
+          select(i);
+          openUseMenu(i, ev.clientX, ev.clientY);
+        });
+        // Clicking the icon should never start a card drag.
+        sticky.addEventListener("mousedown", function (ev) { ev.stopPropagation(); });
+      })(card);
 
       // A .zfx can describe itself; ask the file the first time it is hovered.
       //
@@ -1752,11 +1783,14 @@
     if (p.kind === "comp") {
       item("Add to Comp", true, function () { addToComp(i); }, "Main comp → active comp");
     } else {
+      item("Apply", true,
+        function () { select(i); applySelected(false, true); },
+        "Applies the whole preset — every keyframe, no trimming");
       item("Apply In", true,
-        function () { select(i); applySelected(false); },
+        function () { select(i); applySelected(false, false); },
         "Applies the preset, keeping only its entrance keyframes");
       item("Apply Out", true,
-        function () { select(i); applySelected(true); },
+        function () { select(i); applySelected(true, false); },
         "Applies the entrance keyframes, then time-reverses them");
     }
     sep();
@@ -1786,7 +1820,9 @@
     if (!p) return;
     menuEl.innerHTML = "";
 
-    item("Add <b>" + esc(p.name) + "</b> to Comp", true, function () { addToComp(i); },
+    // The asset name in each row is coloured to its card badge: comp blue,
+    // FX+ green, Text pink — so the menu reads at a glance like the grid does.
+    item('Add <b class="mtag-comp">' + esc(p.name) + "</b> to Comp", true, function () { addToComp(i); },
       "Imports the composition into the open comp", true);
 
     sep();
@@ -1794,8 +1830,9 @@
       // Captured per iteration: the loop variable would have moved on by the
       // time anything is clicked.
       (function (preset) {
-        item("Apply <b>" + esc(preset.name) + "</b>", true, function () {
-          applyOwnedPreset(p, preset, false);
+        var cls = preset.textType ? "mtag-text" : "mtag-fx";
+        item('Apply <b class="' + cls + '">' + esc(preset.name) + "</b>", true, function () {
+          applyOwnedPreset(p, preset, false, true);   // whole preset, no trim
         }, preset.path, true);
       })(p.presets[n]);
     }
@@ -1808,11 +1845,13 @@
   }
 
   // Attached presets are always .zfx, so they always take the richer path.
-  function applyOwnedPreset(comp, preset, reverse) {
+  function applyOwnedPreset(comp, preset, reverse, noTrim) {
     var label = (reverse ? "Apply Out " : "Apply ") + preset.name;
-    applyBtn.disabled = true; applyOutBtn.disabled = true;
-    callHost("zae_applyPresetPlus", { path: preset.path, reverse: !!reverse }, function (r) {
-      applyBtn.disabled = false; applyOutBtn.disabled = false;
+    applyBtn.disabled = true; applyInBtn.disabled = true; applyOutBtn.disabled = true;
+    var params = { path: preset.path, reverse: !!reverse };
+    if (noTrim) params.trim = false;
+    callHost("zae_applyPresetPlus", params, function (r) {
+      applyBtn.disabled = false; applyInBtn.disabled = false; applyOutBtn.disabled = false;
       log(label + " (from " + comp.name + ") → " + r.message, r.ok ? "ok" : "err");
       flash(r.ok ? preset.name + " ✓" : r.message, !r.ok);
     });
@@ -2014,33 +2053,40 @@
     if (!listEl.contains(ev.target)) closeMenu();
   });
 
-  // reverse = "Apply Out": the preset's own keyframes get time-reversed, so an
-  // in-animation becomes the matching out-animation.
-  function applySelected(reverse) {
+  // Three ways to apply a preset:
+  //   full (noTrim)  — the whole preset, every keyframe (the primary "Apply").
+  //   In             — keep only the entrance keyframes (host trims in/out).
+  //   Out (reverse)  — entrance keyframes, then time-reversed.
+  function applySelected(reverse, noTrim) {
     var p = view[selectedIdx];
     if (!p) return;
-    var label = reverse ? "Apply Out" : "Apply In";
-    applyBtn.disabled = true; applyOutBtn.disabled = true;
+    var label = noTrim ? "Apply" : reverse ? "Apply Out" : "Apply In";
+    applyBtn.disabled = true; applyInBtn.disabled = true; applyOutBtn.disabled = true;
     // A .zfx goes through the richer path: it decodes its embedded .ffx and
     // then restores the expressions it captured on top.
     var fn = (p.kind === "presetplus") ? "zae_applyPresetPlus" : "zae_applyPreset";
-    callHost(fn, { path: p.path, reverse: !!reverse }, function (r) {
-      applyBtn.disabled = false; applyOutBtn.disabled = false;
+    var params = { path: p.path, reverse: !!reverse };
+    if (noTrim) params.trim = false;   // host trims by default; full apply opts out
+    callHost(fn, params, function (r) {
+      applyBtn.disabled = false; applyInBtn.disabled = false; applyOutBtn.disabled = false;
       log(label + " " + p.name + " → " + r.message, r.ok ? "ok" : "err");
-      flash(r.ok ? p.name + (reverse ? " out ✓" : " ✓") : r.message, !r.ok);
+      var tick = noTrim ? " ✓" : reverse ? " out ✓" : " in ✓";
+      flash(r.ok ? p.name + tick : r.message, !r.ok);
     });
   }
 
   // Presets are applied to a layer; compositions are imported into the open comp.
+  // The primary button applies the preset WHOLE (no trim).
   function useSelected() {
     var p = view[selectedIdx];
     if (!p) return;
     if (p.kind === "comp") addToComp(selectedIdx);
-    else applySelected();
+    else applySelected(false, true);
   }
 
   applyBtn.addEventListener("click", useSelected);
-  applyOutBtn.addEventListener("click", function () { applySelected(true); });
+  applyInBtn.addEventListener("click", function () { applySelected(false, false); });
+  applyOutBtn.addEventListener("click", function () { applySelected(true, false); });
 
   // ═══════════════════════════════════════════════════════════
   //  LAYER TOOLS

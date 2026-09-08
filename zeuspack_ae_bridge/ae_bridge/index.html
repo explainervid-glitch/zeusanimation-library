@@ -458,6 +458,19 @@
 
   .empty-list { color:var(--text); font-size:10px; text-align:center; }
 
+  /* Bundle marker: a sticky-note in the top-left corner of a card that carries
+     attached presets (a comp + its "<name>__<label>.zfx" siblings). Clickable —
+     it opens the "which to apply" menu — so it takes pointer events and a hover
+     state of its own. */
+  .stickynote {
+    position:absolute; left:3px; top:3px; width:24px; height:24px;
+    display:flex; align-items:center; justify-content:center;
+    color:#fbbf24; padding:3px; border-radius:var(--r-sm);
+    background:rgba(0,0,0,.6); cursor:pointer;
+  }
+  .stickynote:hover { color:#fff; background:var(--accent); }
+  .stickynote svg { width:100%; height:100%; display:block; }
+
   /* Corner badges on the thumbnail: which of the three sidecar files exist. */
   .tags { position:absolute; right:3px; bottom:3px; display:flex; gap:2px; }
   .tag {
@@ -817,9 +830,11 @@
       <input type="range" class="size" id="sizeSlider" min="72" max="200" step="1"
              title="Preview size" />
       <button class="btn primary" id="applyBtn" disabled
-              title="Apply the preset (entrance keyframes only)">Apply In</button>
+              title="Apply the preset whole — every keyframe, no trimming">Apply</button>
+      <button class="btn" id="applyInBtn" disabled
+              title="Apply the preset, keeping only its entrance keyframes">In</button>
       <button class="btn" id="applyOutBtn" disabled
-              title="Apply the entrance keyframes, then time-reverse them">Apply Out</button>
+              title="Apply the entrance keyframes, then time-reverse them">Out</button>
     </div>
   </div>
 
