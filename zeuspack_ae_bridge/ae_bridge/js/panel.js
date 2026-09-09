@@ -218,7 +218,7 @@
   // ExtensionBundleVersion in CSXS/manifest.xml: the update check tests
   // INEQUALITY against the repo's manifest, so a stale value here reports a
   // phantom "update available" against a repo that has not moved.
-  var PANEL_VERSION   = "1.0.13";
+  var PANEL_VERSION   = "1.0.14";
 
   var updateBtn = document.getElementById("updateBtn");
 
@@ -317,8 +317,9 @@
   // that have subcategories. Same inline-SVG style as the toolbar icons.
   var CHEVRON_RIGHT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>';
   var CHEVRON_DOWN  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
-  // Lucide sticky-note — marks a bundle card (a comp with attached .zfx presets).
-  var STICKY_NOTE   = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11l5-5V5a2 2 0 0 0-2-2Z"/><path d="M15 21v-5a2 2 0 0 1 2-2h5"/></svg>';
+  // Lucide sticky-notes (lucide.dev/icons/sticky-notes) — two stacked notes,
+  // marks a bundle card (a comp with attached .zfx presets).
+  var STICKY_NOTE   = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 16 14v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2z"/><path d="M10 8v5a1 1 0 0 0 1 1h5"/><path d="M8 4a2 2 0 0 1 2-2h6a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 22 8v6a2 2 0 0 1-2 2"/><path d="M16 2v5a1 1 0 0 0 1 1h5"/></svg>';
   var activeFolder = null; // null = all folders
   var searchTerm   = "";   // exactly what was typed, for echoing back
   var searchTerms  = [];   // lowercased words, all of which must match
@@ -1185,22 +1186,33 @@
     else { presetsLoaded = false; initPresets(); }
   });
 
-  // Copy the current folder path to the clipboard. execCommand rather than
-  // navigator.clipboard: the latter needs a secure origin, which the panel's
-  // file:// page is not, so it silently fails in CEF.
-  var copyPathBtn = document.getElementById("copyPathBtn");
-  copyPathBtn.addEventListener("click", function () {
-    if (!currentDir) { flash("No folder to copy", true); return; }
+  // Copy text to the clipboard. execCommand rather than navigator.clipboard:
+  // the latter needs a secure origin, which the panel's file:// page is not, so
+  // it silently fails in CEF. Must run inside a user gesture (a click).
+  function copyToClipboard(text) {
     var ok = false;
     try {
       var ta = document.createElement("textarea");
-      ta.value = currentDir;
+      ta.value = String(text);
       ta.style.position = "fixed"; ta.style.opacity = "0";
       document.body.appendChild(ta);
       ta.select();
       ok = document.execCommand("copy");
       document.body.removeChild(ta);
     } catch (e) { ok = false; }
+    return ok;
+  }
+
+  // The on-disk folder a save should land in: the preset root plus the selected
+  // category, as a Windows path — what AE's Save dialog expects pasted in.
+  function saveDestPath(cat) {
+    return currentDir + (cat ? "\\" + cat.split("/").join("\\") : "");
+  }
+
+  var copyPathBtn = document.getElementById("copyPathBtn");
+  copyPathBtn.addEventListener("click", function () {
+    if (!currentDir) { flash("No folder to copy", true); return; }
+    var ok = copyToClipboard(currentDir);
     flash(ok ? "Path copied ✓" : "Could not copy the path", !ok);
     if (ok) log("Copied path → " + currentDir, "ok");
   });
@@ -1414,8 +1426,13 @@
   function savePresetPlus(assetType) {
     if (!currentDir) { flash("Pick a preset folder first", true); return; }
     var isText = assetType === "text";
-    flash("Waiting for AE's save dialog…");
+    // Copy the destination folder to the clipboard while we still have the
+    // click's user gesture, so it can be pasted straight into AE's save dialog.
+    var dest = saveDestPath(targetCategory());
+    var copied = copyToClipboard(dest);
+    flash(copied ? "Path copied — paste it into AE's dialog" : "Waiting for AE's save dialog…");
     log("Save " + (isText ? "Text " : "") + ".zfx → opening After Effects' Save Animation Preset dialog…");
+    if (copied) log("  Folder path copied to clipboard — paste into the dialog:  " + dest);
     log("  Name it and save anywhere. The panel files it into " + targetLabel() + " afterwards.");
     callHost("zae_savePresetPlus", {
       root: currentDir, category: targetCategory(),
@@ -1435,11 +1452,12 @@
   function saveCompAsPreset() {
     if (!currentDir) { flash("Pick a preset folder first", true); return; }
     var cat = targetCategory();
-    var dest = currentDir + (cat ? "\\" + cat.split("/").join("\\") : "");
-    flash("Waiting for AE's Collect Files dialog…");
+    var dest = saveDestPath(cat);
+    var copied = copyToClipboard(dest);
+    flash(copied ? "Path copied — paste it into AE's dialog" : "Waiting for AE's Collect Files dialog…");
     log("Save comp → opening After Effects' Collect Files dialog…");
     log('  1. Set "Collect Source Files: All"  (AE remembers this)');
-    log("  2. Point it at:  " + dest);
+    log("  2. Point it at:  " + dest + (copied ? "   (copied to clipboard — paste it)" : ""));
     log("  If you save it somewhere else, the panel will move it here afterwards.");
     callHost("zae_saveCompAsPreset", { root: currentDir, category: cat }, function (r) {
       log("Save comp → " + r.message, r.ok ? "ok" : "err");

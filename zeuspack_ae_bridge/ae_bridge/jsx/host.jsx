@@ -2207,15 +2207,18 @@ function zae_applyPresetPlus(params) {
 
         if (!r || !r.applied) return _result(false, "Could not apply to the selected layer(s).");
 
-        // Text preset: stamp each layer so the Control panel can find this .zfx
-        // from the layer alone (auto-link), no card reselection needed.
-        if (String(doc.assetType) === "text") {
-            app.beginUndoGroup("ZeusPack: tag text layer");
-            for (var si = 0; si < layers.length; si++) {
-                try { _stampTextLayer(layers[si], f.fsName); } catch (eStamp) {}
-            }
-            app.endUndoGroup();
+        // Stamp each applied layer so a later run can recognise what ZeusPack put
+        // there. Text presets get the Control-panel auto-link stamp; FX+ presets
+        // get a plain "ZeusPack FX+ | <name>" flag marker (recognition only).
+        var isTextPreset = (String(doc.assetType) === "text");
+        app.beginUndoGroup(isTextPreset ? "ZeusPack: tag text layer" : "ZeusPack: tag FX+ layer");
+        for (var si = 0; si < layers.length; si++) {
+            try {
+                if (isTextPreset) _stampTextLayer(layers[si], f.fsName);
+                else              _stampFxLayer(layers[si], f.fsName);
+            } catch (eStamp) {}
         }
+        app.endUndoGroup();
 
         var name = String(doc.name || _stripExt(_baseName(f)));
         var msg  = "Applied " + name + " to " + r.applied + " layer"
@@ -5316,7 +5319,8 @@ function _readPropValue(rec, prop) {
 // is a clean "ZeusPack | <preset name>" for the timeline; the .zfx path is stashed
 // in the marker's hidden parameters so it stays out of the visible label.
 // Re-applying replaces the stamp rather than stacking markers.
-var _TEXT_PREFIX = "ZeusPack | ";        // visible marker comment prefix
+var _TEXT_PREFIX = "ZeusPack | ";        // Text-preset marker comment prefix
+var _FX_PREFIX   = "ZeusPack FX+ | ";    // FX+-preset marker comment prefix (flag)
 var _TEXT_STAMP  = "ZeusPack Text ▸ ";   // legacy comment prefix (path in comment)
 var _TEXT_PARAM  = "zfxPath";            // marker-parameter key holding the path
 
@@ -5330,10 +5334,16 @@ function _presetNameFromPath(zfxPath) {
 }
 
 function _isZeusStamp(comment) {
-    return comment.indexOf(_TEXT_PREFIX) === 0 || comment.indexOf(_TEXT_STAMP) === 0;
+    return comment.indexOf(_TEXT_PREFIX) === 0
+        || comment.indexOf(_FX_PREFIX) === 0
+        || comment.indexOf(_TEXT_STAMP) === 0;
 }
 
-function _stampTextLayer(layer, zfxPath) {
+// Shared marker writer: clear any existing ZeusPack stamp, find a free time near
+// the in-point (never clobbering a user's own marker), and drop `comment` there
+// with the .zfx path stashed in the marker's hidden parameters. One ZeusPack
+// stamp per layer — re-applying replaces it rather than stacking.
+function _stampLayerMarker(layer, comment, zfxPath) {
     var mk = null;
     try { mk = layer.property("ADBE Marker"); } catch (e) { return false; }
     if (!mk) return false;
@@ -5346,10 +5356,6 @@ function _stampTextLayer(layer, zfxPath) {
     } catch (e2) {}
     try {
         var t = 0; try { t = layer.inPoint; } catch (eIn) {}
-        // setValueAtTime overwrites any marker already at that exact time. The
-        // Zeus stamps were just removed above, so any remaining key here is a
-        // user marker — nudge forward until the slot is free so we never clobber
-        // one at the layer's in-point.
         var guard = 0;
         while (guard++ < 16) {
             var clash = false, n2 = 0;
@@ -5361,14 +5367,43 @@ function _stampTextLayer(layer, zfxPath) {
             if (!clash) break;
             t += 0.001;
         }
-        var mv = new MarkerValue(_TEXT_PREFIX + _presetNameFromPath(zfxPath));
-        try {
-            var pobj = {}; pobj[_TEXT_PARAM] = String(zfxPath);
-            mv.setParameters(pobj);
-        } catch (ePar) {}
+        var mv = new MarkerValue(String(comment));
+        if (zfxPath) {
+            try { var pobj = {}; pobj[_TEXT_PARAM] = String(zfxPath); mv.setParameters(pobj); } catch (ePar) {}
+        }
         mk.setValueAtTime(t, mv);
         return true;
     } catch (e3) { return false; }
+}
+
+// Text preset: "ZeusPack | <name>" — read back by the Control panel for auto-link.
+function _stampTextLayer(layer, zfxPath) {
+    return _stampLayerMarker(layer, _TEXT_PREFIX + _presetNameFromPath(zfxPath), zfxPath);
+}
+
+// FX+ preset: "ZeusPack FX+ | <name>" — a recognition flag only (no Control
+// panel). Distinct prefix so the Control panel never mistakes it for a Text stamp.
+function _stampFxLayer(layer, zfxPath) {
+    return _stampLayerMarker(layer, _FX_PREFIX + _presetNameFromPath(zfxPath), zfxPath);
+}
+
+// The FX+ flag on a layer, if any: the stored .zfx path, else the name from the
+// comment. "" when the layer carries no FX+ stamp. For future recognition.
+function _fxStampOf(layer) {
+    var mk = null;
+    try { mk = layer.property("ADBE Marker"); } catch (e) { return ""; }
+    if (!mk) return "";
+    var n = 0; try { n = mk.numKeys; } catch (e2) { n = 0; }
+    for (var i = 1; i <= n; i++) {
+        var mv = null, c = "";
+        try { mv = mk.keyValue(i); c = String(mv.comment || ""); } catch (eC) {}
+        if (c.indexOf(_FX_PREFIX) === 0) {
+            var p = "";
+            try { var pr = mv.getParameters(); if (pr && pr[_TEXT_PARAM]) p = String(pr[_TEXT_PARAM]); } catch (eP) {}
+            return p || c.substring(_FX_PREFIX.length);
+        }
+    }
+    return "";
 }
 
 function _textStampOf(layer) {
