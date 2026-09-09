@@ -756,7 +756,7 @@ distinguished by a **tag prefix**:
 
 | Component     | Tag           |
 | ------------- | ------------- |
-| AE bridge     | `ae-v1.0.15`  |
+| AE bridge     | `ae-v1.0.16`  |
 | Blender addon | `blender-v…`  |
 | Animate       | `animate-v…`  |
 
@@ -783,42 +783,27 @@ a team), and the check is throttled to once every 6 hours per machine.
 
 ### What clicking it does
 
-The button **downloads, it does not install** — so there is exactly one
-installer (`install.bat`) and one install destination, and the two can't drift
-apart.
+The button **opens the release download in your default browser** — the `.zip`
+downloads the normal way. It **downloads, it does not install**: there is one
+installer (`install.bat`) and the browser download avoids AE's script
+network/file-write permissions that could otherwise block an in-panel download.
 
-1. Downloads the release's attached **`.zip` asset** (mode `asset`). If a release
-   has no zip attached, it falls back to the tag's **source zipball** and copies
-   `zeuspack_ae_bridge/` out of it (mode `source`).
-2. Unpacks it into your **Downloads** folder as
-   **`Downloads\ZeusPack-<version>\`** — the ready-to-run installer
-   (`install.bat`, `operator.ps1`, `ae_bridge/`) when the asset is the bundle.
-3. Opens that folder in Explorer and tells you to run `install.bat`.
+1. Opens the release's attached **`.zip` asset** URL (`browser_download_url`);
+   the browser downloads it automatically. If a release has no attached zip, it
+   opens the tag's **source zip** instead, and if even that is missing, the
+   release **page** (`html_url`).
+2. You unzip it, run **`install.bat`**, and restart After Effects.
 
-`install.bat` is then the single installer that copies into the CEP folder and
-sets `PlayerDebugMode`, exactly as it did for the first install. The download
-runs in a **plain (non-elevated) PowerShell** — the Downloads folder is yours,
-so no UAC, no `Program Files` permissions to fight. (An earlier design installed
-straight into the CEP folder from the panel; it collided with `install.bat`'s
-own destination and — when it targeted `Program Files` — failed with
-*"Access denied"*.)
+`install.bat` is the single installer that copies into the CEP folder and sets
+`PlayerDebugMode`, exactly as for the first install.
 
-Notes:
+The badge stays visible after downloading: nothing is installed until you run
+`install.bat` and restart AE, after which the version check clears it.
 
-- **After Effects is blocked while it downloads.** The process is waited on so
-  the result can be checked from the log the script writes rather than trusted
-  from an exit code — `callSystem` reports those unreliably.
-- The Downloads folder is resolved from the shell-folder registry (it can be
-  relocated off the profile), falling back to `%USERPROFILE%\Downloads`.
-- The script travels as **`-EncodedCommand`** (base64 UTF-16LE), which sidesteps
-  quoting at both levels — `callSystem` → `powershell`. Paths with spaces, `&` or
-  quotes need no escaping.
-- The badge stays visible after downloading: nothing is installed until you run
-  `install.bat` and restart AE, after which the version check clears it.
-- Failures are appended to `%TEMP%\zeuspack_update.log`, and the panel echoes
-  the last error into its own log.
-- **Windows only.** Elsewhere it refuses and tells you to copy `ae_bridge/` by
-  hand.
+> The panel opens the URL with `CSInterface.openURLInDefaultBrowser`. The older
+> in-panel PowerShell downloader (`zae_downloadUpdate`, which fetched into
+> `Downloads\ZeusPack-<version>\`) is kept in the host for reference but is no
+> longer wired to the button.
 
 | Constant | Where | Meaning |
 |---|---|---|

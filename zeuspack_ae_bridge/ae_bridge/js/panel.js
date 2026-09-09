@@ -216,7 +216,7 @@
   // ExtensionBundleVersion in CSXS/manifest.xml: the update check tests
   // INEQUALITY against the repo's manifest, so a stale value here reports a
   // phantom "update available" against a repo that has not moved.
-  var PANEL_VERSION   = "1.0.15";
+  var PANEL_VERSION   = "1.0.16";
 
   var updateBtn = document.getElementById("updateBtn");
 
@@ -247,26 +247,36 @@
   // restarts AE, after which the version check clears it on next launch.
   // `url`  — the release's attached .zip asset (mode "asset"), or the tag source
   //          zipball as a fallback (mode "source", the host pulls ae_bridge out).
-  function runUpdate(remote, url, mode) {
-    updateBtn.disabled = true;
-    flash("Downloading " + remote + "…");
-    log("Update → downloading ae-v" + remote + " release to your Downloads folder…");
-    log("  After Effects is blocked until the download finishes.");
-
-    callHost("zae_downloadUpdate", { url: url, mode: mode, version: remote }, function (r) {
-      updateBtn.disabled = false;
-      log("Update → " + r.message, r.ok ? "ok" : "err");
-      if (r.ok) log("  Then run install.bat in that folder and restart After Effects.");
-      flash(r.ok ? "Downloaded — run install.bat" : r.message, !r.ok);
-    });
+  // Open the release download in the user's default browser — the .zip downloads
+  // automatically. Browser download sidesteps AE's script network/file-write
+  // permissions (which blocked the old in-panel downloader) and lets the user
+  // grab the file the normal way. `url` is the direct asset (or source zip);
+  // `pageUrl` is the release page, used only if there is no direct file.
+  function runUpdate(remote, url, pageUrl) {
+    var target = url || pageUrl;
+    log("Update → clicked; opening the ae-v" + remote + " release in your browser…", "ok");
+    if (!target) {
+      flash("No download link found for this release", true);
+      log("Update → the release has no asset, source zip, or page URL.", "err");
+      return;
+    }
+    try {
+      csInterface.openURLInDefaultBrowser(target);
+      flash("Opened your browser — the zip is downloading");
+      log("  Downloading: " + target);
+      log("  When it finishes: unzip it, run install.bat, and restart After Effects.");
+    } catch (e) {
+      flash("Could not open the browser. Copy this link: " + target, true);
+      log("Update → openURLInDefaultBrowser failed: " + e + " — link: " + target, "err");
+    }
   }
 
-  function showUpdate(remote, url, mode) {
+  function showUpdate(remote, url, pageUrl) {
     var mine = installedVersion();
     updateBtn.style.display = "";
     updateBtn.title = "New AE release " + remote + " (you have " + mine
-                    + ") — click to download";
-    updateBtn.onclick = function () { runUpdate(remote, url, mode); };
+                    + ") — click to download in your browser";
+    updateBtn.onclick = function () { runUpdate(remote, url, pageUrl); };
     log("Update available: ae-v" + remote + " (running " + mine + ")", "ok");
   }
 
@@ -318,8 +328,9 @@
         if (cmpVersion(installedVersion(), bestVer) >= 0) return;
 
         var dl = pickDownload(best);
-        if (!dl.url) return;
-        showUpdate(bestVer, dl.url, dl.mode);
+        // The direct download (asset or source zip); the release page is the
+        // fallback the browser opens if there is no direct file.
+        showUpdate(bestVer, dl.url, best.html_url);
       })
       .catch(function () { /* offline — stay quiet */ });
   }

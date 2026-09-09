@@ -20,11 +20,12 @@ function Write-Err  ($msg) { Write-Host "  [X]  $msg"  -ForegroundColor Red    }
 function Write-Step ($msg) { Write-Host "`n  >>  $msg" -ForegroundColor Cyan   }
 
 # ============================================================
-# SAFE EXIT -- always show a prompt before closing
+# SAFE EXIT -- pause ONLY on failure so an error stays readable;
+# a successful (or cancelled) run closes on its own.
 # ============================================================
 function Safe-Exit ($code) {
     Write-Host ""
-    Read-Host "  Press Enter to exit"
+    if ($code -ne 0) { Read-Host "  Press Enter to exit" }
     exit $code
 }
 
@@ -91,18 +92,21 @@ if (-not $isAdmin) {
     # Write a tiny temp launcher so we never have to embed a spaced path
     # inside a -Command string (which breaks no matter how you quote it).
     $tempLauncher = "$env:TEMP\ZeusPackAeBridge_elevate_launcher.ps1"
+    # No trailing Read-Host and no -NoExit below: the elevated operator.ps1
+    # handles its own exit (auto-close on success, pause on failure via
+    # Safe-Exit). The catch here only pauses if the script cannot start at all.
     Set-Content -Path $tempLauncher -Encoding UTF8 -Value @"
 try {
     & '$($localSelfPath -replace "'", "''")' -Elevated
 } catch {
     Write-Host `$_.Exception.Message -ForegroundColor Red
+    Read-Host 'Press Enter to exit'
 }
-Read-Host 'Press Enter to exit'
 "@
 
     try {
         Start-Process -FilePath "powershell.exe" `
-                      -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-NoExit", "-File", $tempLauncher `
+                      -ArgumentList "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $tempLauncher `
                       -Verb RunAs `
                       -Wait
     } catch {
@@ -295,6 +299,10 @@ if ($allOk) {
     Write-Host ""
     Write-Host "  Keep the panel open while working with ZeusPack." -ForegroundColor DarkGray
     Write-Host ""
+    # Success: no key press needed. Show the result briefly, then close on its own.
+    Write-Host "  This window closes automatically in 5 seconds..." -ForegroundColor DarkGray
+    Start-Sleep -Seconds 5
+    exit 0
 } else {
     Write-Host "   INSTALLATION COMPLETED WITH WARNINGS.            " -ForegroundColor Yellow
     Write-Host "  ======================================================" -ForegroundColor DarkCyan
@@ -302,6 +310,6 @@ if ($allOk) {
     Write-Host "  Some files were not found at the destination." -ForegroundColor Yellow
     Write-Host "  Check the source folder and try again." -ForegroundColor Yellow
     Write-Host ""
+    # Something is off — pause so the warnings can be read.
+    Safe-Exit 1
 }
-
-Safe-Exit 0

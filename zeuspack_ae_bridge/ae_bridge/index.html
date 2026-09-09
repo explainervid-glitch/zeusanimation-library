@@ -151,11 +151,12 @@
   .seg .ico:last-child  { border-radius:0 var(--r) var(--r) 0; }
   .seg .ico:hover, .seg .ico.on { z-index:1; }
 
-  /* Update badge — accent-filled so it reads as a notice, not another toggle. */
+  /* Update badge — green-filled so it reads as an available update, distinct
+     from the accent-coloured toggles. */
   .ico.upd {
-    background:var(--accent); border-color:var(--accent); color:#fff;
+    background:#2ea043; border-color:#2ea043; color:#fff;
   }
-  .ico.upd:hover { background:#0a5ec4; border-color:#0a5ec4; color:#fff; }
+  .ico.upd:hover { background:#2c974b; border-color:#2c974b; color:#fff; }
 
   /* Log — collapsed by default, only takes space when opened.
      Two parts: a fixed header row for the log's own actions, and a separate
