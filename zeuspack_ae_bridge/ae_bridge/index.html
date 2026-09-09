@@ -466,7 +466,7 @@
   .stickynote {
     position:absolute; left:3px; top:3px; width:24px; height:24px;
     display:flex; align-items:center; justify-content:center;
-    color:#fbbf24; padding:3px; border-radius:var(--r-sm);
+    color:#066ce7; padding:3px; border-radius:var(--r-sm);
     background:rgba(0,0,0,.6); cursor:pointer;
   }
   .stickynote:hover { color:#fff; background:var(--accent); }
@@ -943,6 +943,14 @@
             <button class="segopt" data-v="on">Show</button>
             <button class="segopt" data-v="off">Hide</button>
           </div>
+        </div>
+
+        <div class="setrow">
+          <div class="setlabel">
+            <span class="setname">Updates</span>
+            <span class="setdesc">Check GitHub now for a newer AE release (bypasses the 6-hour auto-check).</span>
+          </div>
+          <button class="btn" id="setCheckUpdate">Check now</button>
         </div>
 
       </div>

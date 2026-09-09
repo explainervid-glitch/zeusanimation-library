@@ -216,7 +216,7 @@
   // ExtensionBundleVersion in CSXS/manifest.xml: the update check tests
   // INEQUALITY against the repo's manifest, so a stale value here reports a
   // phantom "update available" against a repo that has not moved.
-  var PANEL_VERSION   = "1.0.16";
+  var PANEL_VERSION   = "1.0.17";
 
   var updateBtn = document.getElementById("updateBtn");
 
@@ -295,13 +295,23 @@
     return { url: rel.zipball_url, mode: "source" };
   }
 
-  function checkForUpdate() {
-    if (typeof fetch !== "function") return;
+  // `force` = a manual check from Settings: it bypasses the 6-hour throttle and
+  // reports the outcome (found / up to date / error). The automatic launch check
+  // stays silent unless it finds something.
+  function checkForUpdate(force) {
+    if (typeof fetch !== "function") {
+      if (force) { flash("This host has no network access", true); }
+      return;
+    }
 
-    var last = 0;
-    try { last = Number(localStorage.getItem(UPDATE_TS_KEY)) || 0; } catch (e) {}
-    if (Date.now() - last < UPDATE_EVERY_MS) return;
+    if (!force) {
+      var last = 0;
+      try { last = Number(localStorage.getItem(UPDATE_TS_KEY)) || 0; } catch (e) {}
+      if (Date.now() - last < UPDATE_EVERY_MS) return;
+    }
     try { localStorage.setItem(UPDATE_TS_KEY, String(Date.now())); } catch (e2) {}
+
+    if (force) { flash("Checking for updates…"); log("Update → manual check…", "ok"); }
 
     // List releases and keep the highest ae-v* version. The timestamp is a cache
     // buster; the Accept header asks for the stable API media type.
@@ -309,10 +319,19 @@
           { cache: "no-store", headers: { "Accept": "application/vnd.github+json" } })
       .then(function (r) { return r.ok ? r.text() : null; })
       .then(function (txt) {
-        if (!txt) return;
+        if (!txt) {
+          if (force) { flash("Update check failed — GitHub did not respond", true); }
+          return;
+        }
         var list;
-        try { list = JSON.parse(txt); } catch (e) { return; }
-        if (!list || !list.length) return;
+        try { list = JSON.parse(txt); } catch (e) {
+          if (force) { flash("Update check failed — bad response", true); }
+          return;
+        }
+        if (!list || !list.length) {
+          if (force) { flash("No releases found in the repo", true); }
+          return;
+        }
 
         var best = null, bestVer = "";
         for (var i = 0; i < list.length; i++) {
@@ -323,16 +342,28 @@
           var v = m[1];
           if (!best || cmpVersion(v, bestVer) > 0) { best = rel; bestVer = v; }
         }
-        if (!best) return;
-        // Only prompt for a NEWER release than what is installed.
-        if (cmpVersion(installedVersion(), bestVer) >= 0) return;
+        if (!best) {
+          if (force) { flash("No AE release (ae-v*) published yet", true); }
+          return;
+        }
+        // Only offer a NEWER release than what is installed.
+        if (cmpVersion(installedVersion(), bestVer) >= 0) {
+          if (force) {
+            flash("You're up to date (" + installedVersion() + ")");
+            log("Update → up to date; latest AE release is " + bestVer, "ok");
+          }
+          return;
+        }
 
         var dl = pickDownload(best);
         // The direct download (asset or source zip); the release page is the
         // fallback the browser opens if there is no direct file.
         showUpdate(bestVer, dl.url, best.html_url);
+        if (force) { flash("Update available: " + bestVer + " — see the green button"); }
       })
-      .catch(function () { /* offline — stay quiet */ });
+      .catch(function () {
+        if (force) { flash("Update check failed — you may be offline", true); }
+      });
   }
 
   // ── Buttons ──
@@ -2850,6 +2881,7 @@
   var setPlayback     = document.getElementById("setPlayback");
   var setCenterGrp    = document.getElementById("setCenter");
   var setStatusGrp    = document.getElementById("setStatus");
+  var setCheckUpdate  = document.getElementById("setCheckUpdate");
 
   // Paint each two-option group so the active choice is highlighted. Called on
   // open and after any change, so a setting flipped elsewhere shows correctly.
@@ -2905,6 +2937,11 @@
     if (!v) return;
     setStatusShown(v === "on");
     syncSettings();
+  });
+
+  // Manual update check — the fallback for the throttled/silent auto-check.
+  if (setCheckUpdate) setCheckUpdate.addEventListener("click", function () {
+    checkForUpdate(true);
   });
 
   if (settingsClose) settingsClose.addEventListener("click", closeSettings);
