@@ -4932,13 +4932,18 @@ function zae_downloadUpdate(params) {
             return _result(false, "Automatic download is Windows-only. Download the repo from GitHub and run install.bat by hand.");
         }
 
-        var branch  = params.branch ? String(params.branch) : _UPDATE_BRANCH;
         // Only the version is interpolated into a folder name, so strip anything
         // that is not safe for a path segment.
         var version = params.version
             ? String(params.version).replace(/[^0-9A-Za-z.\-]/g, "_")
-            : branch;
-        var url     = "https://github.com/" + _UPDATE_REPO + "/archive/refs/heads/" + branch + ".zip";
+            : "update";
+        // "asset" = the URL is a release .zip, unpacked as-is into Downloads.
+        // "source" = a source zipball, from which zeuspack_ae_bridge/ is pulled.
+        // No URL at all falls back to the main-branch source archive.
+        var mode = (params.mode === "source") ? "source" : (params.url ? "asset" : "source");
+        var url  = params.url ? String(params.url)
+                 : ("https://github.com/" + _UPDATE_REPO + "/archive/refs/heads/" + _UPDATE_BRANCH + ".zip");
+        var urlLit = url.replace(/'/g, "''");        // PS single-quote escape
         var folder  = "ZeusPack-" + version;
 
         // The log path is baked in from Folder.temp (the exact path the host
@@ -4949,25 +4954,23 @@ function zae_downloadUpdate(params) {
         var logPath = Folder.temp.fsName + "\\zeuspack_update.log";
         var logLit  = logPath.replace(/'/g, "''");   // PS single-quote escape
 
-        // Downloads and unpacks the installer folder (install.bat + operator.ps1
-        // + ae_bridge/) into the user's Downloads, then opens it. It installs
-        // nothing itself — install.bat is the one installer. Non-elevated: the
-        // Downloads folder is the user's own, so no UAC.
+        // Downloads the release into the user's Downloads and opens it. It
+        // installs nothing itself — install.bat inside the bundle is the one
+        // installer. Non-elevated: the Downloads folder is the user's own, no UAC.
+        //   asset  — the .zip is the bundle; unpack it straight into $dest.
+        //   source — a source zipball; pull zeuspack_ae_bridge/ out of it.
         var script = ""
           + "$ErrorActionPreference='Stop';"
           + "$log = '" + logLit + "';"
           + "Set-Content -Path $log -Value ('ZeusPack download ' + (Get-Date));"
           + "try {"
           + "  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;"
+          + "  $mode = '" + mode + "';"
+          + "  $url  = '" + urlLit + "';"
           + "  $zip  = Join-Path $env:TEMP 'zeuspack_update.zip';"
           + "  $work = Join-Path $env:TEMP 'zeuspack_update_extract';"
-          + "  Add-Content $log ('Downloading " + url + "');"
-          + "  Invoke-WebRequest -Uri '" + url + "' -OutFile $zip -UseBasicParsing;"
-          + "  if (Test-Path $work) { Remove-Item $work -Recurse -Force }"
-          + "  Expand-Archive -Path $zip -DestinationPath $work -Force;"
-          + "  $root = Get-ChildItem $work -Directory | Select-Object -First 1;"
-          + "  $from = Join-Path $root.FullName 'zeuspack_ae_bridge';"
-          + "  if (-not (Test-Path $from)) { throw ('zeuspack_ae_bridge not found in the archive: ' + $from) }"
+          + "  Add-Content $log ('Downloading ' + $url);"
+          + "  Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing;"
           // Resolve the real Downloads folder — it can be relocated off the
           // profile — from the shell-folder registry (GUID is Downloads),
           // falling back to %USERPROFILE%\Downloads.
@@ -4977,9 +4980,18 @@ function zae_downloadUpdate(params) {
           + "  $dest = Join-Path $dl '" + folder + "';"
           + "  if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }"
           + "  New-Item -ItemType Directory -Path $dest -Force | Out-Null;"
-          + "  Copy-Item -Path (Join-Path $from '*') -Destination $dest -Recurse -Force;"
+          + "  if ($mode -eq 'asset') {"
+          + "    Expand-Archive -Path $zip -DestinationPath $dest -Force;"
+          + "  } else {"
+          + "    if (Test-Path $work) { Remove-Item $work -Recurse -Force }"
+          + "    Expand-Archive -Path $zip -DestinationPath $work -Force;"
+          + "    $root = Get-ChildItem $work -Directory | Select-Object -First 1;"
+          + "    $from = Join-Path $root.FullName 'zeuspack_ae_bridge';"
+          + "    if (-not (Test-Path $from)) { throw ('zeuspack_ae_bridge not found in the archive: ' + $from) }"
+          + "    Copy-Item -Path (Join-Path $from '*') -Destination $dest -Recurse -Force;"
+          + "    Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue;"
+          + "  }"
           + "  Remove-Item $zip -Force -ErrorAction SilentlyContinue;"
-          + "  Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue;"
           + "  Add-Content $log ('SAVED: ' + $dest);"
           + "  Start-Process explorer.exe $dest;"
           + "} catch {"

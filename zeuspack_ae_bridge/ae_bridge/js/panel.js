@@ -198,27 +198,25 @@
   //  UPDATE CHECK
   // ═══════════════════════════════════════════════════════════
   // There are no releases and no tags to publish. The version of record is
-  // ExtensionBundleVersion in the repo's own CSXS/manifest.xml, read raw from
-  // GitHub and compared with what this panel is running.
+  // Updates come from component-scoped GitHub Releases. The repo is a monorepo
+  // (AE bridge, Animate plugin, Blender addon), so the AE panel only considers
+  // releases whose tag starts with "ae-v" (e.g. "ae-v1.0.14") and ignores every
+  // other component's releases.
   //
-  // The test is INEQUALITY, not "newer". A working copy that is ahead of the
-  // branch is just as much a mismatch as one behind it, and both are worth
-  // knowing about — the tooltip names both versions so it is obvious which way
-  // round it is.
-  //
-  // Still best-effort: no network, a CDN hiccup or a moved file all end in
-  // silence rather than an error nobody can act on.
+  // We LIST releases and filter by prefix — never /releases/latest, which is the
+  // newest release repo-wide by date and could be a Blender one. The highest
+  // ae-v* version wins; the update shows only when it is NEWER than what is
+  // installed. Best-effort: no network or a bad response ends in silence.
   var UPDATE_REPO   = "explainervid-glitch/zeusanimation-library";
-  var UPDATE_BRANCH = "main";
-  var UPDATE_MANIFEST = "https://raw.githubusercontent.com/" + UPDATE_REPO + "/"
-                      + UPDATE_BRANCH + "/zeuspack_ae_bridge/ae_bridge/CSXS/manifest.xml";
+  var UPDATE_API    = "https://api.github.com/repos/" + UPDATE_REPO + "/releases?per_page=30";
+  var UPDATE_TAG_RE = /^ae-v?(\d+\.\d+\.\d+)/i;   // "ae-v1.0.14" -> 1.0.14
   var UPDATE_TS_KEY   = "zae.updateCheckedAt";
   var UPDATE_EVERY_MS = 6 * 60 * 60 * 1000;
   // Fallback when CEP won't report the installed version. MUST track
   // ExtensionBundleVersion in CSXS/manifest.xml: the update check tests
   // INEQUALITY against the repo's manifest, so a stale value here reports a
   // phantom "update available" against a repo that has not moved.
-  var PANEL_VERSION   = "1.0.14";
+  var PANEL_VERSION   = "1.0.15";
 
   var updateBtn = document.getElementById("updateBtn");
 
@@ -247,14 +245,15 @@
   // installer (it handles the CEP folder and PlayerDebugMode). So the badge is
   // left showing: nothing is installed until the user runs install.bat and
   // restarts AE, after which the version check clears it on next launch.
-  function runUpdate(remote) {
+  // `url`  — the release's attached .zip asset (mode "asset"), or the tag source
+  //          zipball as a fallback (mode "source", the host pulls ae_bridge out).
+  function runUpdate(remote, url, mode) {
     updateBtn.disabled = true;
     flash("Downloading " + remote + "…");
-    log("Update → downloading " + UPDATE_REPO + "@" + UPDATE_BRANCH
-        + " to your Downloads folder…");
+    log("Update → downloading ae-v" + remote + " release to your Downloads folder…");
     log("  After Effects is blocked until the download finishes.");
 
-    callHost("zae_downloadUpdate", { branch: UPDATE_BRANCH, version: remote }, function (r) {
+    callHost("zae_downloadUpdate", { url: url, mode: mode, version: remote }, function (r) {
       updateBtn.disabled = false;
       log("Update → " + r.message, r.ok ? "ok" : "err");
       if (r.ok) log("  Then run install.bat in that folder and restart After Effects.");
@@ -262,13 +261,28 @@
     });
   }
 
-  function showUpdate(remote) {
+  function showUpdate(remote, url, mode) {
     var mine = installedVersion();
     updateBtn.style.display = "";
-    updateBtn.title = "Repo has " + remote + ", this panel is " + mine
-                    + " (click to install)";
-    updateBtn.onclick = function () { runUpdate(remote); };
-    log("Update available: " + remote + " (running " + mine + ")", "ok");
+    updateBtn.title = "New AE release " + remote + " (you have " + mine
+                    + ") — click to download";
+    updateBtn.onclick = function () { runUpdate(remote, url, mode); };
+    log("Update available: ae-v" + remote + " (running " + mine + ")", "ok");
+  }
+
+  // Pick a release's download: prefer a .zip asset (an AE-named one if present),
+  // else fall back to the tag's source zipball.
+  function pickDownload(rel) {
+    var assets = rel.assets || [], anyZip = null, pref = null;
+    for (var i = 0; i < assets.length; i++) {
+      var nm = String(assets[i].name || "").toLowerCase();
+      if (nm.substring(nm.length - 4) !== ".zip") continue;
+      if (!anyZip) anyZip = assets[i];
+      if (/ae|zeuspack|bridge/.test(nm)) { pref = assets[i]; break; }
+    }
+    var pick = pref || anyZip;
+    if (pick) return { url: pick.browser_download_url, mode: "asset" };
+    return { url: rel.zipball_url, mode: "source" };
   }
 
   function checkForUpdate() {
@@ -279,18 +293,33 @@
     if (Date.now() - last < UPDATE_EVERY_MS) return;
     try { localStorage.setItem(UPDATE_TS_KEY, String(Date.now())); } catch (e2) {}
 
-    // raw.githubusercontent sits behind a CDN, so the timestamp is a cache
-    // buster rather than decoration — without it a just-pushed bump can take
-    // minutes to show up.
-    fetch(UPDATE_MANIFEST + "?t=" + Date.now(), { cache: "no-store" })
+    // List releases and keep the highest ae-v* version. The timestamp is a cache
+    // buster; the Accept header asks for the stable API media type.
+    fetch(UPDATE_API + "&t=" + Date.now(),
+          { cache: "no-store", headers: { "Accept": "application/vnd.github+json" } })
       .then(function (r) { return r.ok ? r.text() : null; })
       .then(function (txt) {
         if (!txt) return;
-        var m = /ExtensionBundleVersion\s*=\s*"([^"]+)"/.exec(txt);
-        if (!m) return;                                  // manifest moved or malformed
-        var remote = String(m[1]);
-        if (cmpVersion(installedVersion(), remote) === 0) return;
-        showUpdate(remote);
+        var list;
+        try { list = JSON.parse(txt); } catch (e) { return; }
+        if (!list || !list.length) return;
+
+        var best = null, bestVer = "";
+        for (var i = 0; i < list.length; i++) {
+          var rel = list[i];
+          if (!rel || rel.draft || rel.prerelease) continue;   // stable releases only
+          var m = UPDATE_TAG_RE.exec(String(rel.tag_name || ""));
+          if (!m) continue;                                    // not an AE release
+          var v = m[1];
+          if (!best || cmpVersion(v, bestVer) > 0) { best = rel; bestVer = v; }
+        }
+        if (!best) return;
+        // Only prompt for a NEWER release than what is installed.
+        if (cmpVersion(installedVersion(), bestVer) >= 0) return;
+
+        var dl = pickDownload(best);
+        if (!dl.url) return;
+        showUpdate(bestVer, dl.url, dl.mode);
       })
       .catch(function () { /* offline — stay quiet */ });
   }

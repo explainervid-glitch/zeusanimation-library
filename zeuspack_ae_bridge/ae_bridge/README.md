@@ -750,26 +750,36 @@ be open, which is a bigger change than a thumbnail.
 
 ## Updates
 
-**No releases and no tags.** The version of record is `ExtensionBundleVersion`
-in this repo's own `CSXS/manifest.xml`. Shipping an update is one commit:
+**Component-scoped GitHub Releases.** This repo is a monorepo (AE bridge,
+Animate plugin, Blender addon), so each component ships its own releases,
+distinguished by a **tag prefix**:
 
-```xml
-<ExtensionManifest ... ExtensionBundleVersion="1.0.14"
-```
+| Component     | Tag           |
+| ------------- | ------------- |
+| AE bridge     | `ae-v1.0.15`  |
+| Blender addon | `blender-v…`  |
+| Animate       | `animate-v…`  |
 
-On launch the panel reads that file raw from GitHub and compares it with the
-running extension. When they differ it shows an **Update** badge in the status
-bar; clicking it installs.
+Shipping an AE update is: cut a release tagged **`ae-v<version>`** and attach a
+`.zip` of the installer bundle (`install.bat`, `operator.ps1`, `ae_bridge/`).
+Keep the tag version in step with `ExtensionBundleVersion` in `CSXS/manifest.xml`.
+
+On launch the panel calls the GitHub **Releases API**, keeps the highest
+`ae-v*` version, and — when it is newer than what is installed — shows an
+**Update** badge in the status bar.
 
 ### What the check compares
 
-**Inequality, not "newer".** A working copy *ahead* of the branch is as much a
-mismatch as one behind it, and both are worth knowing about — the tooltip names
-both versions, so which way round it is stays obvious:
+The panel **lists** releases and filters to `ae-v*` — never `/releases/latest`,
+which is the newest release repo-wide by date and could be a Blender one. It
+prompts only when the newest AE release is **newer** than the installed version:
 
 ```
-Repo has 1.0.6, this panel is 1.0.5 — click to install
+New AE release 1.0.14 (you have 1.0.13) — click to download
 ```
+
+The GitHub API rate-limits unauthenticated requests to 60/hour per IP (fine for
+a team), and the check is throttled to once every 6 hours per machine.
 
 ### What clicking it does
 
@@ -777,12 +787,12 @@ The button **downloads, it does not install** — so there is exactly one
 installer (`install.bat`) and one install destination, and the two can't drift
 apart.
 
-1. Downloads `https://github.com/<repo>/archive/refs/heads/main.zip`.
-   GitHub has no API for fetching a single folder, so the whole archive comes
-   down and the `zeuspack_ae_bridge/` folder is copied out.
+1. Downloads the release's attached **`.zip` asset** (mode `asset`). If a release
+   has no zip attached, it falls back to the tag's **source zipball** and copies
+   `zeuspack_ae_bridge/` out of it (mode `source`).
 2. Unpacks it into your **Downloads** folder as
-   **`Downloads\ZeusPack-<version>\`** — the ready-to-run installer:
-   `install.bat`, `operator.ps1`, and `ae_bridge/`.
+   **`Downloads\ZeusPack-<version>\`** — the ready-to-run installer
+   (`install.bat`, `operator.ps1`, `ae_bridge/`) when the asset is the bundle.
 3. Opens that folder in Explorer and tells you to run `install.bat`.
 
 `install.bat` is then the single installer that copies into the CEP folder and
