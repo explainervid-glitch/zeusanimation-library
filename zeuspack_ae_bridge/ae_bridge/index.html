@@ -420,6 +420,29 @@
   }
   .list.msg { display:block; padding:10px; }
 
+  /* ── List view ── : a single column of compact rows. Name + inline tags on the
+     LEFT, thumbnail on the RIGHT. Overrides the card grid when List is picked. */
+  .list.rows { display:block; }
+  .list.rows .card {
+    display:flex; align-items:center; margin-bottom:3px;
+  }
+  /* order flips the DOM order (thumb, meta) so the thumbnail sits on the right. */
+  .list.rows .card .thumb {
+    order:2; flex:0 0 auto; width:48px; height:27px;   /* small fixed 16:9 preview */
+  }
+  .list.rows .card .meta {
+    order:1; flex:1 1 auto; min-width:0; padding:0 8px;
+    display:flex; align-items:center;
+  }
+  .list.rows .card .meta .nm { flex:0 1 auto; min-width:0; font-size:11px; }
+  /* Tags leave the thumbnail corner and sit beside the name. */
+  .list.rows .card .thumb .tags { display:none; }
+  .list.rows .card .meta .rowtags {
+    display:inline-flex; gap:2px; margin-left:6px; flex:0 0 auto;
+  }
+  .list.rows .card .tag { font-size:7px; padding:1px 2px; }
+  .list.rows .card .stickynote { width:16px; height:16px; padding:2px; }
+
   .card {
     background:#1b1b1b; border:1px solid var(--border); border-radius:var(--r);
     overflow:hidden; cursor:pointer; min-width:0;
@@ -456,6 +479,9 @@
   }
   .card.sel .meta { background:var(--accent); }
   .card.sel .meta .nm { color:#fff; }
+  /* Inline badges beside the name: used in list view only; hidden in card view,
+     where the same badges ride the thumbnail's corner instead. */
+  .meta .rowtags { display:none; }
 
   .empty-list { color:var(--text); font-size:10px; text-align:center; }
 
@@ -826,6 +852,18 @@
     </div>
 
     <div class="row">
+      <!-- View toggle: card grid vs. compact list. Sits left of the size slider,
+           which only applies to card view. -->
+      <div class="seg viewseg">
+        <button class="ico" id="viewCardBtn" title="Card view">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+        </button>
+        <button class="ico" id="viewListBtn" title="List view">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+        </button>
+      </div>
       <!-- min/max are set from JS; max is the current grid width, so the far
            end is one card per row. step MUST stay 1: a range input can only
            land on min + n*step, so a coarser step would make the max itself

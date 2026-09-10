@@ -216,7 +216,7 @@
   // ExtensionBundleVersion in CSXS/manifest.xml: the update check tests
   // INEQUALITY against the repo's manifest, so a stale value here reports a
   // phantom "update available" against a repo that has not moved.
-  var PANEL_VERSION   = "1.0.17";
+  var PANEL_VERSION   = "1.0.18";
 
   var updateBtn = document.getElementById("updateBtn");
 
@@ -487,6 +487,21 @@
     }
   }
 
+  // The type/status badge spans for a card, shared by the thumbnail's corner
+  // overlay (card view) and the inline badges beside the name (list view).
+  function tagsHtml(p) {
+    var isComp = p.kind === "comp";
+    var isPlus = p.kind === "presetplus";
+    var isText = isPlus && p.textType;
+    var cls    = isComp ? "aep" : isText ? "text" : isPlus ? "zfx" : "ffx";
+    var label  = isComp ? "Comp" : isText ? "Text" : isPlus ? "FX+" : "FX";
+    var t = '<span class="tag ' + cls + '">' + label + "</span>";
+    var own = (p.presets && p.presets.length) ? p.presets.length : 0;
+    if (own && isComp) t += '<span class="tag zfx">FX+' + (own > 1 ? " " + own : "") + "</span>";
+    if (!p.preview) t += '<span class="tag">no preview</span>';
+    return t;
+  }
+
   function thumbHtml(p) {
     // draggable="false" on the media: images and videos are natively draggable
     // and would hijack the card's own drag, so the drop would carry a file URL
@@ -518,13 +533,8 @@
       : (p.previewKind === "video" ? video
           : '<img draggable="false" loading="lazy" src="' + esc(fileUrl(p.preview, p.previewMtime)) + '" alt="">');
 
-    var tags = '<span class="tag ' + cls + '">' + label + "</span>";
-    // A composition that owns presets ("Cursors.aep" plus
-    // "Cursors__Hover Effects.zfx") is one card carrying both, so it gets the
-    // Comp badge AND an FX+ badge with how many are attached.
+    var tags = tagsHtml(p);   // corner badges over the thumbnail (card view)
     var own = (p.presets && p.presets.length) ? p.presets.length : 0;
-    if (own) tags += '<span class="tag zfx">FX+' + (own > 1 ? " " + own : "") + "</span>";
-    if (!p.preview) tags += '<span class="tag">no preview</span>';
 
     // A bundle — a comp that carries attached "<name>__<label>.zfx" presets — is
     // more than one asset in a single card. Flag it with a sticky-note in the
@@ -911,7 +921,7 @@
       return;
     }
 
-    listEl.className = "list";
+    listEl.className = listBaseClass();   // "list" or "list rows" per the view toggle
     var html = "";
     for (var i = 0; i < view.length; i++) {
       var p = view[i];
@@ -920,7 +930,8 @@
       var tip = zfxInfo[p.path] || p.path;
       html += '<div class="card" draggable="true" data-i="' + i + '" title="' + esc(tip) + '">'
             +   thumbHtml(p)
-            +   '<div class="meta"><span class="nm">' + esc(p.name) + "</span></div>"
+            +   '<div class="meta"><span class="nm">' + esc(p.name) + "</span>"
+            +     '<span class="rowtags">' + tagsHtml(p) + "</span></div>"
             + "</div>";
     }
     listEl.innerHTML = html;
@@ -978,10 +989,10 @@
         var i = Number(this.getAttribute("data-i"));
         select(i);
         var a = view[i];
-        // A composition with presets attached has more than one "use me", so
-        // ask instead of guessing. Everything else keeps the straight-through
-        // fast path.
-        if (a && a.kind === "comp" && a.presets && a.presets.length) {
+        // Any card that OWNS attached presets ("<name>__<label>.zfx") has more
+        // than one "use me" — a comp to import or an FX+ owner to apply — so ask
+        // instead of guessing. Everything else keeps the straight-through path.
+        if (a && a.presets && a.presets.length) {
           openUseMenu(i, ev.clientX, ev.clientY);
           return;
         }
@@ -1638,6 +1649,36 @@
     window.addEventListener("resize", function () { applyControlWidth(); applyCardSize(); });
   }
 
+  // ── Card / List view toggle ──────────────────────────────────
+  // Both views render the SAME card markup; List view is a CSS variant
+  // (.list.rows) that lays the cards out as compact rows. So switching is just a
+  // class swap — no re-render — and the size slider only matters in Card view.
+  var VIEW_KEY  = "zae.viewMode";
+  var viewMode  = "card";
+  var viewCardBtn = document.getElementById("viewCardBtn");
+  var viewListBtn = document.getElementById("viewListBtn");
+
+  function listBaseClass() { return viewMode === "list" ? "list rows" : "list"; }
+
+  function setViewMode(mode) {
+    viewMode = (mode === "list") ? "list" : "card";
+    try { localStorage.setItem(VIEW_KEY, viewMode); } catch (e) {}
+    if (viewCardBtn) viewCardBtn.className = (viewMode === "card") ? "ico on" : "ico";
+    if (viewListBtn) viewListBtn.className = (viewMode === "list") ? "ico on" : "ico";
+    if (sizeSlider) sizeSlider.disabled = (viewMode === "list");  // size is card-only
+    // Repaint the grid's class in place; a "…" message keeps its own class.
+    if (listEl.className.indexOf("msg") === -1) listEl.className = listBaseClass();
+  }
+
+  if (viewCardBtn) viewCardBtn.addEventListener("click", function () { setViewMode("card"); });
+  if (viewListBtn) viewListBtn.addEventListener("click", function () { setViewMode("list"); });
+
+  function initViewMode() {
+    var saved = null;
+    try { saved = localStorage.getItem(VIEW_KEY); } catch (e) {}
+    setViewMode(saved === "list" ? "list" : "card");
+  }
+
   // ── Category rail width (drag handle) ────────────────────────
   var CATS_MIN = 56, CATS_MAX = 240, CATS_DEFAULT = 84;
   var CATS_KEY = "zae.catsWidth";
@@ -1909,10 +1950,19 @@
     if (!p) return;
     menuEl.innerHTML = "";
 
-    // The asset name in each row is coloured to its card badge: comp blue,
-    // FX+ green, Text pink — so the menu reads at a glance like the grid does.
-    item('Add <b class="mtag-comp">' + esc(p.name) + "</b> to Comp", true, function () { addToComp(i); },
-      "Imports the composition into the open comp", true);
+    // First row = the owner card itself. A comp is imported; a preset owner is
+    // applied. The name is coloured to its card badge: comp blue, FX+ green,
+    // Text pink — so the menu reads at a glance like the grid does.
+    if (p.kind === "comp") {
+      item('Add <b class="mtag-comp">' + esc(p.name) + "</b> to Comp", true,
+        function () { addToComp(i); },
+        "Imports the composition into the open comp", true);
+    } else {
+      var ownerCls = p.textType ? "mtag-text" : "mtag-fx";
+      item('Apply <b class="' + ownerCls + '">' + esc(p.name) + "</b>", true,
+        function () { select(i); applySelected(false, true); },   // whole preset, no trim
+        "Applies this preset to the selected layer(s)", true);
+    }
 
     sep();
     for (var n = 0; n < p.presets.length; n++) {
@@ -2043,6 +2093,11 @@
     menuEl.innerHTML = "";
 
     var into = targetLabel();
+
+    item("Add Asset (New Project)", !!currentDir, function () { openPrompt("asset"); },
+      ASSET_W + "×" + ASSET_H + " @ " + ASSET_FPS + "fps → " + into);
+
+    sep();
     // The richer format first — it embeds the .ffx, so it keeps everything the
     // legacy command does and adds expressions on top.
     // The coloured word in each label matches that asset's card badge:
@@ -2065,9 +2120,6 @@
 
     item('Save <span class="mtag-comp">Comp Asset</span>', !!currentDir, saveCompAsPreset,
       "Collect Files: the whole open project → " + into, true);
-
-    item("Add Asset (New Project)", !!currentDir, function () { openPrompt("asset"); },
-      ASSET_W + "×" + ASSET_H + " @ " + ASSET_FPS + "fps → " + into);
 
     sep();
     // Folder creation/renaming lives on the rail's own right-click menu.
@@ -2957,6 +3009,7 @@
   }
 
   initCardSize();
+  initViewMode();
   initCatsWidth();
   initToolsWidth();
   initControlWidth();

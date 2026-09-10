@@ -768,10 +768,14 @@ function _walkPresets(folder, depth, relPrefix, acc, allowed) {
     // A .zfx or .ffx sharing the .aep's own name makes that .aep a preview
     // project instead, and attaching to a card that is never drawn would just
     // lose the preset.
-    var ownerOf = {};      // .aep base (lower) -> true, when it becomes a Comp card
+    // Any base that becomes a card can own "<base>__<label>.zfx" children, not
+    // just a comp: "Idle Loop.zfx" owns "Idle Loop__Position.zfx" exactly as
+    // "Cursors.aep" owns "Cursors__Hover Effects.zfx". The child is hidden as a
+    // card of its own and attached to the owner card instead.
+    var ownerOf = {};      // base (lower) -> true, for every base that is a card
     for (j = 0; j < aep.length; j++) ownerOf[aep[j].base.toLowerCase()] = true;
-    for (j = 0; j < zfx.length; j++) delete ownerOf[zfx[j].base.toLowerCase()];
-    for (j = 0; j < ffx.length; j++) delete ownerOf[ffx[j].base.toLowerCase()];
+    for (j = 0; j < zfx.length; j++) ownerOf[zfx[j].base.toLowerCase()] = true;
+    for (j = 0; j < ffx.length; j++) ownerOf[ffx[j].base.toLowerCase()] = true;
 
     var owned = {};        // .aep base (lower) -> [{ name, path, base }]
     var isOwned = {};      // .zfx base (lower) -> true, so it gets no card of its own
@@ -808,7 +812,9 @@ function _walkPresets(folder, depth, relPrefix, acc, allowed) {
             previewMtime: pv ? pv.mtime : 0,
             project:     projects[key] || "",
             legacy:      legacy[key] || "",     // the .ffx sibling, if one is kept
-            bundle:      ""
+            bundle:      "",
+            // "<this preset>__<label>.zfx" children attached to this card.
+            presets:     owned[key] || []
         });
     }
 
@@ -828,7 +834,9 @@ function _walkPresets(folder, depth, relPrefix, acc, allowed) {
             previewMtime: pv ? pv.mtime : 0,
             // The .aep the preview was rendered from, when one exists.
             project:     projects[key] || "",
-            bundle:      ""
+            bundle:      "",
+            // "<this preset>__<label>.zfx" children attached to this card.
+            presets:     owned[key] || []
         });
     }
 
