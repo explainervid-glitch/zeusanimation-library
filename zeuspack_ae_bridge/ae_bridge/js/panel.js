@@ -823,6 +823,11 @@
       if (!matchesSearch(p)) continue;
       view.push(p);
     }
+    // Alphabetical by name, case-insensitive, so the grid reads predictably
+    // regardless of the order the scan returned files in.
+    view.sort(function (a, b) {
+      return String(a.name || "").toLowerCase().localeCompare(String(b.name || "").toLowerCase());
+    });
     syncFindCount();
     renderList();
     select(-1);          // clears the selection AND both buttons, in one place
