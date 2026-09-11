@@ -314,6 +314,26 @@
     color:var(--text); cursor:pointer; font:inherit; padding:4px 3px;
   }
   .tbtn:last-child { margin-bottom:0; }
+
+  /* A row of equal-width buttons (Null Parent's Parent / UnParent / Recenter).
+     margin-right (not `gap`) for CEP 9. flex:1 with min-width:0 lets them share
+     the strip width and ellipsize their labels instead of overflowing. */
+  .trow { display:flex; }
+  .trow .tbtn { flex:1 1 0; min-width:0; margin-bottom:0; margin-right:3px; }
+  .trow .tbtn:last-child { margin-right:0; }
+
+  /* A sub-toggle chip inside a tool button (Follow Path ▸ Orient). Filled accent
+     when on, plain outline when off. It stops its own click from running the
+     button's action (handled in panel.js). */
+  .tsub {
+    margin-top:4px; padding:2px 6px; border-radius:99px;
+    font-size:8px; font-weight:600; line-height:1; letter-spacing:.2px;
+    border:1px solid var(--border); color:var(--muted); cursor:pointer;
+  }
+  .tsub:hover { border-color:var(--accent); color:var(--text); }
+  .tsub.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+  /* In the wide solo layout the button is a row, so the chip sits inline. */
+  .main.solo .tsub { margin-top:0; margin-left:8px; }
   .tbtn:hover:not(:disabled) { background:#3d3d3d; color:var(--text); }
   .tbtn:active:not(:disabled) { background:#272727; }
   .tbtn:disabled { opacity:.4; cursor:default; }
@@ -357,6 +377,9 @@
   .path:hover { border-color:var(--accent); }
   .path option { background:var(--panel); color:var(--text); }
   .path option:disabled { color:#5a5a5a; }
+  /* In the Settings modal the select is the right-hand control, so it sits at a
+     fixed width instead of stretching (setlabel takes the flex:1 space). */
+  .setrow .path { flex:0 0 auto; max-width:170px; height:24px; }
 
   /* New-category input row — collapsed unless the folder+ button opens it */
   .addcat { display:none; gap:5px; }
@@ -680,7 +703,9 @@
   .cat.root:hover { color:var(--text); }
   .cat.root.sel { color:#fff; font-style:normal; }
   .cat .cn  { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .cat .cc  { flex-shrink:0; font-size:9px; opacity:.65; }
+  /* Asset count per category — hidden by design. The markup still emits it, so
+     this can be re-enabled by removing this one rule. */
+  .cat .cc  { display:none; flex-shrink:0; font-size:9px; opacity:.65; }
   .cat.sel .cc { opacity:.85; }
 
   /* Expand/collapse chevron — only rows with subcategories get a live one; a
@@ -722,10 +747,11 @@
     <!-- Toggle the text Control panel (live controls for the selected text
          layer). Leftmost to match the Control panel, which sits to the LEFT of
          the preset browser in the row below. -->
-    <button class="ico lbl" id="controlBtn" title="Text controls for the selected text layer">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-           stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="14" y2="18"/><circle cx="9" cy="6" r="2" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="2" fill="currentColor" stroke="none"/><circle cx="8" cy="18" r="2" fill="currentColor" stroke="none"/></svg>
-      <span>Control</span>
+    <button class="ico" id="controlBtn" title="Text controls for the selected text layer">
+      <!-- Lucide sliders-vertical — vertical faders, distinct from the Log's
+           horizontal lines. -->
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+           stroke-linecap="round" stroke-linejoin="round"><line x1="4" x2="4" y1="21" y2="14"/><line x1="4" x2="4" y1="10" y2="3"/><line x1="12" x2="12" y1="21" y2="12"/><line x1="12" x2="12" y1="8" y2="3"/><line x1="20" x2="20" y1="21" y2="16"/><line x1="20" x2="20" y1="12" y2="3"/><line x1="2" x2="6" y1="14" y2="14"/><line x1="10" x2="14" y1="8" y2="8"/><line x1="18" x2="22" y1="16" y2="16"/></svg>
     </button>
 
     <!-- Toggle preset browser -->
@@ -801,13 +827,15 @@
 
   <!-- ── Preset browser ── -->
   <div class="presets" id="presets">
-    <div class="row">
-      <!-- Copy the current folder's path to the clipboard -->
-      <button class="ico" id="copyPathBtn" title="Copy folder path">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-             stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg>
-      </button>
-      <select class="path" id="pathSelect" title=""></select>
+    <!-- Toolbar: search takes the place the path dropdown used to hold (the path
+         selector now lives in the Settings modal). Loop + Refresh sit beside it. -->
+    <div class="row find">
+      <svg class="findico" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
+        ><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      <input type="text" class="txt" id="findInput" placeholder="Search presets…"
+             spellcheck="false" autocomplete="off" maxlength="80" />
+      <span class="findcount" id="findCount"></span>
       <button class="ico lbl" id="loopBtn" title="Preview playback">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
              stroke-linecap="round" stroke-linejoin="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
@@ -817,18 +845,6 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
              stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg>
       </button>
-    </div>
-
-    <!-- Search. Its own row rather than sharing the toolbar: at the 240px
-         docked minimum the path dropdown, Loop and Refresh already fill that
-         row, and a field squeezed in beside them would be unusable. -->
-    <div class="row find">
-      <svg class="findico" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-           stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"
-        ><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
-      <input type="text" class="txt" id="findInput" placeholder="Search presets…"
-             spellcheck="false" autocomplete="off" maxlength="80" />
-      <span class="findcount" id="findCount"></span>
     </div>
 
     <!-- Shared name input: new category, new asset. Hidden until asked for. -->
@@ -886,6 +902,7 @@
       <div class="thead">
         <span class="tname" title="Null Parent">Null Parent</span>
       </div>
+      <div class="trow">
       <button class="tbtn" id="groupBtn"
               title="Quick Parent: Parent the selected layers to a null placed at their center">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
@@ -905,6 +922,7 @@
         <span>Recenter</span>
       </button>
       </div>
+      </div>
 
       <div class="tgroup">
       <div class="thead"><span class="tname">Other</span></div>
@@ -914,6 +932,16 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
              stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="1"/><path d="M14 4h6M17 1v6M14 20h6M17 17v6M4 14v6h6" stroke-dasharray="0"/><path d="M13 13l7 7"/></svg>
         <span>Decompose</span>
+      </button>
+      <button class="tbtn" id="followBtn"
+              title="Follow Path: Select the object layer and the layer holding a path (a mask, or a shape-layer path), then click. The object is linked to the path via a 'Follow Path' slider (0-100%) you keyframe to travel along it. 2D layers only.">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+             stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/></svg>
+        <span>Follow Path</span>
+        <!-- Sub-toggle: whether to also orient the object to the travel direction.
+             Its own click (stopPropagation'd in panel.js) flips it without running
+             the tool. -->
+        <span class="tsub" id="followOrient" title="Orient the object to the path direction">Orient</span>
       </button>
       </div>
     </div>
@@ -952,6 +980,14 @@
 
         <div class="setrow">
           <div class="setlabel">
+            <span class="setname">Asset library</span>
+            <span class="setdesc">The preset root folder the browser reads from.</span>
+          </div>
+          <select class="path" id="pathSelect" title=""></select>
+        </div>
+
+        <div class="setrow">
+          <div class="setlabel">
             <span class="setname">Preview playback</span>
             <span class="setdesc">Loop every preview, or play only the one under the pointer.</span>
           </div>
@@ -980,6 +1016,17 @@
           <div class="seg2" id="setStatus">
             <button class="segopt" data-v="on">Show</button>
             <button class="segopt" data-v="off">Hide</button>
+          </div>
+        </div>
+
+        <div class="setrow">
+          <div class="setlabel">
+            <span class="setname">Decompose cleanup</span>
+            <span class="setdesc">Delete the precomp from the Project panel after decomposing — only when nothing else still uses it.</span>
+          </div>
+          <div class="seg2" id="setDecompDel">
+            <button class="segopt" data-v="on">Delete</button>
+            <button class="segopt" data-v="off">Keep</button>
           </div>
         </div>
 

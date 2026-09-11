@@ -4603,6 +4603,9 @@ function _restoreTrackMattes(inner, copies) {
 function zae_decompose(params) {
     try {
         params = params || {};
+        // Optional: after lifting the layers out, remove the now-orphaned precomp
+        // item from the Project panel — but only when nothing else still uses it.
+        var srcDel = !!params.deleteSource;
 
         var comp = app.project ? app.project.activeItem : null;
         if (!(comp instanceof CompItem)) return _result(false, "Open a composition first.");
@@ -4628,6 +4631,7 @@ function zae_decompose(params) {
         var totalOut = 0, done = [], warned = {}, carriers = [], empties = [];
         var mattes = 0, matteFails = 0, baked = 0, bakeStops = {};
         var shiftedAny = 0, clippedTotal = 0;
+        var sources = {};   // precomp source id -> CompItem, for optional removal
         try {
             for (var n = 0; n < targets.length; n++) {
                 var P = targets[n];
@@ -4810,6 +4814,7 @@ function zae_decompose(params) {
                     carriers.push(carrier.name);
                 }
                 try { P.remove(); } catch (eD) {}
+                try { if (S && S.id != null) sources[S.id] = S; } catch (eSrc) {}
                 done.push(pname);
             }
         } finally {
@@ -4820,6 +4825,28 @@ function zae_decompose(params) {
             return _result(false, empties.length
                 ? "Nothing to extract: " + empties.join(", ") + " has no layers."
                 : "Nothing was extracted.");
+        }
+
+        // Optionally remove the source precomps from the project. Only when a
+        // source is used nowhere else — deleting one still referenced by another
+        // comp would break that comp, so those are kept and reported.
+        var removedSrc = [], keptSrc = [];
+        if (srcDel) {
+            app.beginUndoGroup("ZeusPack: remove decomposed precomps");
+            try {
+                for (var sid in sources) {
+                    if (!sources.hasOwnProperty(sid)) continue;
+                    var S2 = sources[sid], snm = "";
+                    try { snm = String(S2.name || ""); } catch (eNm) {}
+                    var used = 1;   // assume used on any read failure — never delete blindly
+                    try { used = (S2.usedIn && S2.usedIn.length) ? S2.usedIn.length : 0; } catch (eU) { used = 1; }
+                    if (used === 0) {
+                        try { S2.remove(); removedSrc.push(snm); } catch (eR) { keptSrc.push(snm); }
+                    } else {
+                        keptSrc.push(snm);
+                    }
+                }
+            } finally { app.endUndoGroup(); }
         }
 
         var msg = "Decomposed " + done.join(", ") + ": " + totalOut + " layer"
@@ -4861,14 +4888,171 @@ function zae_decompose(params) {
                  + " blend mode of its own.";
         }
 
+        if (srcDel) {
+            if (removedSrc.length) {
+                msg += ". Removed from the project: " + removedSrc.join(", ");
+            }
+            if (keptSrc.length) {
+                msg += ". Kept in the project (still used elsewhere): " + keptSrc.join(", ");
+            }
+        }
+
         return _result(true, msg, {
             precomps: done, layers: totalOut, carriers: carriers,
             empty: empties, notCarried: wlist,
             trackMattes: mattes, trackMattesFailed: matteFails, baked: baked,
-            timeShifted: shiftedAny, trimmed: clippedTotal
+            timeShifted: shiftedAny, trimmed: clippedTotal,
+            sourcesRemoved: removedSrc, sourcesKept: keptSrc
         });
     } catch (e) {
         try { app.endUndoGroup(); } catch (e9) {}
+        return _result(false, "Exception: " + e.toString());
+    }
+}
+
+// ── Follow Path ──────────────────────────────────────────────────────────────
+// Make one selected layer (the object) travel along a path drawn on the other
+// selected layer (a mask, or a shape-layer path). A "Follow Path" slider (0-100)
+// is added to the object and its Position is expression-linked to the path, so
+// the user keyframes the slider to animate along it. With orient on, Rotation
+// faces the travel direction too. 2D only.
+
+// Backslash/quote-safe for embedding a name inside an expression string literal.
+function _escExpr(s) { return String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"'); }
+
+// Walk a shape's Contents for the first path, returning the expression fragment
+// (content("Group").content("Path").path) and a label, or null.
+function _findShapePathChain(group, names) {
+    var n = 0; try { n = group.numProperties; } catch (e) { return null; }
+    for (var i = 1; i <= n; i++) {
+        var pr = null; try { pr = group.property(i); } catch (e2) { continue; }
+        if (!pr) continue;
+        var mn = "", nm = "";
+        try { mn = String(pr.matchName || ""); } catch (e3) {}
+        try { nm = String(pr.name || ""); } catch (e4) {}
+        if (mn === "ADBE Vector Shape - Group") {
+            var chain = names.concat([nm]), parts = [];
+            // Joined with "." so it reads content("A").content("B").path when
+            // appended after L. — a missing dot silently breaks the expression.
+            for (var k = 0; k < chain.length; k++) parts.push('content("' + _escExpr(chain[k]) + '")');
+            return { ref: parts.join(".") + ".path", label: nm };
+        }
+        if (mn === "ADBE Vector Group") {
+            var sub = null; try { sub = pr.property("ADBE Vectors Group"); } catch (e5) {}
+            var found = sub ? _findShapePathChain(sub, names.concat([nm])) : null;
+            if (found) return found;
+        }
+    }
+    return null;
+}
+
+// A referenceable path on a layer: prefer a mask, then a shape path. `ref` is the
+// expression fragment AFTER thisComp.layer("X").
+function _layerPathInfo(layer) {
+    try {
+        var mg = layer.property("ADBE Mask Parade");
+        if (mg && mg.numProperties > 0) {
+            var m = mg.property(1);
+            return { ref: 'mask("' + _escExpr(m.name) + '").maskPath', label: String(m.name || "Mask 1"), hasMask: true };
+        }
+    } catch (e) {}
+    try {
+        var root = layer.property("ADBE Root Vectors Group");
+        if (root && root.numProperties > 0) {
+            var f = _findShapePathChain(root, []);
+            if (f) return { ref: f.ref, label: f.label, hasMask: false };
+        }
+    } catch (e2) {}
+    return null;
+}
+
+function zae_followPath(params) {
+    try {
+        params = params || {};
+        var orient = !!params.orient;
+
+        var comp = app.project ? app.project.activeItem : null;
+        if (!(comp instanceof CompItem)) return _result(false, "Open a composition first.");
+
+        var sel = comp.selectedLayers || [];
+        if (sel.length !== 2) {
+            return _result(false, "Select exactly two layers: the object to move, and the layer holding the path.");
+        }
+
+        var a = sel[0], b = sel[1];
+        var pa = _layerPathInfo(a), pb = _layerPathInfo(b);
+        var pathLayer, objLayer, pinfo;
+        if (pa && !pb)      { pathLayer = a; objLayer = b; pinfo = pa; }
+        else if (pb && !pa) { pathLayer = b; objLayer = a; pinfo = pb; }
+        else if (pa && pb) {
+            // Both have a path — a mask is the deliberate "guide", so prefer it.
+            if (pa.hasMask && !pb.hasMask)      { pathLayer = a; objLayer = b; pinfo = pa; }
+            else if (pb.hasMask && !pa.hasMask) { pathLayer = b; objLayer = a; pinfo = pb; }
+            else return _result(false, "Both selected layers have a path — can't tell which is the object. "
+                              + "Draw the guide path as a MASK on one layer, or select a non-path object.");
+        } else {
+            return _result(false, "Neither selected layer has a path. Draw a line with the pen tool on the path layer first.");
+        }
+
+        // 2D only: a path point is [x,y], which a 3D Position/Rotation cannot take.
+        var is3d = false; try { is3d = !!objLayer.threeDLayer; } catch (e3d) {}
+        if (is3d) return _result(false, "The object layer is 3D. Follow Path is 2D only — turn off the layer's 3D switch.");
+
+        var LN = _escExpr(String(pathLayer.name || ""));
+        var REF = pinfo.ref;
+
+        var posExpr =
+            "try{\n" +
+            "  var L=thisComp.layer(\"" + LN + "\");\n" +
+            "  var pth=L." + REF + ";\n" +
+            "  var s=effect(\"Follow Path\")(\"Slider\")/100;\n" +
+            "  s=Math.max(0,Math.min(1,s));\n" +
+            "  var cp=L.toComp(pth.pointOnPath(s,time));\n" +
+            "  (thisLayer.hasParent)?thisLayer.parent.fromComp(cp):cp;\n" +
+            "}catch(err){ value }";
+
+        var rotExpr =
+            "try{\n" +
+            "  var L=thisComp.layer(\"" + LN + "\");\n" +
+            "  var pth=L." + REF + ";\n" +
+            "  var s=effect(\"Follow Path\")(\"Slider\")/100;\n" +
+            "  s=Math.max(0,Math.min(1,s));\n" +
+            "  var d=0.002;\n" +
+            "  var p1=L.toComp(pth.pointOnPath(Math.max(0,s-d),time));\n" +
+            "  var p2=L.toComp(pth.pointOnPath(Math.min(1,s+d),time));\n" +
+            "  radiansToDegrees(Math.atan2(p2[1]-p1[1],p2[0]-p1[0]));\n" +
+            "}catch(err){ value }";
+
+        app.beginUndoGroup("ZeusPack: Follow Path");
+        var oriented = false;
+        try {
+            // Reuse an existing "Follow Path" slider so re-running doesn't stack them.
+            var par = objLayer.property("ADBE Effect Parade"), fx = null, ei;
+            for (ei = 1; ei <= par.numProperties; ei++) {
+                if (String(par.property(ei).name) === "Follow Path") { fx = par.property(ei); break; }
+            }
+            if (!fx) { fx = par.addProperty("ADBE Slider Control"); try { fx.name = "Follow Path"; } catch (eN) {} }
+            try { fx.property(1).setValue(0); } catch (eS) {}   // start at 0%
+
+            var tg = objLayer.property("ADBE Transform Group");
+            tg.property("ADBE Position").expression = posExpr;
+            if (orient) {
+                try { tg.property("ADBE Rotate Z").expression = rotExpr; oriented = true; } catch (eR) {}
+            }
+        } finally {
+            app.endUndoGroup();
+        }
+
+        var msg = "Follow Path: \"" + String(objLayer.name) + "\" now follows \"" + String(pathLayer.name)
+                + "\" — keyframe its \"Follow Path\" slider (0-100%) to animate along the path"
+                + (oriented ? ", orienting to the travel direction" : "")
+                + ". Path read from a " + (pinfo.hasMask ? "mask" : "shape path") + ".";
+        return _result(true, msg, {
+            object: String(objLayer.name), path: String(pathLayer.name),
+            pathKind: pinfo.hasMask ? "mask" : "shape", oriented: oriented
+        });
+    } catch (e) {
+        try { app.endUndoGroup(); } catch (e2) {}
         return _result(false, "Exception: " + e.toString());
     }
 }

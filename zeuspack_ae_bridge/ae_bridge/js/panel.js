@@ -65,6 +65,7 @@
   var ungroupBtn  = document.getElementById("ungroupBtn");
   var recenterBtn = document.getElementById("recenterBtn");
   var decomposeBtn = document.getElementById("decomposeBtn");
+  var followBtn   = document.getElementById("followBtn");
   var toolGrip    = document.getElementById("toolGrip");
   var mainEl      = document.getElementById("main");
 
@@ -216,7 +217,7 @@
   // ExtensionBundleVersion in CSXS/manifest.xml: the update check tests
   // INEQUALITY against the repo's manifest, so a stale value here reports a
   // phantom "update available" against a repo that has not moved.
-  var PANEL_VERSION   = "1.0.18";
+  var PANEL_VERSION   = "1.0.19";
 
   var updateBtn = document.getElementById("updateBtn");
 
@@ -1296,8 +1297,10 @@
     return currentDir + (cat ? "\\" + cat.split("/").join("\\") : "");
   }
 
+  // Copy Path button removed for now; guarded so its absence can't throw. The
+  // copyToClipboard/saveDestPath helpers stay — the save flow still uses them.
   var copyPathBtn = document.getElementById("copyPathBtn");
-  copyPathBtn.addEventListener("click", function () {
+  if (copyPathBtn) copyPathBtn.addEventListener("click", function () {
     if (!currentDir) { flash("No folder to copy", true); return; }
     var ok = copyToClipboard(currentDir);
     flash(ok ? "Path copied ✓" : "Could not copy the path", !ok);
@@ -2244,7 +2247,7 @@
   // the panel — the buttons just fire and report.
   var TOOLS_KEY    = "zae.toolsOpen";
 
-  var toolButtons = [groupBtn, ungroupBtn, recenterBtn, decomposeBtn];
+  var toolButtons = [groupBtn, ungroupBtn, recenterBtn, decomposeBtn, followBtn];
 
   function runTool(fn, label, params) {
     var i;
@@ -2268,9 +2271,9 @@
   // them disagree would mean recentring a group moved its null somewhere the
   // grouping would never have put it.
   var CENTER_KEY = "zae.groupCenter";
-  var groupCenter = "bounds";
+  var groupCenter = "anchor";   // default; a saved "bounds" choice still wins
   try {
-    if (localStorage.getItem(CENTER_KEY) === "anchor") groupCenter = "anchor";
+    if (localStorage.getItem(CENTER_KEY) === "bounds") groupCenter = "bounds";
   } catch (e) {}
 
   var CENTER_LABEL = { bounds: "Bounding box", anchor: "Anchor point" };
@@ -2285,6 +2288,16 @@
     flash("Null placement: " + CENTER_LABEL[groupCenter]);
   }
 
+  // Decompose can also delete the emptied precomp from the Project panel (only
+  // when nothing else uses it). Off by default; the Settings modal writes it.
+  var DECOMP_DEL_KEY = "zae.deleteDecomposed";
+  var deleteDecomposed = true;   // default; a saved "keep" (0) choice still wins
+  try { if (localStorage.getItem(DECOMP_DEL_KEY) === "0") deleteDecomposed = false; } catch (e) {}
+  function setDeleteDecomposed(on) {
+    deleteDecomposed = !!on;
+    try { localStorage.setItem(DECOMP_DEL_KEY, deleteDecomposed ? "1" : "0"); } catch (e2) {}
+  }
+
   groupBtn.addEventListener("click", function () {
     runTool("zae_groupLayers", "Group", { center: groupCenter });
   });
@@ -2295,7 +2308,26 @@
     runTool("zae_recenterGroup", "Recenter", { center: groupCenter });
   });
   decomposeBtn.addEventListener("click", function () {
-    runTool("zae_decompose", "Decompose", {});
+    runTool("zae_decompose", "Decompose", { deleteSource: deleteDecomposed });
+  });
+  // Follow Path ▸ Orient sub-toggle: remembered, and read when the tool runs.
+  var followOrient = document.getElementById("followOrient");
+  var FOLLOW_ORIENT_KEY = "zae.followOrient";
+  var followOrientOn = true;   // default on
+  try { if (localStorage.getItem(FOLLOW_ORIENT_KEY) === "0") followOrientOn = false; } catch (e) {}
+  function paintFollowOrient() {
+    if (followOrient) followOrient.className = followOrientOn ? "tsub on" : "tsub";
+  }
+  paintFollowOrient();
+  if (followOrient) followOrient.addEventListener("click", function (ev) {
+    ev.stopPropagation();   // flip the toggle without running Follow Path
+    followOrientOn = !followOrientOn;
+    try { localStorage.setItem(FOLLOW_ORIENT_KEY, followOrientOn ? "1" : "0"); } catch (e2) {}
+    paintFollowOrient();
+  });
+
+  followBtn.addEventListener("click", function () {
+    runTool("zae_followPath", "Follow Path", { orient: followOrientOn });
   });
 
   // ── Tool strip width (drag handle) ───────────────────────────
@@ -2541,7 +2573,7 @@
   // longer closes anything — both can be open — but it does reshape the row.
   function setControlOpen(open) {
     controlEl.className = open ? "control open" : "control";
-    controlBtn.className = open ? "ico lbl on" : "ico lbl";
+    controlBtn.className = open ? "ico on" : "ico";   // icon-only (no label)
     controlBtn.title = open ? "Hide controls" : "Bound controls for the selected Text preset";
     syncMain();
     syncHeight();
@@ -2938,6 +2970,7 @@
   var setPlayback     = document.getElementById("setPlayback");
   var setCenterGrp    = document.getElementById("setCenter");
   var setStatusGrp    = document.getElementById("setStatus");
+  var setDecompDel    = document.getElementById("setDecompDel");
   var setCheckUpdate  = document.getElementById("setCheckUpdate");
 
   // Paint each two-option group so the active choice is highlighted. Called on
@@ -2954,6 +2987,7 @@
     markSeg(setPlayback, autoplayAll ? "loop" : "hover");
     markSeg(setCenterGrp, groupCenter);
     markSeg(setStatusGrp, statusShown ? "on" : "off");
+    markSeg(setDecompDel, deleteDecomposed ? "on" : "off");
   }
 
   function openSettings() {
@@ -2993,6 +3027,12 @@
     var v = ev.target.getAttribute && ev.target.getAttribute("data-v");
     if (!v) return;
     setStatusShown(v === "on");
+    syncSettings();
+  });
+  if (setDecompDel) setDecompDel.addEventListener("click", function (ev) {
+    var v = ev.target.getAttribute && ev.target.getAttribute("data-v");
+    if (!v) return;
+    setDeleteDecomposed(v === "on");
     syncSettings();
   });
 

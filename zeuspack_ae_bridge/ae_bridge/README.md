@@ -756,7 +756,7 @@ distinguished by a **tag prefix**:
 
 | Component     | Tag           |
 | ------------- | ------------- |
-| AE bridge     | `ae-v1.0.18`  |
+| AE bridge     | `ae-v1.0.19`  |
 | Blender addon | `blender-v…`  |
 | Animate       | `animate-v…`  |
 
