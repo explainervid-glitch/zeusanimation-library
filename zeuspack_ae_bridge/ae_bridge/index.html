@@ -925,7 +925,7 @@
       </div>
 
       <div class="tgroup">
-      <div class="thead"><span class="tname">Other</span></div>
+      <div class="thead"><span class="tname">Manage Layer</span></div>
 
       <button class="tbtn" id="decomposeBtn"
               title="Decompose: Lift a precomp's layers back into this comp, keeping them where they looked. Each layer comes across whole, including its own effects, masks, keyframes and expressions. Only things applied TO the precomp layer (effects, masks, blend mode) cannot follow, because they act on the flattened result; those are named in the log.">
@@ -933,15 +933,49 @@
              stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="1"/><path d="M14 4h6M17 1v6M14 20h6M17 17v6M4 14v6h6" stroke-dasharray="0"/><path d="M13 13l7 7"/></svg>
         <span>Decompose</span>
       </button>
+      <button class="tbtn" id="separateBtn"
+              title="Separate: Select one or more groups inside a shape layer (e.g. Group 1, Rectangle 1), then click. The selected groups move into a NEW shape layer, keeping their exact look and position.">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+             stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><path d="M8.12 8.12 12 12"/><path d="M20 4 8.12 15.88"/><circle cx="6" cy="18" r="3"/><path d="M14.8 14.8 20 20"/></svg>
+        <span>Separate</span>
+      </button>
+
+      <!-- Text exploder: split the selected text layer into one layer per
+           character / word / line, positions kept. -->
+      <div class="trow">
+      <button class="tbtn" id="explodeCharBtn"
+              title="Explode text into one layer per character (positions kept). Select a text layer first.">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></svg>
+        <span>Char</span>
+      </button>
+      <button class="tbtn" id="explodeWordBtn"
+              title="Explode text into one layer per word (positions kept). Select a text layer first.">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M17 6.1H3"/><path d="M21 12.1H3"/><path d="M15.1 18H3"/></svg>
+        <span>Word</span>
+      </button>
+      <button class="tbtn" id="explodeLineBtn"
+              title="Explode text into one layer per line (positions kept). Select a text layer first.">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+             stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        <span>Lines</span>
+      </button>
+      </div>
+      </div>
+
+      <div class="tgroup">
+      <div class="thead"><span class="tname">Automate</span></div>
+
       <button class="tbtn" id="followBtn"
-              title="Follow Path: Select the object layer and the layer holding a path (a mask, or a shape-layer path), then click. The object is linked to the path via a 'Follow Path' slider (0-100%) you keyframe to travel along it. 2D layers only.">
+              title="Follow Path: Select the object layer and the layer holding a path (a mask, or a shape-layer path), then click. Writes real Position keyframes tracing the path onto the object — animate directly on the motion path, and Rove Across Time works. 2D layers only.">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
              stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/></svg>
         <span>Follow Path</span>
-        <!-- Sub-toggle: whether to also orient the object to the travel direction.
+        <!-- Sub-toggle: whether to also turn on native Auto-Orient ▸ Along Path.
              Its own click (stopPropagation'd in panel.js) flips it without running
              the tool. -->
-        <span class="tsub" id="followOrient" title="Orient the object to the path direction">Orient</span>
+        <span class="tsub" id="followOrient" title="Turn on Auto-Orient along the path direction">Orient</span>
       </button>
       </div>
     </div>

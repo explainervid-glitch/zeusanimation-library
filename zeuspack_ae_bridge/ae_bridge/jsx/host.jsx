@@ -4912,10 +4912,12 @@ function zae_decompose(params) {
 
 // ── Follow Path ──────────────────────────────────────────────────────────────
 // Make one selected layer (the object) travel along a path drawn on the other
-// selected layer (a mask, or a shape-layer path). A "Follow Path" slider (0-100)
-// is added to the object and its Position is expression-linked to the path, so
-// the user keyframes the slider to animate along it. With orient on, Rotation
-// faces the travel direction too. 2D only.
+// selected layer (a mask, or a shape-layer path). Real Position keyframes are
+// written that trace the path (like AE's "paste mask path to Position", but in
+// correct comp/parent space), so the motion lives directly on the layer's
+// Position path — Rove Across Time and the other keyframe assistants just work,
+// no expression and no bake step. With orient on, native Auto-Orient ▸ Along
+// Path faces the object down its motion path. 2D only.
 
 // Backslash/quote-safe for embedding a name inside an expression string literal.
 function _escExpr(s) { return String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"'); }
@@ -4994,63 +4996,364 @@ function zae_followPath(params) {
             return _result(false, "Neither selected layer has a path. Draw a line with the pen tool on the path layer first.");
         }
 
-        // 2D only: a path point is [x,y], which a 3D Position/Rotation cannot take.
+        // 2D only: a path point is [x,y], which a 3D Position cannot take.
         var is3d = false; try { is3d = !!objLayer.threeDLayer; } catch (e3d) {}
         if (is3d) return _result(false, "The object layer is 3D. Follow Path is 2D only — turn off the layer's 3D switch.");
 
         var LN = _escExpr(String(pathLayer.name || ""));
         var REF = pinfo.ref;
 
-        var posExpr =
+        // Time range for the traced keyframes. A work area the user has narrowed
+        // below the full comp is taken as an explicit choice; otherwise trace 2
+        // seconds from the current time (matching AE's own path-paste default),
+        // clamped to the comp. If that leaves no room, fall back to the whole comp.
+        var t0, t1, full = comp.duration, fd = comp.frameDuration;
+        if (comp.workAreaDuration < full - fd * 0.5) {
+            t0 = comp.workAreaStart; t1 = t0 + comp.workAreaDuration;
+        } else {
+            t0 = comp.time; t1 = Math.min(full, t0 + 2);
+        }
+        if (t1 - t0 < fd) { t0 = 0; t1 = full; }
+
+        // How many keyframes trace the path. Scaled to the mask's vertex count
+        // when we can read it (more verts, more samples), else a sane default.
+        // Kept sparse enough to edit and rove, dense enough to hug the curve;
+        // spatial auto-bezier smooths between samples.
+        var verts = 0;
+        try {
+            if (pinfo.hasMask) {
+                var mp = pathLayer.property("ADBE Mask Parade").property(1).property("ADBE Mask Shape");
+                verts = mp.value.vertices.length;
+            }
+        } catch (eV) {}
+        var N = verts ? verts * 3 : 32;
+        if (N < 12) N = 12; if (N > 90) N = 90;
+
+        // Sample the path in correct comp/parent space by driving Position with a
+        // throwaway expression (time → path parameter), reading valueAtTime, then
+        // clearing it. This gets toComp/fromComp handling for free, unlike AE's
+        // native path-paste which dumps raw layer-space vertex coords.
+        var sampleExpr =
             "try{\n" +
             "  var L=thisComp.layer(\"" + LN + "\");\n" +
             "  var pth=L." + REF + ";\n" +
-            "  var s=effect(\"Follow Path\")(\"Slider\")/100;\n" +
+            "  var s=linear(time," + t0 + "," + t1 + ",0,1);\n" +
             "  s=Math.max(0,Math.min(1,s));\n" +
             "  var cp=L.toComp(pth.pointOnPath(s,time));\n" +
             "  (thisLayer.hasParent)?thisLayer.parent.fromComp(cp):cp;\n" +
             "}catch(err){ value }";
 
-        var rotExpr =
-            "try{\n" +
-            "  var L=thisComp.layer(\"" + LN + "\");\n" +
-            "  var pth=L." + REF + ";\n" +
-            "  var s=effect(\"Follow Path\")(\"Slider\")/100;\n" +
-            "  s=Math.max(0,Math.min(1,s));\n" +
-            "  var d=0.002;\n" +
-            "  var p1=L.toComp(pth.pointOnPath(Math.max(0,s-d),time));\n" +
-            "  var p2=L.toComp(pth.pointOnPath(Math.min(1,s+d),time));\n" +
-            "  radiansToDegrees(Math.atan2(p2[1]-p1[1],p2[0]-p1[0]));\n" +
-            "}catch(err){ value }";
+        var tg = objLayer.property("ADBE Transform Group");
+        var pos = tg.property("ADBE Position");
 
         app.beginUndoGroup("ZeusPack: Follow Path");
         var oriented = false;
         try {
-            // Reuse an existing "Follow Path" slider so re-running doesn't stack them.
-            var par = objLayer.property("ADBE Effect Parade"), fx = null, ei;
-            for (ei = 1; ei <= par.numProperties; ei++) {
-                if (String(par.property(ei).name) === "Follow Path") { fx = par.property(ei); break; }
+            // Sample the path in comp space via the throwaway expression, then drop it.
+            var times = [], pv = [], i, t;
+            pos.expression = sampleExpr;
+            for (i = 0; i <= N; i++) {
+                t = (i === N) ? t1 : (t0 + (t1 - t0) * i / N);
+                times.push(t);
+                pv.push(pos.valueAtTime(t, false));
             }
-            if (!fx) { fx = par.addProperty("ADBE Slider Control"); try { fx.name = "Follow Path"; } catch (eN) {} }
-            try { fx.property(1).setValue(0); } catch (eS) {}   // start at 0%
+            pos.expression = "";                       // drop the sampling helper
+            while (pos.numKeys > 0) pos.removeKey(1);   // clean slate
+            for (i = 0; i < times.length; i++) pos.setValueAtTime(times[i], pv[i]);
+            for (i = 1; i <= pos.numKeys; i++) {
+                try { pos.setSpatialAutoBezierAtKey(i, true); } catch (eB) {}
+            }
 
-            var tg = objLayer.property("ADBE Transform Group");
-            tg.property("ADBE Position").expression = posExpr;
+            // Clear any Rotate Z expression left by an older Follow Path version so
+            // it can't fight Auto-Orient (only ours, which referenced the slider).
+            try {
+                var rz = tg.property("ADBE Rotate Z");
+                if (rz.expressionEnabled && String(rz.expression).indexOf("Follow Path") >= 0) rz.expression = "";
+            } catch (eRz) {}
+
             if (orient) {
-                try { tg.property("ADBE Rotate Z").expression = rotExpr; oriented = true; } catch (eR) {}
+                try { objLayer.autoOrient = AutoOrientType.ALONG_PATH; oriented = true; } catch (eAO) {}
+            }
+
+            // Remove any leftover "Follow Path" slider from the old expression flow.
+            try {
+                var par = objLayer.property("ADBE Effect Parade");
+                for (var ep = par.numProperties; ep >= 1; ep--) {
+                    if (String(par.property(ep).name) === "Follow Path") par.property(ep).remove();
+                }
+            } catch (eFx) {}
+        } catch (eW) {
+            // Don't leave the sampling helper behind; the undo group reverts the rest.
+            try { pos.expression = ""; } catch (eR2) {}
+            throw eW;
+        } finally {
+            app.endUndoGroup();
+        }
+
+        var msg = "Follow Path: wrote " + times.length + " Position keyframes on \""
+                + String(objLayer.name) + "\" tracing \"" + String(pathLayer.name) + "\""
+                + (oriented ? ", Auto-Orient ▸ Along Path ON" : "")
+                + ". Edit on the motion path, or select the middle keyframes ▸ Rove Across Time.";
+        return _result(true, msg, {
+            object: String(objLayer.name), path: String(pathLayer.name),
+            pathKind: pinfo.hasMask ? "mask" : "shape", keys: times.length, oriented: oriented
+        });
+    } catch (e) {
+        try { app.endUndoGroup(); } catch (e2) {}
+        return _result(false, "Exception: " + e.toString());
+    }
+}
+
+// ── Separate shape content ────────────────────────────────────────────────────
+// Move the selected top-level shape groups out of their shape layer into a NEW
+// shape layer, keeping their look and position. The new layer is a duplicate of
+// the source (so it inherits the exact same layer transform), then each layer
+// keeps only its half of the groups: no coordinate math, position is exact.
+
+// Climb from a selected property to the top-level "Group" it lives in — the
+// ADBE Vector Group whose parent is the Root Vectors Group. null if the property
+// isn't inside a top-level shape group. Compares matchName, not object identity,
+// because parentProperty hands back a fresh wrapper each call.
+function _topLevelVectorGroup(pr) {
+    var cur = pr, guard = 0;
+    while (cur && guard++ < 64) {
+        var par = null; try { par = cur.parentProperty; } catch (e) { par = null; }
+        if (!par) return null;
+        var pmn = ""; try { pmn = String(par.matchName || ""); } catch (e2) {}
+        if (pmn === "ADBE Root Vectors Group") {
+            var mn = ""; try { mn = String(cur.matchName || ""); } catch (e3) {}
+            return (mn === "ADBE Vector Group") ? cur : null;
+        }
+        cur = par;
+    }
+    return null;
+}
+
+function zae_separateShape(params) {
+    try {
+        var comp = app.project ? app.project.activeItem : null;
+        if (!(comp instanceof CompItem)) return _result(false, "Open a composition first.");
+
+        // The shape layer whose content is selected (selecting a group selects its layer).
+        var lays = comp.selectedLayers || [], shp = null, cnt = 0, i;
+        for (i = 0; i < lays.length; i++) {
+            var isShape = false;
+            try { isShape = !!lays[i].property("ADBE Root Vectors Group"); } catch (eS) {}
+            if (isShape) { cnt++; shp = lays[i]; }
+        }
+        if (!shp)    return _result(false, "Select shape content (a group like \"Group 1\" or \"Rectangle 1\") in one shape layer first.");
+        if (cnt > 1) return _result(false, "Select content in just ONE shape layer.");
+
+        var root = shp.property("ADBE Root Vectors Group");
+
+        // Collect the top-level groups the selection touches, by their index in Contents.
+        var props = comp.selectedProperties || [], idxMap = {}, idxs = [], j;
+        for (j = 0; j < props.length; j++) {
+            var top = _topLevelVectorGroup(props[j]);
+            if (!top) continue;
+            var pi = 0; try { pi = top.propertyIndex; } catch (eI) {}
+            if (pi && !idxMap[pi]) { idxMap[pi] = 1; idxs.push(pi); }
+        }
+        if (!idxs.length) return _result(false, "No shape group selected. Select a group (e.g. \"Group 1\", \"Rectangle 1\") inside the shape layer — not the layer or \"Contents\".");
+        idxs.sort(function (a, b) { return a - b; });
+        if (idxs.length >= root.numProperties) return _result(false, "That selects every group in the layer — nothing would be left behind. Deselect at least one group.");
+
+        app.beginUndoGroup("ZeusPack: Separate Shape");
+        var nu = null;
+        try {
+            // Duplicate first — the copy carries the identical layer transform, so
+            // the separated groups land in exactly the same place.
+            nu = shp.duplicate();
+            try { nu.name = String(shp.name) + " • sep"; } catch (eN) {}
+
+            // Copy: drop every top-level group that ISN'T selected (high to low).
+            var nRoot = nu.property("ADBE Root Vectors Group"), k;
+            for (k = nRoot.numProperties; k >= 1; k--) {
+                if (!idxMap[k]) nRoot.property(k).remove();
+            }
+            // Source: drop the selected groups — they now live on the copy (high to low).
+            for (k = idxs.length - 1; k >= 0; k--) root.property(idxs[k]).remove();
+        } finally {
+            app.endUndoGroup();
+        }
+
+        return _result(true,
+            "Separated " + idxs.length + " group" + (idxs.length > 1 ? "s" : "")
+            + " from \"" + String(shp.name) + "\" into \"" + String(nu.name) + "\" — position kept.",
+            { source: String(shp.name), created: String(nu.name), groups: idxs.length });
+    } catch (e) {
+        try { app.endUndoGroup(); } catch (e2) {}
+        return _result(false, "Exception: " + e.toString());
+    }
+}
+
+// ── Text exploder ─────────────────────────────────────────────────────────────
+// Split the selected text layer(s) into one text layer per character / word /
+// line, each keeping its exact on-screen position. Each piece is a fresh text
+// layer that carries only its own glyphs (clean for per-piece animation), styled
+// from the source's TextDocument. Position is held by shifting the new layer's
+// ANCHOR POINT in layer space by the measured offset of the piece within the
+// original — so the source's Position, Scale and Rotation still apply unchanged.
+// Widths come from sourceRectAtTime (real rendered metrics), no font math.
+
+// Rendered width of a string in the measure layer's style. A trailing sentinel
+// defeats sourceRectAtTime trimming trailing whitespace, so spaces between the
+// text start and a piece are counted.
+function _txtRect(prop, layer, t, str) {
+    var d = prop.value; d.text = str; prop.setValue(d);
+    return layer.sourceRectAtTime(t, false);
+}
+function _txtWidth(prop, layer, t, str) {           // width including trailing spaces
+    if (str === "") return 0;
+    var wp = _txtRect(prop, layer, t, str + "l").width;
+    var wl = _txtRect(prop, layer, t, "l").width;
+    return wp - wl;
+}
+// Source Text lives under the Text group, not at the layer's top level, so
+// layer.property("ADBE Text Document") is null — reach it through the group.
+function _sourceTextProp(layer) {
+    var g = layer.property("ADBE Text Properties");
+    return g ? g.property("ADBE Text Document") : null;
+}
+
+function zae_explodeText(params) {
+    try {
+        params = params || {};
+        var mode = String(params.mode || "char");   // "char" | "word" | "line"
+
+        var comp = app.project ? app.project.activeItem : null;
+        if (!(comp instanceof CompItem)) return _result(false, "Open a composition first.");
+
+        var lays = comp.selectedLayers || [], targets = [], i;
+        for (i = 0; i < lays.length; i++) {
+            if (String(lays[i].matchName) === "ADBE Text Layer") targets.push(lays[i]);
+        }
+        if (!targets.length) return _result(false, "Select a text layer first.");
+
+        // Count pieces up front so a huge char explode can't run away.
+        function piecesOf(text) {
+            var out = [], m, re;
+            if (mode === "line") {
+                var lines = text.split(/\r\n|\r|\n/), off = 0, k;
+                for (k = 0; k < lines.length; k++) {
+                    var ls = lines[k];
+                    if (/\S/.test(ls)) out.push({ a: off, s: ls.replace(/\s+$/, "") });
+                    off += ls.length + 1;   // + the split char
+                }
+            } else if (mode === "word") {
+                re = /\S+/g;
+                while ((m = re.exec(text)) !== null) out.push({ a: m.index, s: m[0] });
+            } else {                          // char
+                for (var c = 0; c < text.length; c++) {
+                    if (/\S/.test(text.charAt(c))) out.push({ a: c, s: text.charAt(c) });
+                }
+            }
+            return out;
+        }
+
+        var total = 0, ti;
+        for (ti = 0; ti < targets.length; ti++) {
+            total += piecesOf(_sourceTextProp(targets[ti]).value.text).length;
+        }
+        if (!total) return _result(false, "Nothing to explode — the text layer is empty.");
+        if (total > 500) return _result(false, "That would make " + total + " layers. Pick a coarser mode (Word/Lines) or a shorter layer (max 500).");
+
+        var made = 0;
+        app.beginUndoGroup("ZeusPack: Explode Text (" + mode + ")");
+        try {
+            for (ti = 0; ti < targets.length; ti++) {
+                var src = targets[ti];
+                var srcTG = src.property("ADBE Transform Group");
+                var srcAnchor = srcTG.property("ADBE Anchor Point").value;
+                var srcPos   = srcTG.property("ADBE Position").value;
+                var srcScale = srcTG.property("ADBE Scale").value;
+                var srcRot   = srcTG.property("ADBE Rotate Z").value;
+                var srcOpac  = srcTG.property("ADBE Opacity").value;
+
+                var stProp = _sourceTextProp(src);
+                var full = stProp.value.text;
+                var just = stProp.value.justification;
+                var t = comp.time;
+
+                var pieces = piecesOf(full);
+                if (!pieces.length) continue;
+
+                // One reusable measure layer, forced into the source's style so
+                // its rendered widths match. addText() takes a string across all
+                // AE builds; the TextDocument is applied afterwards via setValue.
+                var measure = comp.layers.addText("Ag");
+                var mProp = _sourceTextProp(measure);
+                mProp.setValue(stProp.value);
+
+                // Per-line vertical step: two-line block height minus one-line.
+                var h1 = _txtRect(mProp, measure, t, "Ag").height;
+                var h2 = _txtRect(mProp, measure, t, "Ag\nAg").height;
+                var lineStep = (h2 - h1) || h1;
+
+                for (var p = 0; p < pieces.length; p++) {
+                    var a = pieces[p].a, s = pieces[p].s;
+                    var before = full.substring(0, a);
+                    var lineIndex = (before.match(/\n/g) || []).length;
+                    var lineStart = before.lastIndexOf("\n") + 1;
+
+                    var lwl = _txtWidth(mProp, measure, t, full.substring(lineStart, a));  // start-of-line to piece
+                    var pw  = _txtRect(mProp, measure, t, s).width;
+                    var lineEnd = full.indexOf("\n", a); if (lineEnd < 0) lineEnd = full.length;
+                    var lw = _txtWidth(mProp, measure, t, full.substring(lineStart, lineEnd).replace(/\s+$/, ""));
+
+                    var pieceLeft, newLeft;
+                    if (just === ParagraphJustification.CENTER_JUSTIFY) { pieceLeft = -lw / 2 + lwl; newLeft = -pw / 2; }
+                    else if (just === ParagraphJustification.RIGHT_JUSTIFY) { pieceLeft = -lw + lwl; newLeft = -pw; }
+                    else { pieceLeft = lwl; newLeft = 0; }
+                    var dx = pieceLeft - newLeft;
+                    var dy = lineIndex * lineStep;
+
+                    var nl = comp.layers.addText(s);       // string first (build-safe)
+                    var doc = stProp.value; doc.text = s;  // then adopt source style
+                    _sourceTextProp(nl).setValue(doc);
+                    nl.threeDLayer = false;
+                    // The piece layer is 2D, so feed 2-component transforms even when
+                    // the source was 3D (a 3-comp value would throw on setValue).
+                    var tg = nl.property("ADBE Transform Group");
+                    tg.property("ADBE Scale").setValue([srcScale[0], srcScale[1]]);
+                    tg.property("ADBE Rotate Z").setValue(srcRot);
+                    tg.property("ADBE Opacity").setValue(srcOpac);
+
+                    // Placement anchor that keeps the piece where it was in the source.
+                    var oldAx = srcAnchor[0] - dx, oldAy = srcAnchor[1] - dy;
+
+                    // Recentre the anchor on the glyph box so scaling/rotating this
+                    // piece pivots on its own centre. Moving the anchor shifts the
+                    // render, so Position is compensated by the same offset — run
+                    // through the layer's scale and rotation so it cancels exactly.
+                    var r = nl.sourceRectAtTime(t, false);
+                    var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+                    var ddx = cx - oldAx, ddy = cy - oldAy;
+                    var kx = srcScale[0] / 100, ky = srcScale[1] / 100;
+                    var rad = srcRot * Math.PI / 180, cs = Math.cos(rad), sn = Math.sin(rad);
+                    var ox = ddx * kx, oy = ddy * ky;
+                    tg.property("ADBE Anchor Point").setValue([cx, cy]);
+                    tg.property("ADBE Position").setValue([srcPos[0] + (ox * cs - oy * sn),
+                                                           srcPos[1] + (ox * sn + oy * cs)]);
+                    try { nl.startTime = src.startTime; } catch (eSt) {}
+                    try { nl.name = s.replace(/\s+/g, " "); } catch (eNm) {}
+                    // Stack just above the source in reading order: each new piece
+                    // goes right above the source, so the first piece ends on top.
+                    try { nl.moveBefore(src); } catch (eMv) {}
+                    made++;
+                }
+
+                measure.remove();
+                try { src.enabled = false; } catch (eEn) {}   // hide the original; pieces replace it
             }
         } finally {
             app.endUndoGroup();
         }
 
-        var msg = "Follow Path: \"" + String(objLayer.name) + "\" now follows \"" + String(pathLayer.name)
-                + "\" — keyframe its \"Follow Path\" slider (0-100%) to animate along the path"
-                + (oriented ? ", orienting to the travel direction" : "")
-                + ". Path read from a " + (pinfo.hasMask ? "mask" : "shape path") + ".";
-        return _result(true, msg, {
-            object: String(objLayer.name), path: String(pathLayer.name),
-            pathKind: pinfo.hasMask ? "mask" : "shape", oriented: oriented
-        });
+        return _result(true,
+            "Exploded into " + made + " text layer" + (made === 1 ? "" : "s") + " by " + mode
+            + ". The original layer was hidden — positions kept.",
+            { mode: mode, layers: made });
     } catch (e) {
         try { app.endUndoGroup(); } catch (e2) {}
         return _result(false, "Exception: " + e.toString());

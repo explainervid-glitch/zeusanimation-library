@@ -66,6 +66,10 @@
   var recenterBtn = document.getElementById("recenterBtn");
   var decomposeBtn = document.getElementById("decomposeBtn");
   var followBtn   = document.getElementById("followBtn");
+  var separateBtn = document.getElementById("separateBtn");
+  var explodeCharBtn = document.getElementById("explodeCharBtn");
+  var explodeWordBtn = document.getElementById("explodeWordBtn");
+  var explodeLineBtn = document.getElementById("explodeLineBtn");
   var toolGrip    = document.getElementById("toolGrip");
   var mainEl      = document.getElementById("main");
 
@@ -217,7 +221,7 @@
   // ExtensionBundleVersion in CSXS/manifest.xml: the update check tests
   // INEQUALITY against the repo's manifest, so a stale value here reports a
   // phantom "update available" against a repo that has not moved.
-  var PANEL_VERSION   = "1.0.19";
+  var PANEL_VERSION   = "1.0.20";
 
   var updateBtn = document.getElementById("updateBtn");
 
@@ -2247,7 +2251,8 @@
   // the panel — the buttons just fire and report.
   var TOOLS_KEY    = "zae.toolsOpen";
 
-  var toolButtons = [groupBtn, ungroupBtn, recenterBtn, decomposeBtn, followBtn];
+  var toolButtons = [groupBtn, ungroupBtn, recenterBtn, decomposeBtn, followBtn, separateBtn,
+                     explodeCharBtn, explodeWordBtn, explodeLineBtn];
 
   function runTool(fn, label, params) {
     var i;
@@ -2328,6 +2333,20 @@
 
   followBtn.addEventListener("click", function () {
     runTool("zae_followPath", "Follow Path", { orient: followOrientOn });
+  });
+
+  separateBtn.addEventListener("click", function () {
+    runTool("zae_separateShape", "Separate", {});
+  });
+
+  explodeCharBtn.addEventListener("click", function () {
+    runTool("zae_explodeText", "Explode Char", { mode: "char" });
+  });
+  explodeWordBtn.addEventListener("click", function () {
+    runTool("zae_explodeText", "Explode Word", { mode: "word" });
+  });
+  explodeLineBtn.addEventListener("click", function () {
+    runTool("zae_explodeText", "Explode Lines", { mode: "line" });
   });
 
   // ── Tool strip width (drag handle) ───────────────────────────
