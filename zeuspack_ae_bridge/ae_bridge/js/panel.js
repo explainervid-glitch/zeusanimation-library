@@ -3199,20 +3199,25 @@
   setStatusShown(statusShown);   // paints the saved choice onto the row
   setAutoplay(autoplayAll, false);
 
-  // Presets and Tools are mutually exclusive; the browser is the panel's main
-  // job, so it wins when both were left open. Decide presets first, then only
-  // open tools if presets is closed.
-  var savedOpen = null;
+  // Presets and Tools are mutually exclusive. On a FRESH install (neither key
+  // saved yet) the tools strip opens by default. Afterwards each is restored
+  // from its saved state, presets winning if somehow both were left open.
+  var savedOpen = null, savedTools = null;
   try { savedOpen = localStorage.getItem(PRESETS_KEY); } catch (e) {}
-  var wantPresets = (savedOpen === null ? true : savedOpen === "1");
+  try { savedTools = localStorage.getItem(TOOLS_KEY); } catch (e2) {}
 
-  var savedTools = null;
-  try { savedTools = localStorage.getItem(TOOLS_KEY); } catch (e) {}
-  setToolsOpen(!wantPresets && savedTools === "1");
+  var wantPresets, wantTools;
+  if (savedOpen === null && savedTools === null) {   // first-ever launch
+    wantTools = true; wantPresets = false;
+  } else {
+    wantPresets = (savedOpen === "1");
+    wantTools = (savedTools === "1") && !wantPresets;
+  }
+  setToolsOpen(wantTools);
 
   // Control panel starts closed; restore if it was left open.
   var savedControl = null;
-  try { savedControl = localStorage.getItem(CONTROL_KEY); } catch (e) {}
+  try { savedControl = localStorage.getItem(CONTROL_KEY); } catch (e3) {}
   if (savedControl === "1") setControlOpen(true);
 
   setPresetsOpen(wantPresets, true);
