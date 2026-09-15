@@ -169,6 +169,13 @@
     padding:5px 6px;
   }
   .log.open { display:flex; }
+  /* Once the user drags the log's top grip, it stops growing to fill and takes a
+     fixed, remembered height instead (main takes the rest). */
+  .log.sized { flex:0 0 var(--log-h,150px); }
+  /* Drag handle on the log's top edge. Negative margins let it span the log's
+     padding so the grab strip reaches the box edges. */
+  .loggrip { flex:0 0 auto; height:7px; margin:-5px -6px 2px; cursor:ns-resize; }
+  .loggrip:hover, .loggrip.drag { background:rgba(6,108,231,.25); }
   .logbar {
     flex:0 0 auto; display:flex; align-items:center;
     padding-bottom:4px; margin-bottom:4px; border-bottom:1px solid #2a2a2a;
@@ -321,17 +328,25 @@
   .trow { display:flex; }
   .trow .tbtn { flex:1 1 0; min-width:0; margin-bottom:0; margin-right:3px; }
   .trow .tbtn:last-child { margin-right:0; }
+  /* Separate / Combine / the three explode triggers (all .tunit .trow buttons):
+     outlined, a touch lighter than the panel, brightening on hover. */
+  .tunit .trow .tbtn { border:1px solid var(--border); background:#3d3d3d; }
+  .tunit .trow .tbtn:hover:not(:disabled) { background:#636363; }
 
   /* A sub-toggle chip inside a tool button (Follow Path ▸ Orient). Filled accent
      when on, plain outline when off. It stops its own click from running the
      button's action (handled in panel.js). */
   .tsub {
-    margin-top:4px; padding:2px 6px; border-radius:99px;
-    font-size:8px; font-weight:600; line-height:1; letter-spacing:.2px;
+    margin-top:4px; padding:3px 7px; border-radius:99px;
+    font-size:9px; font-weight:600; line-height:1; letter-spacing:.2px;
     border:1px solid var(--border); color:var(--muted); cursor:pointer;
   }
   .tsub:hover { border-color:var(--accent); color:var(--text); }
   .tsub.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+  /* A box of standalone toggle chips under a tool group (text-exploder options).
+     margin-right (not `gap`) for CEP 9; wraps when the strip is narrow. */
+  .tsubrow { display:flex; flex-wrap:wrap; margin-top:3px; }
+  .tsubrow .tsub { margin-top:0; margin-right:4px; margin-bottom:3px; }
   /* In the wide solo layout the button is a row, so the chip sits inline. */
   .main.solo .tsub { margin-top:0; margin-left:8px; }
   .tbtn:hover:not(:disabled) { background:#3d3d3d; color:var(--text); }
@@ -347,20 +362,51 @@
   }
 
   /* ── Solo: the strip is the only thing in the row ──────────────────────────
-     With the browser closed there is nothing to share the width with and
-     nothing to drag against, so the strip takes the whole row and the grip
-     goes away. At that width a stacked icon-over-label button reads as a tiny
-     glyph marooned in a wide box, so the buttons become ordinary rows: icon,
-     then label, left-aligned. */
+     With the browser closed there is nothing to share the width with and nothing
+     to drag against, so the strip takes the whole row and the grip goes away. */
   .main.solo .toolgrip { display:none; }
   .main.solo .tools    { flex:1; }
-  .main.solo .tbtn {
+  .main.solo .thead    { font-size:9px; padding-bottom:4px; }
+
+  /* ── Width-driven layout of the tool buttons ───────────────────────────────
+     The strip carries `.roomy` when it's wide enough for labels and `.tight`
+     when it isn't (set from its measured width in panel.js — solo is always
+     roomy). That way dragging the docked strip narrower/wider reflows the
+     buttons smoothly instead of only switching with the presets browser.
+
+     ROOMY: icon + label rows, left-aligned. Each button (or its Char/Word/Lines
+     row) shares one box with its toggle chips, chips pushed to the right. */
+  .tools.roomy .tbtn {
     flex-direction:row; justify-content:flex-start;
     min-height:26px; padding:4px 9px;
   }
-  .main.solo .tbtn svg { width:15px; height:15px; }
-  .main.solo .tbtn span { margin-top:0; margin-left:8px; font-size:11px; }
-  .main.solo .thead { font-size:9px; padding-bottom:4px; }
+  .tools.roomy .tbtn svg { width:15px; height:15px; }
+  .tools.roomy .tbtn span { margin-top:0; margin-left:8px; font-size:11px; }
+  .tools.roomy .tunit {
+    display:flex; align-items:center; flex-wrap:wrap; margin-bottom:3px; padding:3px 6px;
+    background:#2f2f2f; border:1px solid var(--border); border-radius:var(--r);
+  }
+  .tools.roomy .tunit > .tbtn { flex:1 1 auto; margin-bottom:0; background:transparent; border:0; padding:2px 3px; }
+  .tools.roomy .tunit > .tbtn:hover:not(:disabled) { background:#3d3d3d; color:var(--text); }
+  .tools.roomy .tunit > .trow { flex:0 0 auto; margin-bottom:0; }
+  .tools.roomy .tunit > .tsubrow { margin:0 0 0 auto; flex:0 0 auto; }
+  .tools.roomy .tunit .tsub { margin-bottom:0; }
+  /* Char/Word/Lines (and Separate/Combine) stay compact icon-only squares. */
+  .tools.roomy .tunit .trow .tbtn { flex:0 0 auto; width:34px; justify-content:center; padding:4px; }
+  .tools.roomy .tunit .trow .tbtn span { display:none; }
+
+  /* TIGHT: no room for labels, so every button drops to its icon (the tooltip
+     still names it). Each .tunit is a box holding its icon(s) with the toggle
+     chips inside, stacked below. */
+  .tools.tight .tbtn span { display:none; }
+  .tools.tight .tunit {
+    background:#2f2f2f; border:1px solid var(--border); border-radius:var(--r);
+    padding:4px; margin-bottom:3px;
+  }
+  .tools.tight .tunit > .tbtn { background:transparent; border:0; margin-bottom:0; }
+  .tools.tight .tunit > .tbtn:hover:not(:disabled) { background:#3d3d3d; color:var(--text); }
+  .tools.tight .tunit > .tsubrow { margin-top:4px; }
+  .tools.tight .tunit .tsub { margin-bottom:2px; }
 
   /* ── Preset browser — hidden until the wand button is toggled ── */
   /* min-width:0 matters now that this is a flex item in a ROW: without it the
@@ -928,20 +974,37 @@
       <div class="thead"><span class="tname">Manage Layer</span></div>
 
       <button class="tbtn" id="decomposeBtn"
-              title="Decompose: Lift a precomp's layers back into this comp, keeping them where they looked. Each layer comes across whole, including its own effects, masks, keyframes and expressions. Only things applied TO the precomp layer (effects, masks, blend mode) cannot follow, because they act on the flattened result; those are named in the log.">
+              title="Decompose: Lift a precomp's layers back into this comp, in place. Effects/masks applied TO the precomp layer can't follow — listed in the log.">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
              stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="1"/><path d="M14 4h6M17 1v6M14 20h6M17 17v6M4 14v6h6" stroke-dasharray="0"/><path d="M13 13l7 7"/></svg>
         <span>Decompose</span>
       </button>
+      <!-- Separate + Combine share a row; Separate's Center Anchor toggle sits in
+           the tunit's options box below. -->
+      <div class="tunit">
+      <div class="trow">
       <button class="tbtn" id="separateBtn"
-              title="Separate: Select one or more groups inside a shape layer (e.g. Group 1, Rectangle 1), then click. The selected groups move into a NEW shape layer, keeping their exact look and position.">
+              title="Separate: Move the selected shape groups (e.g. Group 1, Rectangle 1) into a new shape layer, keeping look and position.">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-             stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><path d="M8.12 8.12 12 12"/><path d="M20 4 8.12 15.88"/><circle cx="6" cy="18" r="3"/><path d="M14.8 14.8 20 20"/></svg>
+             stroke-linecap="round" stroke-linejoin="round"><path d="M8 7a4 4 0 1 0 8 0a4 4 0 1 0 -8 0"/><path d="M2.5 17a4 4 0 1 0 8 0a4 4 0 1 0 -8 0"/><path d="M13.5 17a4 4 0 1 0 8 0a4 4 0 1 0 -8 0"/></svg>
         <span>Separate</span>
       </button>
+      <button class="tbtn" id="combineBtn"
+              title="Combine: Select group(s) in one shape layer plus another shape layer to be the container, then click — the groups move into the container, keeping position. (Or select two+ whole shape layers to merge into the bottom one.)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M8 9.5a6.5 6.5 0 1 0 13 0a6.5 6.5 0 1 0 -13 0"/><path d="M3 14.5a6.5 6.5 0 1 0 13 0a6.5 6.5 0 1 0 -13 0"/></svg>
+        <span>Combine</span>
+      </button>
+      </div>
+      <!-- Options box for Separate — toggles read on the next run. -->
+      <div class="tsubrow" id="separateOpts">
+        <span class="tsub" id="separateCenter" title="After Separate or Combine, move the resulting shape layer's anchor point to the centre of its content (so scale/rotate pivots on its centre)">Center Anchor</span>
+      </div>
+      </div>
 
       <!-- Text exploder: split the selected text layer into one layer per
            character / word / line, positions kept. -->
+      <div class="tunit">
       <div class="trow">
       <button class="tbtn" id="explodeCharBtn"
               title="Explode text into one layer per character (positions kept). Select a text layer first.">
@@ -952,36 +1015,46 @@
       <button class="tbtn" id="explodeWordBtn"
               title="Explode text into one layer per word (positions kept). Select a text layer first.">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-             stroke-linecap="round" stroke-linejoin="round"><path d="M17 6.1H3"/><path d="M21 12.1H3"/><path d="M15.1 18H3"/></svg>
+             stroke-linecap="round" stroke-linejoin="round"><path d="M6 10h2a2 2 0 0 1 2 2v5h-3a2 2 0 1 1 0 -4h3"/><path d="M14 7v10"/><path d="M14 12a2 2 0 0 1 2 -2h1a2 2 0 0 1 2 2v3a2 2 0 0 1 -2 2h-1a2 2 0 0 1 -2 -2l0 -3"/></svg>
         <span>Word</span>
       </button>
       <button class="tbtn" id="explodeLineBtn"
               title="Explode text into one layer per line (positions kept). Select a text layer first.">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-             stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+             stroke-linecap="round" stroke-linejoin="round"><path d="M3 8l3 -3l3 3"/><path d="M3 16l3 3l3 -3"/><path d="M6 5l0 14"/><path d="M13 6l7 0"/><path d="M13 12l7 0"/><path d="M13 18l7 0"/></svg>
         <span>Lines</span>
       </button>
+      </div>
+      <!-- Options box for the text exploder — holds toggles that change how the
+           next Char/Word/Lines runs. Add future toggles here. -->
+      <div class="tsubrow" id="explodeOpts">
+        <span class="tsub" id="explodeCenter" title="After separating, move each piece's anchor point to the centre of its glyph (so scale/rotate pivots on its centre)">Center Anchor</span>
+        <span class="tsub" id="explodeReverse" title="Reverse the layer stacking order — the last character/word/line ends on top instead of the first">Reverse Order</span>
+      </div>
       </div>
       </div>
 
       <div class="tgroup">
       <div class="thead"><span class="tname">Automate</span></div>
 
+      <div class="tunit">
       <button class="tbtn" id="followBtn"
-              title="Follow Path: Select the object layer and the layer holding a path (a mask, or a shape-layer path), then click. Writes real Position keyframes tracing the path onto the object — animate directly on the motion path, and Rove Across Time works. 2D layers only.">
+              title="Follow Path: Select an object layer + a layer with a path (mask or shape path). Writes Position keyframes tracing the path — editable, Rove-able. 2D only.">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
              stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/></svg>
         <span>Follow Path</span>
-        <!-- Sub-toggle: whether to also turn on native Auto-Orient ▸ Along Path.
-             Its own click (stopPropagation'd in panel.js) flips it without running
-             the tool. -->
-        <span class="tsub" id="followOrient" title="Turn on Auto-Orient along the path direction">Orient</span>
       </button>
+      <!-- Options box for Follow Path — toggles read on the next run. -->
+      <div class="tsubrow" id="followOpts">
+        <span class="tsub" id="followOrient" title="After tracing the path, turn on native Auto-Orient ▸ Along Path so the object faces its travel direction">Orient</span>
+      </div>
+      </div>
       </div>
     </div>
   </div>
 
   <div class="log" id="log">
+    <div class="loggrip" id="logGrip" title="Drag to resize the log"></div>
     <div class="logbar">
       <!-- Lives here rather than in the status bar: its whole output is log
            lines, so it belongs with them. -->

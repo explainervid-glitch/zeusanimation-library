@@ -67,6 +67,7 @@
   var decomposeBtn = document.getElementById("decomposeBtn");
   var followBtn   = document.getElementById("followBtn");
   var separateBtn = document.getElementById("separateBtn");
+  var combineBtn  = document.getElementById("combineBtn");
   var explodeCharBtn = document.getElementById("explodeCharBtn");
   var explodeWordBtn = document.getElementById("explodeWordBtn");
   var explodeLineBtn = document.getElementById("explodeLineBtn");
@@ -221,7 +222,7 @@
   // ExtensionBundleVersion in CSXS/manifest.xml: the update check tests
   // INEQUALITY against the repo's manifest, so a stale value here reports a
   // phantom "update available" against a repo that has not moved.
-  var PANEL_VERSION   = "1.0.20";
+  var PANEL_VERSION   = "1.0.21";
 
   var updateBtn = document.getElementById("updateBtn");
 
@@ -2251,7 +2252,7 @@
   // the panel — the buttons just fire and report.
   var TOOLS_KEY    = "zae.toolsOpen";
 
-  var toolButtons = [groupBtn, ungroupBtn, recenterBtn, decomposeBtn, followBtn, separateBtn,
+  var toolButtons = [groupBtn, ungroupBtn, recenterBtn, decomposeBtn, followBtn, separateBtn, combineBtn,
                      explodeCharBtn, explodeWordBtn, explodeLineBtn];
 
   function runTool(fn, label, params) {
@@ -2324,8 +2325,7 @@
     if (followOrient) followOrient.className = followOrientOn ? "tsub on" : "tsub";
   }
   paintFollowOrient();
-  if (followOrient) followOrient.addEventListener("click", function (ev) {
-    ev.stopPropagation();   // flip the toggle without running Follow Path
+  if (followOrient) followOrient.addEventListener("click", function () {
     followOrientOn = !followOrientOn;
     try { localStorage.setItem(FOLLOW_ORIENT_KEY, followOrientOn ? "1" : "0"); } catch (e2) {}
     paintFollowOrient();
@@ -2335,18 +2335,70 @@
     runTool("zae_followPath", "Follow Path", { orient: followOrientOn });
   });
 
-  separateBtn.addEventListener("click", function () {
-    runTool("zae_separateShape", "Separate", {});
+  // Separate option: centre the new layer's anchor on its content.
+  var separateCenter = document.getElementById("separateCenter");
+  var SEPARATE_CENTER_KEY = "zae.separateCenter";
+  var separateCenterOn = false;   // default off (keeps the source anchor)
+  try { if (localStorage.getItem(SEPARATE_CENTER_KEY) === "1") separateCenterOn = true; } catch (e) {}
+  function paintSeparateCenter() {
+    if (separateCenter) separateCenter.className = separateCenterOn ? "tsub on" : "tsub";
+  }
+  paintSeparateCenter();
+  if (separateCenter) separateCenter.addEventListener("click", function () {
+    separateCenterOn = !separateCenterOn;
+    try { localStorage.setItem(SEPARATE_CENTER_KEY, separateCenterOn ? "1" : "0"); } catch (e2) {}
+    paintSeparateCenter();
   });
 
+  separateBtn.addEventListener("click", function () {
+    runTool("zae_separateShape", "Separate", { center: separateCenterOn });
+  });
+  combineBtn.addEventListener("click", function () {
+    runTool("zae_combineShape", "Combine", { center: separateCenterOn });
+  });
+
+  // Text-exploder option: centre each piece's anchor on its glyph. Remembered,
+  // read when a Char/Word/Lines run fires.
+  var explodeCenter = document.getElementById("explodeCenter");
+  var EXPLODE_CENTER_KEY = "zae.explodeCenter";
+  var explodeCenterOn = false;   // default off (keeps the source anchor placement)
+  try { if (localStorage.getItem(EXPLODE_CENTER_KEY) === "1") explodeCenterOn = true; } catch (e) {}
+  function paintExplodeCenter() {
+    if (explodeCenter) explodeCenter.className = explodeCenterOn ? "tsub on" : "tsub";
+  }
+  paintExplodeCenter();
+  if (explodeCenter) explodeCenter.addEventListener("click", function () {
+    explodeCenterOn = !explodeCenterOn;
+    try { localStorage.setItem(EXPLODE_CENTER_KEY, explodeCenterOn ? "1" : "0"); } catch (e2) {}
+    paintExplodeCenter();
+  });
+
+  // Text-exploder option: reverse the layer stacking (last piece on top).
+  var explodeReverse = document.getElementById("explodeReverse");
+  var EXPLODE_REVERSE_KEY = "zae.explodeReverse";
+  var explodeReverseOn = false;   // default off (first piece on top)
+  try { if (localStorage.getItem(EXPLODE_REVERSE_KEY) === "1") explodeReverseOn = true; } catch (e) {}
+  function paintExplodeReverse() {
+    if (explodeReverse) explodeReverse.className = explodeReverseOn ? "tsub on" : "tsub";
+  }
+  paintExplodeReverse();
+  if (explodeReverse) explodeReverse.addEventListener("click", function () {
+    explodeReverseOn = !explodeReverseOn;
+    try { localStorage.setItem(EXPLODE_REVERSE_KEY, explodeReverseOn ? "1" : "0"); } catch (e2) {}
+    paintExplodeReverse();
+  });
+
+  function explodeOpts(mode) {
+    return { mode: mode, center: explodeCenterOn, reverse: explodeReverseOn };
+  }
   explodeCharBtn.addEventListener("click", function () {
-    runTool("zae_explodeText", "Explode Char", { mode: "char" });
+    runTool("zae_explodeText", "Explode Char", explodeOpts("char"));
   });
   explodeWordBtn.addEventListener("click", function () {
-    runTool("zae_explodeText", "Explode Word", { mode: "word" });
+    runTool("zae_explodeText", "Explode Word", explodeOpts("word"));
   });
   explodeLineBtn.addEventListener("click", function () {
-    runTool("zae_explodeText", "Explode Lines", { mode: "line" });
+    runTool("zae_explodeText", "Explode Lines", explodeOpts("line"));
   });
 
   // ── Tool strip width (drag handle) ───────────────────────────
@@ -2391,8 +2443,27 @@
       out = Math.min(out, Math.max(TOOLS_MIN, avail - PRESETS_MIN - GRIP_W));
     }
     document.documentElement.style.setProperty("--tools-w", out + "px");
+    applyToolsLayout(out);
     return out;
   }
+
+  // Width-driven button layout: `roomy` (icon + label) when there's room, `tight`
+  // (icon only) when narrow. Solo is always roomy. Called whenever the strip width
+  // or the solo state changes; setToolsOpen resets the class list, so it re-runs
+  // after that too. `w` is the just-computed strip width (avoids a reflow read).
+  var TOOLS_ROOMY_AT = 150;   // px of strip width needed before labels fit
+  function applyToolsLayout(w) {
+    if (!toolsEl) return;
+    var solo = mainEl && mainEl.className.indexOf("solo") !== -1;
+    if (w === undefined) { try { w = toolsEl.getBoundingClientRect().width; } catch (e) { w = 0; } }
+    var roomy = solo || (w >= TOOLS_ROOMY_AT);
+    toolsEl.classList.toggle("roomy", roomy);
+    toolsEl.classList.toggle("tight", !roomy);
+  }
+
+  // Reflow the strip when the whole panel is dragged wider/narrower (the ceiling
+  // for the strip moves, which can flip it between roomy and tight).
+  window.addEventListener("resize", function () { applyToolsWidth(); });
 
   function initToolsWidth() {
     var saved = null;
@@ -2508,7 +2579,10 @@
   }
 
   toolsBtn.addEventListener("click", function () {
-    setToolsOpen(toolsEl.className.indexOf("open") === -1);
+    var open = toolsEl.className.indexOf("open") === -1;
+    // Presets and Tools are mutually exclusive: opening one closes the other.
+    if (open && presetsEl.className.indexOf("open") !== -1) setPresetsOpen(false, false);
+    setToolsOpen(open);
   });
 
   // Collapsed = one status row only. Ask the host to shrink/grow the panel to
@@ -2547,11 +2621,53 @@
 
   logBtn.addEventListener("click", function () {
     var open = logEl.className.indexOf("open") === -1;
-    logEl.className = open ? "log open" : "log";
+    // Preserve the "sized" flag (a dragged log height) across open/close.
+    var sized = logEl.classList.contains("sized") ? " sized" : "";
+    logEl.className = (open ? "log open" : "log") + sized;
     logBtn.className = open ? "ico on" : "ico";
     logBtn.title = open ? "Hide log" : "Show log";
     syncHeight();
   });
+
+  // ── Log height (drag the top grip) ───────────────────────────
+  // The log fills the row by default (flex:1). The first drag switches it to a
+  // fixed, remembered height (the `sized` class), so main takes the rest.
+  var logGrip = document.getElementById("logGrip");
+  var LOG_H_KEY = "zae.logHeight";
+  function applyLogHeight(h) {
+    var max = (window.innerHeight || 600) - 110;   // leave room for the bar + some main
+    var v = Math.max(70, Math.min(max, Math.round(Number(h) || 150)));
+    document.documentElement.style.setProperty("--log-h", v + "px");
+    return v;
+  }
+  (function initLogHeight() {
+    var saved = null;
+    try { saved = localStorage.getItem(LOG_H_KEY); } catch (e) {}
+    if (saved !== null) { applyLogHeight(saved); logEl.classList.add("sized"); }
+    else applyLogHeight(150);
+
+    if (logGrip) logGrip.addEventListener("pointerdown", function (ev) {
+      ev.preventDefault();
+      closeMenu();
+      var startY = ev.clientY;
+      var startH = logEl.getBoundingClientRect().height;
+      logEl.classList.add("sized");   // stop filling; honour the dragged height
+      logGrip.className = "loggrip drag";
+
+      function onMove(e) {
+        applyLogHeight(startH + (startY - e.clientY));   // drag up = taller
+        syncHeight();
+      }
+      function onUp() {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        logGrip.className = "loggrip";
+        try { localStorage.setItem(LOG_H_KEY, String(Math.round(logEl.getBoundingClientRect().height))); } catch (e2) {}
+      }
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    });
+  })();
 
   // ── Text Control panel ───────────────────────────────────────
   // Shows the properties BOUND to the selected Text preset (.zfx), read live
@@ -2974,7 +3090,10 @@
   }
 
   presetBtn.addEventListener("click", function () {
-    setPresetsOpen(presetsEl.className.indexOf("open") === -1, false);
+    var open = presetsEl.className.indexOf("open") === -1;
+    // Presets and Tools are mutually exclusive: opening one closes the other.
+    if (open && toolsEl.className.indexOf("open") !== -1) setToolsOpen(false);
+    setPresetsOpen(open, false);
   });
 
   // ── Settings modal (gear button in the top bar) ─────────────
@@ -3080,22 +3199,23 @@
   setStatusShown(statusShown);   // paints the saved choice onto the row
   setAutoplay(autoplayAll, false);
 
-  // Tools start closed — the browser is the panel's main job. Set before the
-  // browser so syncHeight only runs once with both states settled.
+  // Presets and Tools are mutually exclusive; the browser is the panel's main
+  // job, so it wins when both were left open. Decide presets first, then only
+  // open tools if presets is closed.
+  var savedOpen = null;
+  try { savedOpen = localStorage.getItem(PRESETS_KEY); } catch (e) {}
+  var wantPresets = (savedOpen === null ? true : savedOpen === "1");
+
   var savedTools = null;
   try { savedTools = localStorage.getItem(TOOLS_KEY); } catch (e) {}
-  setToolsOpen(savedTools === "1");
+  setToolsOpen(!wantPresets && savedTools === "1");
 
   // Control panel starts closed; restore if it was left open.
   var savedControl = null;
   try { savedControl = localStorage.getItem(CONTROL_KEY); } catch (e) {}
   if (savedControl === "1") setControlOpen(true);
 
-  // Browser is open by default; after that the panel remembers whether it was
-  // left open. Control can be open at the same time (it sits beside it).
-  var savedOpen = null;
-  try { savedOpen = localStorage.getItem(PRESETS_KEY); } catch (e) {}
-  setPresetsOpen(savedOpen === null ? true : savedOpen === "1", true);
+  setPresetsOpen(wantPresets, true);
 
   checkForUpdate();
   log("Panel started. Polling ZeusPack…");

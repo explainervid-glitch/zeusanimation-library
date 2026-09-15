@@ -4990,8 +4990,10 @@ function zae_followPath(params) {
             // Both have a path — a mask is the deliberate "guide", so prefer it.
             if (pa.hasMask && !pb.hasMask)      { pathLayer = a; objLayer = b; pinfo = pa; }
             else if (pb.hasMask && !pa.hasMask) { pathLayer = b; objLayer = a; pinfo = pb; }
-            else return _result(false, "Both selected layers have a path — can't tell which is the object. "
-                              + "Draw the guide path as a MASK on one layer, or select a non-path object.");
+            // Same kind on both (two shape paths, or two masks): AE gives no click
+            // order, only stacking order, so use it — TOP selected layer = object,
+            // BOTTOM = path. sel[0] is the topmost selected layer.
+            else { objLayer = a; pathLayer = b; pinfo = pb; }
         } else {
             return _result(false, "Neither selected layer has a path. Draw a line with the pen tool on the path layer first.");
         }
@@ -5129,8 +5131,32 @@ function _topLevelVectorGroup(pr) {
     return null;
 }
 
+// Move a layer's anchor point to the centre of its rendered content, and shift
+// Position by the same amount (through the layer's scale + Z rotation) so the
+// layer doesn't move. 2D only — a 3D layer is left untouched.
+function _centerAnchorOnContent(layer, t) {
+    try {
+        if (layer.threeDLayer) return false;
+        var r = layer.sourceRectAtTime(t, false);
+        if (!r || !r.width || !r.height) return false;
+        var tg = layer.property("ADBE Transform Group");
+        var A = tg.property("ADBE Anchor Point").value;
+        var P = tg.property("ADBE Position").value;
+        var S = tg.property("ADBE Scale").value;
+        var R = tg.property("ADBE Rotate Z").value;
+        var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+        var ddx = cx - A[0], ddy = cy - A[1];
+        var ox = ddx * (S[0] / 100), oy = ddy * (S[1] / 100);
+        var rad = R * Math.PI / 180, cs = Math.cos(rad), sn = Math.sin(rad);
+        tg.property("ADBE Anchor Point").setValue([cx, cy]);
+        tg.property("ADBE Position").setValue([P[0] + (ox * cs - oy * sn), P[1] + (ox * sn + oy * cs)]);
+        return true;
+    } catch (e) { return false; }
+}
+
 function zae_separateShape(params) {
     try {
+        var doCenter = !!(params && params.center);
         var comp = app.project ? app.project.activeItem : null;
         if (!(comp instanceof CompItem)) return _result(false, "Open a composition first.");
 
@@ -5173,14 +5199,215 @@ function zae_separateShape(params) {
             }
             // Source: drop the selected groups — they now live on the copy (high to low).
             for (k = idxs.length - 1; k >= 0; k--) root.property(idxs[k]).remove();
+
+            // Optionally recentre the new layer's anchor on its content.
+            if (doCenter) _centerAnchorOnContent(nu, comp.time);
         } finally {
             app.endUndoGroup();
         }
 
         return _result(true,
             "Separated " + idxs.length + " group" + (idxs.length > 1 ? "s" : "")
-            + " from \"" + String(shp.name) + "\" into \"" + String(nu.name) + "\" — position kept.",
-            { source: String(shp.name), created: String(nu.name), groups: idxs.length });
+            + " from \"" + String(shp.name) + "\" into \"" + String(nu.name) + "\" — position kept"
+            + (doCenter ? ", anchor centred." : "."),
+            { source: String(shp.name), created: String(nu.name), groups: idxs.length, centered: doCenter });
+    } catch (e) {
+        try { app.endUndoGroup(); } catch (e2) {}
+        return _result(false, "Exception: " + e.toString());
+    }
+}
+
+// ── Combine shape (inverse of Separate) ───────────────────────────────────────
+// Bring shape groups from other layers into one target shape layer, keeping how
+// they look. Two flows:
+//   1. Two+ shape layers selected, no group selection -> merge every layer into
+//      the bottom-most selected one (the others are deleted once emptied).
+//   2. Group(s) selected in one layer plus a second shape layer selected -> move
+//      just those groups into that second layer.
+// AE has no cross-layer "copy property" API, so the internal Copy/Paste commands
+// do the transfer. Paste lands the group in the target's own space, so its group
+// Transform ▸ Position is nudged by the layers' offset to hold it in place —
+// exact when the two layers share scale/rotation (differences are flagged).
+function _xf(layer) {
+    var tg = layer.property("ADBE Transform Group");
+    return {
+        pos: tg.property("ADBE Position").value,
+        anc: tg.property("ADBE Anchor Point").value,
+        scl: tg.property("ADBE Scale").value,
+        rot: tg.property("ADBE Rotate Z").value
+    };
+}
+function _approxEq(a, b) { return Math.abs(a - b) <= 0.01; }
+function _sameScaleRot(x, y) {
+    return _approxEq(x.scl[0], y.scl[0]) && _approxEq(x.scl[1], y.scl[1]) && _approxEq(x.rot, y.rot);
+}
+function _deselectAll(comp) {
+    for (var i = 1; i <= comp.numLayers; i++) { try { comp.layer(i).selected = false; } catch (e) {} }
+}
+// Deep-clone a shape property tree from src into dst — the reliable cross-layer
+// transfer AE gives no direct API for (and the clipboard route proved flaky). It
+// walks the tree: indexed groups (Contents) get each child re-added by matchName;
+// named groups (Transform) match the auto-created child and copy leaf values,
+// keyframes and expressions.
+function _isGroupProp(p) {
+    try { return p.propertyType === PropertyType.INDEXED_GROUP || p.propertyType === PropertyType.NAMED_GROUP; }
+    catch (e) { return false; }
+}
+function _childByMatch(grp, mn) {
+    for (var i = 1; i <= grp.numProperties; i++) {
+        try { if (String(grp.property(i).matchName) === mn) return grp.property(i); } catch (e) {}
+    }
+    return null;
+}
+function _copyLeaf(sp, dp) {
+    try {
+        if (sp.numKeys && sp.numKeys > 0) {
+            for (var k = 1; k <= sp.numKeys; k++) {
+                try { dp.setValueAtTime(sp.keyTime(k), sp.keyValue(k)); } catch (e) {}
+            }
+        } else {
+            try { dp.setValue(sp.value); } catch (e2) {}
+        }
+    } catch (e3) {}
+    try { if (sp.expressionEnabled && sp.expression) dp.expression = sp.expression; } catch (e4) {}
+}
+function _copyGroupTree(src, dst) {
+    var indexed = false;
+    try { indexed = (src.propertyType === PropertyType.INDEXED_GROUP); } catch (e) {}
+    for (var i = 1; i <= src.numProperties; i++) {
+        var sp = null; try { sp = src.property(i); } catch (e1) {}
+        if (!sp) continue;
+        var dp = null, mn = "";
+        try { mn = String(sp.matchName); } catch (e2) {}
+        if (indexed) {
+            try { dp = dst.addProperty(mn); } catch (eA) { dp = null; }
+            if (dp) { try { dp.name = sp.name; } catch (eN) {} }
+        } else {
+            dp = _childByMatch(dst, mn);
+            if (!dp) { try { dp = dst.addProperty(mn); } catch (eA2) { dp = null; } }
+        }
+        if (!dp) continue;
+        if (_isGroupProp(sp)) _copyGroupTree(sp, dp);
+        else _copyLeaf(sp, dp);
+    }
+}
+// Clone one top-level shape group into dstRoot; returns the new group (or null).
+function _cloneTopGroup(srcGroup, dstRoot) {
+    var ng = null;
+    try { ng = dstRoot.addProperty(String(srcGroup.matchName)); } catch (e) { return null; }
+    try { ng.name = srcGroup.name; } catch (eN) {}
+    _copyGroupTree(srcGroup, ng);
+    return ng;
+}
+
+function zae_combineShape(params) {
+    try {
+        var doCenter = !!(params && params.center);
+        var comp = app.project ? app.project.activeItem : null;
+        if (!(comp instanceof CompItem)) return _result(false, "Open a composition first.");
+
+        var sel = comp.selectedLayers || [], shapes = [], i;
+        for (i = 0; i < sel.length; i++) {
+            var isShape = false;
+            try { isShape = !!sel[i].property("ADBE Root Vectors Group"); } catch (eS) {}
+            if (isShape) shapes.push(sel[i]);
+        }
+        if (!shapes.length) return _result(false, "Select shape content plus a container shape layer to combine.");
+
+        // Selected top-level groups, grouped by their owner layer index.
+        var props = comp.selectedProperties || [], byLayer = {}, j;
+        for (j = 0; j < props.length; j++) {
+            var top = _topLevelVectorGroup(props[j]);
+            if (!top) continue;
+            var lay = null; try { lay = top.parentProperty.parentProperty; } catch (eL) {}
+            if (!lay) continue;
+            var li = lay.index, pi = top.propertyIndex;
+            if (!byLayer[li]) byLayer[li] = { layer: lay, idx: [], seen: {} };
+            if (!byLayer[li].seen[pi]) { byLayer[li].seen[pi] = 1; byLayer[li].idx.push(pi); }
+        }
+        var hasGroupSel = false; for (var kk in byLayer) { if (byLayer.hasOwnProperty(kk)) hasGroupSel = true; }
+
+        // Container = the selected shape layer that has NO selected groups. Sources
+        // are described as {layer, idx[]}: the groups to move out of each.
+        var container = null, sources = [];
+        if (hasGroupSel) {
+            var conts = [];
+            for (i = 0; i < shapes.length; i++) { if (!byLayer[shapes[i].index]) conts.push(shapes[i]); }
+            if (conts.length !== 1) {
+                return _result(false, "Select the group(s) to move in one layer, then also select exactly ONE other shape layer as the container.");
+            }
+            container = conts[0];
+            for (var key in byLayer) {
+                if (!byLayer.hasOwnProperty(key)) continue;
+                var rec = byLayer[key];
+                if (rec.layer.index === container.index) continue;
+                rec.idx.sort(function (a, b) { return a - b; });
+                sources.push({ layer: rec.layer, idx: rec.idx });
+            }
+        } else {
+            // No group selection: merge whole layers into the bottom-most selected.
+            if (shapes.length < 2) return _result(false, "Select shape content plus a container layer, or select two+ whole shape layers.");
+            container = shapes[0];
+            for (i = 1; i < shapes.length; i++) { if (shapes[i].index > container.index) container = shapes[i]; }
+            for (i = 0; i < shapes.length; i++) {
+                if (shapes[i].index === container.index) continue;
+                var sroot = shapes[i].property("ADBE Root Vectors Group"), all = [], q;
+                for (q = 1; q <= sroot.numProperties; q++) all.push(q);
+                sources.push({ layer: shapes[i], idx: all, whole: true });
+            }
+        }
+        if (!sources.length) return _result(false, "Nothing to combine — select groups in one layer plus a separate container layer.");
+
+        var dstRoot = container.property("ADBE Root Vectors Group");
+        var xt = _xf(container);
+        var warn = [], moved = 0, layersDeleted = 0;
+
+        app.beginUndoGroup("ZeusPack: Combine Shape");
+        try {
+            for (var s = 0; s < sources.length; s++) {
+                var srcLayer = sources[s].layer, idx = sources[s].idx;
+                var xs = _xf(srcLayer);
+                // Comp offset from the source layer's origin to the container's, so a
+                // cloned group renders where it did. Exact when both share scale 100%
+                // and rotation 0°; otherwise flagged.
+                var dx = (xs.pos[0] - xs.anc[0]) - (xt.pos[0] - xt.anc[0]);
+                var dy = (xs.pos[1] - xs.anc[1]) - (xt.pos[1] - xt.anc[1]);
+                var srcRoot = srcLayer.property("ADBE Root Vectors Group"), m;
+
+                for (m = 0; m < idx.length; m++) {
+                    var g = null; try { g = srcRoot.property(idx[m]); } catch (eG) {}
+                    if (!g) continue;
+                    var ng = _cloneTopGroup(g, dstRoot);
+                    if (!ng) continue;
+                    moved++;
+                    try {
+                        var gp = ng.property("ADBE Vector Transform Group").property("ADBE Vector Position");
+                        var cur = gp.value; gp.setValue([cur[0] + dx, cur[1] + dy]);
+                    } catch (eP) {}
+                }
+                if (!_sameScaleRot(xs, xt)) warn.push(String(srcLayer.name));
+
+                // Remove the originals (high to low).
+                for (m = idx.length - 1; m >= 0; m--) { try { srcRoot.property(idx[m]).remove(); } catch (eR) {} }
+                // Delete the source layer if nothing is left in its Contents — the
+                // whole-layer merge always empties it; a group move empties it only
+                // when every group was taken.
+                var emptyNow = false; try { emptyNow = (srcRoot.numProperties === 0); } catch (eN2) {}
+                if (sources[s].whole || emptyNow) { try { srcLayer.remove(); layersDeleted++; } catch (eD) {} }
+            }
+            // Optionally recentre the container's anchor on its (now larger) content.
+            if (doCenter) _centerAnchorOnContent(container, comp.time);
+            try { _deselectAll(comp); container.selected = true; } catch (eT) {}
+        } finally {
+            app.endUndoGroup();
+        }
+
+        var msg = "Combined " + moved + " group" + (moved === 1 ? "" : "s")
+                + (layersDeleted ? " (" + layersDeleted + " layer" + (layersDeleted === 1 ? "" : "s") + " emptied)" : "")
+                + " into \"" + String(container.name) + "\"";
+        msg += warn.length ? " — position may shift for " + warn.join(", ") + " (scale/rotation not 100%/0°)."
+                           : " — position kept.";
+        return _result(true, msg, { container: String(container.name), groups: moved, warned: warn.length });
     } catch (e) {
         try { app.endUndoGroup(); } catch (e2) {}
         return _result(false, "Exception: " + e.toString());
@@ -5203,11 +5430,16 @@ function _txtRect(prop, layer, t, str) {
     var d = prop.value; d.text = str; prop.setValue(d);
     return layer.sourceRectAtTime(t, false);
 }
-function _txtWidth(prop, layer, t, str) {           // width including trailing spaces
+function _txtWidth(prop, layer, t, str) {
     if (str === "") return 0;
-    var wp = _txtRect(prop, layer, t, str + "l").width;
-    var wl = _txtRect(prop, layer, t, "l").width;
-    return wp - wl;
+    // A trailing space is trimmed by sourceRectAtTime, so measure it with a
+    // sentinel and subtract the sentinel back. Without a trailing space, measure
+    // the string directly — injecting a sentinel glyph would add its own kerning
+    // and skew the result.
+    if (/\s$/.test(str)) {
+        return _txtRect(prop, layer, t, str + "l").width - _txtRect(prop, layer, t, "l").width;
+    }
+    return _txtRect(prop, layer, t, str).width;
 }
 // Source Text lives under the Text group, not at the layer's top level, so
 // layer.property("ADBE Text Document") is null — reach it through the group.
@@ -5220,6 +5452,8 @@ function zae_explodeText(params) {
     try {
         params = params || {};
         var mode = String(params.mode || "char");   // "char" | "word" | "line"
+        var doCenter = !!params.center;              // move each piece's anchor to its glyph centre
+        var reverse = !!params.reverse;              // last piece on top instead of first
 
         var comp = app.project ? app.project.activeItem : null;
         if (!(comp instanceof CompItem)) return _result(false, "Open a composition first.");
@@ -5271,12 +5505,16 @@ function zae_explodeText(params) {
                 var srcOpac  = srcTG.property("ADBE Opacity").value;
 
                 var stProp = _sourceTextProp(src);
-                var full = stProp.value.text;
+                // AE stores text line breaks as CR (\r), sometimes CRLF. Normalise to
+                // \n so the newline math below (lineIndex, lineStart, lineEnd) works —
+                // otherwise every piece reads as line 0 and lands on the first line.
+                var full = String(stProp.value.text).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
                 var just = stProp.value.justification;
                 var t = comp.time;
 
                 var pieces = piecesOf(full);
                 if (!pieces.length) continue;
+                var stackAnchor = src;   // where the next piece stacks (see moveBefore below)
 
                 // One reusable measure layer, forced into the source's style so
                 // its rendered widths match. addText() takes a string across all
@@ -5296,8 +5534,12 @@ function zae_explodeText(params) {
                     var lineIndex = (before.match(/\n/g) || []).length;
                     var lineStart = before.lastIndexOf("\n") + 1;
 
-                    var lwl = _txtWidth(mProp, measure, t, full.substring(lineStart, a));  // start-of-line to piece
-                    var pw  = _txtRect(mProp, measure, t, s).width;
+                    // Pen-x at the piece start, measured THROUGH the piece then minus
+                    // the piece width, so the kerning pair between the char before the
+                    // piece and the piece's first glyph is included (measuring the bare
+                    // prefix would drop that pair and drift the piece a fraction left).
+                    var pw  = _txtWidth(mProp, measure, t, s);
+                    var lwl = _txtWidth(mProp, measure, t, full.substring(lineStart, a) + s) - pw;
                     var lineEnd = full.indexOf("\n", a); if (lineEnd < 0) lineEnd = full.length;
                     var lw = _txtWidth(mProp, measure, t, full.substring(lineStart, lineEnd).replace(/\s+$/, ""));
 
@@ -5322,24 +5564,31 @@ function zae_explodeText(params) {
                     // Placement anchor that keeps the piece where it was in the source.
                     var oldAx = srcAnchor[0] - dx, oldAy = srcAnchor[1] - dy;
 
-                    // Recentre the anchor on the glyph box so scaling/rotating this
-                    // piece pivots on its own centre. Moving the anchor shifts the
-                    // render, so Position is compensated by the same offset — run
-                    // through the layer's scale and rotation so it cancels exactly.
-                    var r = nl.sourceRectAtTime(t, false);
-                    var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-                    var ddx = cx - oldAx, ddy = cy - oldAy;
-                    var kx = srcScale[0] / 100, ky = srcScale[1] / 100;
-                    var rad = srcRot * Math.PI / 180, cs = Math.cos(rad), sn = Math.sin(rad);
-                    var ox = ddx * kx, oy = ddy * ky;
-                    tg.property("ADBE Anchor Point").setValue([cx, cy]);
-                    tg.property("ADBE Position").setValue([srcPos[0] + (ox * cs - oy * sn),
-                                                           srcPos[1] + (ox * sn + oy * cs)]);
+                    if (doCenter) {
+                        // Recentre the anchor on the glyph box so scaling/rotating this
+                        // piece pivots on its own centre. Moving the anchor shifts the
+                        // render, so Position is compensated by the same offset — run
+                        // through the layer's scale and rotation so it cancels exactly.
+                        var r = nl.sourceRectAtTime(t, false);
+                        var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+                        var ddx = cx - oldAx, ddy = cy - oldAy;
+                        var kx = srcScale[0] / 100, ky = srcScale[1] / 100;
+                        var rad = srcRot * Math.PI / 180, cs = Math.cos(rad), sn = Math.sin(rad);
+                        var ox = ddx * kx, oy = ddy * ky;
+                        tg.property("ADBE Anchor Point").setValue([cx, cy]);
+                        tg.property("ADBE Position").setValue([srcPos[0] + (ox * cs - oy * sn),
+                                                               srcPos[1] + (ox * sn + oy * cs)]);
+                    } else {
+                        tg.property("ADBE Anchor Point").setValue([oldAx, oldAy]);
+                        tg.property("ADBE Position").setValue([srcPos[0], srcPos[1]]);
+                    }
                     try { nl.startTime = src.startTime; } catch (eSt) {}
                     try { nl.name = s.replace(/\s+/g, " "); } catch (eNm) {}
-                    // Stack just above the source in reading order: each new piece
-                    // goes right above the source, so the first piece ends on top.
-                    try { nl.moveBefore(src); } catch (eMv) {}
+                    // Stacking. Normal: every piece goes just above the source, so
+                    // the first piece ends on top. Reverse: each piece goes above the
+                    // previous one, so the last piece ends on top (first just above src).
+                    try { nl.moveBefore(reverse ? stackAnchor : src); } catch (eMv) {}
+                    stackAnchor = nl;
                     made++;
                 }
 
