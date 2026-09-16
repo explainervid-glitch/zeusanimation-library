@@ -222,7 +222,7 @@
   // ExtensionBundleVersion in CSXS/manifest.xml: the update check tests
   // INEQUALITY against the repo's manifest, so a stale value here reports a
   // phantom "update available" against a repo that has not moved.
-  var PANEL_VERSION   = "1.0.21";
+  var PANEL_VERSION   = "1.0.22";
 
   var updateBtn = document.getElementById("updateBtn");
 
@@ -2284,25 +2284,42 @@
 
   var CENTER_LABEL = { bounds: "Bounding box", anchor: "Anchor point" };
 
-  // Null placement now lives in the Settings modal; the group's inline gear is
-  // gone. setGroupCenter stays: Group and Recenter read groupCenter, and the
-  // modal writes it through here.
+  // Null placement lives in the Null Parent tool's own options popover (a radio
+  // pair). Group and Recenter both read groupCenter; setGroupCenter writes it and
+  // repaints the chips.
+  var nullBounds = document.getElementById("nullBounds");
+  var nullAnchor = document.getElementById("nullAnchor");
+  function paintNullPlacement() {
+    if (nullBounds) nullBounds.className = (groupCenter === "bounds") ? "tsub on" : "tsub";
+    if (nullAnchor) nullAnchor.className = (groupCenter === "anchor") ? "tsub on" : "tsub";
+  }
   function setGroupCenter(mode) {
     groupCenter = (mode === "anchor") ? "anchor" : "bounds";
     try { localStorage.setItem(CENTER_KEY, groupCenter); } catch (e2) {}
+    paintNullPlacement();
     log("Null placement: " + CENTER_LABEL[groupCenter], "ok");
     flash("Null placement: " + CENTER_LABEL[groupCenter]);
   }
+  paintNullPlacement();
+  if (nullBounds) nullBounds.addEventListener("click", function () { setGroupCenter("bounds"); });
+  if (nullAnchor) nullAnchor.addEventListener("click", function () { setGroupCenter("anchor"); });
 
   // Decompose can also delete the emptied precomp from the Project panel (only
   // when nothing else uses it). Off by default; the Settings modal writes it.
   var DECOMP_DEL_KEY = "zae.deleteDecomposed";
   var deleteDecomposed = true;   // default; a saved "keep" (0) choice still wins
   try { if (localStorage.getItem(DECOMP_DEL_KEY) === "0") deleteDecomposed = false; } catch (e) {}
+  var decompDel = document.getElementById("decompDel");
+  function paintDecompDel() {
+    if (decompDel) decompDel.className = deleteDecomposed ? "tsub on" : "tsub";
+  }
   function setDeleteDecomposed(on) {
     deleteDecomposed = !!on;
     try { localStorage.setItem(DECOMP_DEL_KEY, deleteDecomposed ? "1" : "0"); } catch (e2) {}
+    paintDecompDel();
   }
+  paintDecompDel();
+  if (decompDel) decompDel.addEventListener("click", function () { setDeleteDecomposed(!deleteDecomposed); });
 
   groupBtn.addEventListener("click", function () {
     runTool("zae_groupLayers", "Group", { center: groupCenter });
@@ -2355,6 +2372,34 @@
   });
   combineBtn.addEventListener("click", function () {
     runTool("zae_combineShape", "Combine", { center: separateCenterOn });
+  });
+
+  // Per-tool options popovers: a gear (.topt) toggles the `optopen` class on its
+  // .tunit, which reveals that tool's chips as a popover. Only one open at a time;
+  // clicks outside (but not on the chips) close it.
+  function closeOpts(except) {
+    var us = document.getElementsByClassName("tunit");
+    for (var i = 0; i < us.length; i++) { if (us[i] !== except) us[i].classList.remove("optopen"); }
+  }
+  var toptBtns = document.getElementsByClassName("topt");
+  for (var ti = 0; ti < toptBtns.length; ti++) {
+    toptBtns[ti].addEventListener("click", function (ev) {
+      ev.stopPropagation();
+      var unit = this.parentNode;
+      var wasOpen = unit.classList.contains("optopen");
+      closeOpts(unit);
+      if (wasOpen) unit.classList.remove("optopen"); else unit.classList.add("optopen");
+    });
+  }
+  document.addEventListener("click", function (ev) {
+    // Leave the popover open when a chip inside it (or the gear) is clicked.
+    var n = ev.target;
+    while (n) {
+      if (n.className && String(n.className).indexOf("tsubrow") !== -1) return;
+      if (n.classList && n.classList.contains("topt")) return;
+      n = n.parentNode;
+    }
+    closeOpts(null);
   });
 
   // Text-exploder option: centre each piece's anchor on its glyph. Remembered,
@@ -3106,9 +3151,7 @@
   var settingsClose   = document.getElementById("settingsClose");
   var settingsVersion = document.getElementById("settingsVersion");
   var setPlayback     = document.getElementById("setPlayback");
-  var setCenterGrp    = document.getElementById("setCenter");
   var setStatusGrp    = document.getElementById("setStatus");
-  var setDecompDel    = document.getElementById("setDecompDel");
   var setCheckUpdate  = document.getElementById("setCheckUpdate");
 
   // Paint each two-option group so the active choice is highlighted. Called on
@@ -3123,9 +3166,7 @@
   }
   function syncSettings() {
     markSeg(setPlayback, autoplayAll ? "loop" : "hover");
-    markSeg(setCenterGrp, groupCenter);
     markSeg(setStatusGrp, statusShown ? "on" : "off");
-    markSeg(setDecompDel, deleteDecomposed ? "on" : "off");
   }
 
   function openSettings() {
@@ -3155,22 +3196,10 @@
     setAutoplay(v === "loop", true);
     syncSettings();
   });
-  if (setCenterGrp) setCenterGrp.addEventListener("click", function (ev) {
-    var v = ev.target.getAttribute && ev.target.getAttribute("data-v");
-    if (!v) return;
-    setGroupCenter(v);
-    syncSettings();
-  });
   if (setStatusGrp) setStatusGrp.addEventListener("click", function (ev) {
     var v = ev.target.getAttribute && ev.target.getAttribute("data-v");
     if (!v) return;
     setStatusShown(v === "on");
-    syncSettings();
-  });
-  if (setDecompDel) setDecompDel.addEventListener("click", function (ev) {
-    var v = ev.target.getAttribute && ev.target.getAttribute("data-v");
-    if (!v) return;
-    setDeleteDecomposed(v === "on");
     syncSettings();
   });
 

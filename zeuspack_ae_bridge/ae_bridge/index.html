@@ -386,10 +386,9 @@
     display:flex; align-items:center; flex-wrap:wrap; margin-bottom:3px; padding:3px 6px;
     background:#2f2f2f; border:1px solid var(--border); border-radius:var(--r);
   }
-  .tools.roomy .tunit > .tbtn { flex:1 1 auto; margin-bottom:0; background:transparent; border:0; padding:2px 3px; }
+  .tools.roomy .tunit > .tbtn { flex:1 1 0; min-width:0; margin-bottom:0; background:transparent; border:0; padding:2px 3px; }
   .tools.roomy .tunit > .tbtn:hover:not(:disabled) { background:#3d3d3d; color:var(--text); }
   .tools.roomy .tunit > .trow { flex:0 0 auto; margin-bottom:0; }
-  .tools.roomy .tunit > .tsubrow { margin:0 0 0 auto; flex:0 0 auto; }
   .tools.roomy .tunit .tsub { margin-bottom:0; }
   /* Char/Word/Lines (and Separate/Combine) stay compact icon-only squares. */
   .tools.roomy .tunit .trow .tbtn { flex:0 0 auto; width:34px; justify-content:center; padding:4px; }
@@ -403,10 +402,42 @@
     background:#2f2f2f; border:1px solid var(--border); border-radius:var(--r);
     padding:4px; margin-bottom:3px;
   }
+  .tools.tight .tunit { display:flex; align-items:center; flex-wrap:wrap; }
   .tools.tight .tunit > .tbtn { background:transparent; border:0; margin-bottom:0; }
   .tools.tight .tunit > .tbtn:hover:not(:disabled) { background:#3d3d3d; color:var(--text); }
-  .tools.tight .tunit > .tsubrow { margin-top:4px; }
-  .tools.tight .tunit .tsub { margin-bottom:2px; }
+
+  /* ── Per-tool options: gear + popover ──────────────────────────────────────
+     The toggle chips live in a small popover opened by the gear, instead of
+     sitting inline — so every tool with options looks the same and adding more
+     toggles never widens the strip. */
+  .tunit { position:relative; }
+  .topt {
+    flex:0 0 auto; margin-left:auto; width:22px; height:22px; padding:0;
+    display:inline-flex; align-items:center; justify-content:center;
+    background:transparent; border:1px solid var(--border); border-radius:var(--r);
+    color:var(--muted); cursor:pointer;
+  }
+  .topt:hover { color:var(--text); border-color:var(--accent); }
+  .topt svg { width:13px; height:13px; display:block; }
+  .tunit.optopen .topt { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .tunit > .tsubrow { display:none; }
+  .tunit.optopen > .tsubrow {
+    display:block; position:absolute; top:100%; right:2px; z-index:60; margin-top:2px;
+    background:var(--panel); border:1px solid var(--border); border-radius:var(--r);
+    padding:6px; box-shadow:0 6px 16px rgba(0,0,0,.45); min-width:118px;
+  }
+  .tunit.optopen > .tsubrow .tsub { display:block; text-align:center; margin:0 0 4px; }
+  .tunit.optopen > .tsubrow .tsub:last-child { margin-bottom:0; }
+
+  /* A .trow marked `labeled` keeps its buttons' text (icon + label), overriding
+     the icon-only squares that Char/Word/Lines use — for Separate / Combine. */
+  .tools .tunit .trow.labeled .tbtn {
+    width:auto; flex:1 1 auto; min-width:0;
+    flex-direction:row; justify-content:center; padding:4px 6px;
+  }
+  .tools .tunit .trow.labeled .tbtn svg { width:14px; height:14px; flex:0 0 auto; }
+  /* Full label, no ellipsis — the button grows to fit its text. */
+  .tools .tunit .trow.labeled .tbtn span { display:inline; margin:0 0 0 5px; font-size:10px; overflow:visible; text-overflow:clip; }
 
   /* ── Preset browser — hidden until the wand button is toggled ── */
   /* min-width:0 matters now that this is a flex item in a ROW: without it the
@@ -948,7 +979,8 @@
       <div class="thead">
         <span class="tname" title="Null Parent">Null Parent</span>
       </div>
-      <div class="trow">
+      <div class="tunit">
+      <div class="trow labeled">
       <button class="tbtn" id="groupBtn"
               title="Quick Parent: Parent the selected layers to a null placed at their center">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
@@ -968,21 +1000,41 @@
         <span>Recenter</span>
       </button>
       </div>
+      <button class="topt" title="Options">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h4v4h-4l0 -4"/><path d="M6 4l0 4"/><path d="M6 12l0 8"/><path d="M10 14h4v4h-4l0 -4"/><path d="M12 4l0 10"/><path d="M12 18l0 2"/><path d="M16 5h4v4h-4l0 -4"/><path d="M18 4l0 1"/><path d="M18 9l0 11"/></svg>
+      </button>
+      <!-- Null placement — a radio pair (Parent and Recenter both read it). -->
+      <div class="tsubrow" id="nullOpts">
+        <span class="tsub" id="nullBounds" title="Place the null at the middle of the selection's bounding box">Bounding box</span>
+        <span class="tsub" id="nullAnchor" title="Place the null at the average of the layers' own anchor points">Anchor point</span>
+      </div>
+      </div>
       </div>
 
       <div class="tgroup">
       <div class="thead"><span class="tname">Manage Layer</span></div>
 
+      <div class="tunit">
       <button class="tbtn" id="decomposeBtn"
               title="Decompose: Lift a precomp's layers back into this comp, in place. Effects/masks applied TO the precomp layer can't follow — listed in the log.">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
              stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="1"/><path d="M14 4h6M17 1v6M14 20h6M17 17v6M4 14v6h6" stroke-dasharray="0"/><path d="M13 13l7 7"/></svg>
         <span>Decompose</span>
       </button>
+      <button class="topt" title="Options">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h4v4h-4l0 -4"/><path d="M6 4l0 4"/><path d="M6 12l0 8"/><path d="M10 14h4v4h-4l0 -4"/><path d="M12 4l0 10"/><path d="M12 18l0 2"/><path d="M16 5h4v4h-4l0 -4"/><path d="M18 4l0 1"/><path d="M18 9l0 11"/></svg>
+      </button>
+      <!-- Decompose cleanup: delete the emptied precomp from the Project panel. -->
+      <div class="tsubrow" id="decompOpts">
+        <span class="tsub" id="decompDel" title="After decomposing, delete the emptied precomp from the Project panel (only when nothing else uses it)">Delete precomp</span>
+      </div>
+      </div>
       <!-- Separate + Combine share a row; Separate's Center Anchor toggle sits in
            the tunit's options box below. -->
       <div class="tunit">
-      <div class="trow">
+      <div class="trow labeled">
       <button class="tbtn" id="separateBtn"
               title="Separate: Move the selected shape groups (e.g. Group 1, Rectangle 1) into a new shape layer, keeping look and position.">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
@@ -996,7 +1048,12 @@
         <span>Combine</span>
       </button>
       </div>
-      <!-- Options box for Separate — toggles read on the next run. -->
+      <!-- Gear opens the options popover below. -->
+      <button class="topt" title="Options">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h4v4h-4l0 -4"/><path d="M6 4l0 4"/><path d="M6 12l0 8"/><path d="M10 14h4v4h-4l0 -4"/><path d="M12 4l0 10"/><path d="M12 18l0 2"/><path d="M16 5h4v4h-4l0 -4"/><path d="M18 4l0 1"/><path d="M18 9l0 11"/></svg>
+      </button>
+      <!-- Options popover for Separate/Combine — opened by the gear. -->
       <div class="tsubrow" id="separateOpts">
         <span class="tsub" id="separateCenter" title="After Separate or Combine, move the resulting shape layer's anchor point to the centre of its content (so scale/rotate pivots on its centre)">Center Anchor</span>
       </div>
@@ -1027,6 +1084,10 @@
       </div>
       <!-- Options box for the text exploder — holds toggles that change how the
            next Char/Word/Lines runs. Add future toggles here. -->
+      <button class="topt" title="Options">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h4v4h-4l0 -4"/><path d="M6 4l0 4"/><path d="M6 12l0 8"/><path d="M10 14h4v4h-4l0 -4"/><path d="M12 4l0 10"/><path d="M12 18l0 2"/><path d="M16 5h4v4h-4l0 -4"/><path d="M18 4l0 1"/><path d="M18 9l0 11"/></svg>
+      </button>
       <div class="tsubrow" id="explodeOpts">
         <span class="tsub" id="explodeCenter" title="After separating, move each piece's anchor point to the centre of its glyph (so scale/rotate pivots on its centre)">Center Anchor</span>
         <span class="tsub" id="explodeReverse" title="Reverse the layer stacking order — the last character/word/line ends on top instead of the first">Reverse Order</span>
@@ -1044,7 +1105,11 @@
              stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/></svg>
         <span>Follow Path</span>
       </button>
-      <!-- Options box for Follow Path — toggles read on the next run. -->
+      <button class="topt" title="Options">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h4v4h-4l0 -4"/><path d="M6 4l0 4"/><path d="M6 12l0 8"/><path d="M10 14h4v4h-4l0 -4"/><path d="M12 4l0 10"/><path d="M12 18l0 2"/><path d="M16 5h4v4h-4l0 -4"/><path d="M18 4l0 1"/><path d="M18 9l0 11"/></svg>
+      </button>
+      <!-- Options popover for Follow Path — opened by the gear. -->
       <div class="tsubrow" id="followOpts">
         <span class="tsub" id="followOrient" title="After tracing the path, turn on native Auto-Orient ▸ Along Path so the object faces its travel direction">Orient</span>
       </div>
@@ -1106,17 +1171,6 @@
 
         <div class="setrow">
           <div class="setlabel">
-            <span class="setname">Null placement</span>
-            <span class="setdesc">Where a null lands when grouping and recentring layers.</span>
-          </div>
-          <div class="seg2" id="setCenter">
-            <button class="segopt" data-v="bounds">Bounding box</button>
-            <button class="segopt" data-v="anchor">Anchor point</button>
-          </div>
-        </div>
-
-        <div class="setrow">
-          <div class="setlabel">
             <span class="setname">Status text</span>
             <span class="setdesc">Show the message beside the connection dot in the top bar.</span>
           </div>
@@ -1126,16 +1180,6 @@
           </div>
         </div>
 
-        <div class="setrow">
-          <div class="setlabel">
-            <span class="setname">Decompose cleanup</span>
-            <span class="setdesc">Delete the precomp from the Project panel after decomposing — only when nothing else still uses it.</span>
-          </div>
-          <div class="seg2" id="setDecompDel">
-            <button class="segopt" data-v="on">Delete</button>
-            <button class="segopt" data-v="off">Keep</button>
-          </div>
-        </div>
 
         <div class="setrow">
           <div class="setlabel">
