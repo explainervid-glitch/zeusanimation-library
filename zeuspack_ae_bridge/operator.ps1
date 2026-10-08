@@ -235,6 +235,41 @@ try {
 }
 
 # ============================================================
+# 5b. COPY STANDALONE SCRIPTS (File > Scripts launchers)
+# Bundled .jsx (e.g. the Decompose launcher) go into each After Effects
+# install's Scripts folder so they appear under File > Scripts and can be
+# bound to a keyboard shortcut. Non-fatal: the panel install stands alone.
+# ============================================================
+Write-Step "Installing standalone scripts (File > Scripts launchers)..."
+
+$scriptSrc = Join-Path $scriptDir "scripts"
+if (Test-Path $scriptSrc) {
+    $aeRoots = @("C:\Program Files\Adobe", "C:\Program Files (x86)\Adobe")
+    $aeDirs  = foreach ($root in $aeRoots) {
+        if (Test-Path $root) {
+            Get-ChildItem $root -Directory -Filter "Adobe After Effects*" -ErrorAction SilentlyContinue
+        }
+    }
+    if (-not $aeDirs) {
+        Write-Warn "No After Effects install found; skipping script copy (run File > Scripts > Run Script File manually)."
+    } else {
+        foreach ($ae in $aeDirs) {
+            $sd = Join-Path $ae.FullName "Support Files\Scripts"
+            if (Test-Path $sd) {
+                try {
+                    Copy-Item -Path "$scriptSrc\*.jsx" -Destination $sd -Force
+                    Write-Ok "Scripts -> $sd"
+                } catch {
+                    Write-Warn "Could not copy scripts to $($ae.Name): $_"
+                }
+            }
+        }
+    }
+} else {
+    Write-Warn "No 'scripts' folder in this bundle; skipping (panel still installed)."
+}
+
+# ============================================================
 # 6. REGISTRY -- PlayerDebugMode (required for unsigned CEP)
 # ============================================================
 Write-Step "Setting registry PlayerDebugMode..."
@@ -296,6 +331,8 @@ if ($allOk) {
     Write-Host "  2. Open Adobe After Effects"                           -ForegroundColor Gray
     Write-Host "  3. Panel : Window > Extensions > $PluginName"          -ForegroundColor Gray
     Write-Host "  4. The panel dot turns GREEN when connected"           -ForegroundColor Gray
+    Write-Host "  5. Optional: File > Scripts > ZeusPack Decompose.jsx"  -ForegroundColor Gray
+    Write-Host "     (bind a shortcut in Edit > Keyboard Shortcuts)"     -ForegroundColor DarkGray
     Write-Host ""
     Write-Host "  Keep the panel open while working with ZeusPack." -ForegroundColor DarkGray
     Write-Host ""
