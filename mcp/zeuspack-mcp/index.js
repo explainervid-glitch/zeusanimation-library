@@ -10,8 +10,11 @@
 // disk while the app is open would serve stale data.
 
 import { readFileSync, existsSync } from 'fs'
-import { join } from 'path'
+import { readFile, stat } from 'fs/promises'
+import { join, resolve, extname, sep } from 'path'
 import { homedir } from 'os'
+import { execFile } from 'child_process'
+import { promisify } from 'util'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
@@ -50,7 +53,23 @@ function loadBridge() {
   return bridge
 }
 
+// The token rotates on every app start, and a crashed run leaves a stale bridge
+// file behind. Either way the first call fails with a cached bridge that is now
+// wrong — re-read the file and try once more so restarting ZeusPack never needs
+// a retry from the model.
+class StaleBridge extends Error {}
+
 async function call(name, ...args) {
+  const hadBridge = !!bridge
+  try {
+    return await attempt(name, args)
+  } catch (err) {
+    if (!(err instanceof StaleBridge) || !hadBridge) throw err
+    return attempt(name, args)
+  }
+}
+
+async function attempt(name, args) {
   if (!bridge) loadBridge()
 
   let res
@@ -70,12 +89,18 @@ async function call(name, ...args) {
     // Stale token file from a crashed run looks identical to "not running";
     // drop it so the next call re-reads a fresh one.
     bridge = null
-    throw new Error(`Cannot reach ZeusPack: ${err.message}. Is the app running?`)
+    // A timeout means the app took the command and is still working on it —
+    // retrying would run it twice.
+    const Err = err.name === 'TimeoutError' ? Error : StaleBridge
+    throw new Err(`Cannot reach ZeusPack: ${err.message}. Is the app running?`)
   }
 
   const body = await res.json().catch(() => ({}))
   if (!res.ok || body.success === false) {
-    if (res.status === 401) bridge = null // token rotated on app restart
+    if (res.status === 401) {
+      bridge = null // token rotated on app restart
+      throw new StaleBridge(reason(body.error) ?? 'Bridge token rejected')
+    }
     throw new Error(reason(body.error) ?? `Bridge returned ${res.status}`)
   }
 
@@ -127,7 +152,7 @@ const VIDEO_EXTS = ['.mp4', '.mov', '.webm', '.avi']
 const isVideo = (p) => !!p && VIDEO_EXTS.some((e) => p.toLowerCase().endsWith(e))
 
 const server = new McpServer(
-  { name: 'zeuspack', version: '1.1.0' },
+  { name: 'zeuspack', version: '1.2.0' },
   { capabilities: { tools: {} } }
 )
 
@@ -345,6 +370,135 @@ server.registerTool(
     const saved = await call('write-asset-json', { jsonPath, assetId, data: tags })
     return { assetId, jsonPath: saved?.jsonPath ?? jsonPath, tags }
   })
+)
+
+// ─── VIEW PREVIEW ─────────────────────────────────────────────
+// Listings only carry file paths, which a client like Claude Desktop cannot
+// open. This returns the preview itself as MCP image content, so any
+// vision-capable client can look at an asset and write tags from what it sees.
+const IMAGE_MIME = {
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+}
+// Clients reject large image blocks; pack thumbnails are ~10–30 KB, so anything
+// past this is a raw render and gets downscaled through ffmpeg instead.
+const MAX_IMAGE_BYTES = 750 * 1024
+const FFMPEG = process.env.ZEUSPACK_FFMPEG || 'ffmpeg'
+const FFPROBE = process.env.ZEUSPACK_FFPROBE || 'ffprobe'
+const run = promisify(execFile)
+
+// Only files inside a configured pack are readable. Without this the tool would
+// hand the model any image on the machine.
+async function assertInsidePack(file) {
+  const settings = await call('get-settings')
+  const norm = (p) => resolve(p).toLowerCase()
+  const target = norm(file)
+  const inside = (settings?.assetPaths ?? []).some(({ path }) => {
+    if (!path?.trim()) return false
+    const root = norm(path)
+    return target === root || target.startsWith(root.endsWith(sep) ? root : root + sep)
+  })
+  if (!inside) throw new Error(`Not inside any configured asset pack: ${file}`)
+}
+
+async function ffmpegJpeg(args) {
+  try {
+    const { stdout } = await run(FFMPEG, ['-v', 'error', ...args, '-f', 'image2pipe', '-vcodec', 'mjpeg', '-'], {
+      encoding: 'buffer',
+      maxBuffer: 16 * 1024 * 1024,
+      windowsHide: true,
+    })
+    // A dangling PATH entry (e.g. a winget link whose target moved) can exit
+    // cleanly with nothing on stdout — never hand the model an empty image.
+    if (!stdout?.length) throw Object.assign(new Error('no output'), { code: 'ENOENT' })
+    return stdout
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      throw new Error('ffmpeg not found on PATH — install it or set ZEUSPACK_FFMPEG to its full path')
+    }
+    throw new Error(`ffmpeg failed: ${err.stderr?.toString().trim() || err.message}`)
+  }
+}
+
+async function videoDuration(file) {
+  try {
+    const { stdout } = await run(
+      FFPROBE,
+      ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', file],
+      { windowsHide: true }
+    )
+    const d = parseFloat(stdout)
+    return Number.isFinite(d) && d > 0 ? d : null
+  } catch {
+    return null
+  }
+}
+
+server.registerTool(
+  'view_preview',
+  {
+    title: 'View asset preview',
+    description:
+      'Return an asset\'s preview as an image you can look at — use it to describe, tag or ' +
+      'rename assets from what they actually show. Pass thumbnail_path (images) or mp4_path ' +
+      '(animations) from list_assets. Videos come back as one contact-sheet image of evenly ' +
+      'spaced frames, left-to-right then top-to-bottom in time order. Only files inside a ' +
+      'configured asset pack can be viewed. Video needs ffmpeg on PATH.',
+    inputSchema: {
+      path: z.string().describe('thumbnail_path, mp4_path or raw_path from list_assets'),
+      frames: z
+        .number()
+        .int()
+        .min(1)
+        .max(16)
+        .default(6)
+        .describe('Video only: how many frames to sample into the contact sheet'),
+    },
+    annotations: { readOnlyHint: true },
+  },
+  async ({ path, frames }) => {
+    try {
+      await assertInsidePack(path)
+      const ext = extname(path).toLowerCase()
+      let data
+      let mimeType = 'image/jpeg'
+      let note
+
+      if (VIDEO_EXTS.includes(ext)) {
+        const duration = await videoDuration(path)
+        const cols = Math.ceil(Math.sqrt(frames))
+        const rows = Math.ceil(frames / cols)
+        // fps=N/duration spreads N samples across the clip; tile packs them into
+        // one image so a single block covers the whole motion.
+        const sample = duration ? `fps=${frames}/${duration.toFixed(3)}` : 'thumbnail'
+        const tile = duration ? `,tile=${cols}x${rows}` : ''
+        data = await ffmpegJpeg(['-i', path, '-vf', `${sample},scale=320:-2${tile}`, '-frames:v', '1'])
+        note = duration
+          ? `${frames} frames over ${duration.toFixed(2)}s, ${cols}x${rows} grid, time runs left-to-right, top-to-bottom`
+          : 'duration unknown — single representative frame'
+      } else if (IMAGE_MIME[ext]) {
+        const { size } = await stat(path)
+        if (size <= MAX_IMAGE_BYTES) {
+          data = await readFile(path)
+          mimeType = IMAGE_MIME[ext]
+        } else {
+          data = await ffmpegJpeg(['-i', path, '-vf', 'scale=1024:-2', '-frames:v', '1'])
+          note = `downscaled from ${Math.round(size / 1024)} KB`
+        }
+      } else {
+        throw new Error(`Not a previewable image or video: ${ext || 'no extension'}`)
+      }
+
+      const content = [{ type: 'image', data: data.toString('base64'), mimeType }]
+      if (note) content.push({ type: 'text', text: note })
+      return { content }
+    } catch (err) {
+      return { content: [{ type: 'text', text: `Error: ${err.message}` }], isError: true }
+    }
+  }
 )
 
 server.registerTool(

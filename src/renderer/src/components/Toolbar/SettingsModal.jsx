@@ -45,6 +45,8 @@ export default function SettingsModal() {
   const [llmPingStatus, setLlmPingStatus] = useState('idle')
   const [animateStatus, setAnimateStatus] = useState('idle') // idle | checking | online | offline
   const [animateMsg, setAnimateMsg]       = useState('')
+  const [claude, setClaude]               = useState(null) // { installed, connected, upToDate, enabled, changed?, error? }
+  const [claudeBusy, setClaudeBusy]       = useState(false)
   const [embedStatus, setEmbedStatus] = useState('idle') // idle | running | done | error
   const [embedProgress, setEmbedProgress] = useState(null)  // { batch, totalBatches }
   const [embedCount, setEmbedCount] = useState(null)
@@ -93,6 +95,22 @@ export default function SettingsModal() {
     setAnimateMsg(res.success ? (res.message || 'Connected') : (res.error || res.message || 'No response'))
   }, [])
 
+  // Claude Desktop MCP registration — written automatically on app start; the
+  // toggle here is the opt-out.
+  const loadClaude = useCallback(async () => {
+    const res = await window.api.mcpClaudeStatus().catch(() => null)
+    setClaude(res)
+  }, [])
+
+  const toggleClaude = async () => {
+    if (!claude || claudeBusy) return
+    setClaudeBusy(true)
+    const res = await window.api.mcpClaudeSet({ enabled: !claude.enabled })
+      .catch((e) => ({ success: false, error: e.message }))
+    setClaude(res)
+    setClaudeBusy(false)
+  }
+
   const loadHints = useCallback(async (packIndex) => {
     setHintsLoading(true)
     try {
@@ -124,9 +142,10 @@ export default function SettingsModal() {
       checkTagger()
       checkRag()
       checkLlm()
+      loadClaude()
       setHintPackIndex(activePackIndex ?? 0)
     }
-  }, [isOpen, checkTagger, checkRag, checkLlm, activePackIndex])
+  }, [isOpen, checkTagger, checkRag, checkLlm, loadClaude, activePackIndex])
 
   // (Re)load hints when the modal opens or the selected pack changes
   useEffect(() => {
@@ -587,6 +606,52 @@ export default function SettingsModal() {
                         <span className="text-[10px] text-red-400 font-medium flex-shrink-0">Not connected</span>
                         <span className="text-[10px] text-c-text-4 ml-1">{animateMsg}</span>
                       </>
+                    )}
+                  </div>
+                </div>
+
+                {/* ── Claude Desktop (MCP) ── */}
+                <div className="space-y-2 pt-2 border-t border-c-border">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs font-semibold text-c-text">Claude Desktop</span>
+                    {claude?.installed && (
+                      <MiniToggle on={!!claude.enabled} onToggle={toggleClaude} onLabel="Connected" offLabel="Off" />
+                    )}
+                  </div>
+                  <p className="text-[11px] text-c-text-3 leading-relaxed">
+                    Lets Claude Desktop browse, search, tag and create assets in this app — just ask it
+                    in plain words while ZeusPack is open. Set up automatically; nothing to configure.
+                  </p>
+                  <div className="flex items-start gap-1.5">
+                    {!claude && (
+                      <span className="text-[10px] text-c-text-4">— Checking…</span>
+                    )}
+                    {claude && !claude.installed && (
+                      <span className="text-[10px] text-c-text-4">
+                        — Claude Desktop is not installed on this PC. Install it, then reopen ZeusPack.
+                      </span>
+                    )}
+                    {claude?.installed && claude.error && (
+                      <>
+                        <span className="w-1.5 h-1.5 rounded-full bg-red-400 flex-shrink-0 mt-1" />
+                        <span className="text-[10px] text-red-400">{claude.error}</span>
+                      </>
+                    )}
+                    {claude?.installed && !claude.error && claude.enabled && (
+                      <>
+                        <span className="w-1.5 h-1.5 rounded-full bg-green-400 flex-shrink-0 mt-1" />
+                        <span className="text-[10px] text-green-400 font-medium flex-shrink-0">Connected</span>
+                        <span className="text-[10px] text-c-text-4 ml-1">
+                          {claude.changed
+                            ? 'Restart Claude Desktop (quit it from the tray) to apply.'
+                            : 'If ZeusPack tools are missing in Claude, restart Claude Desktop once.'}
+                        </span>
+                      </>
+                    )}
+                    {claude?.installed && !claude.error && !claude.enabled && (
+                      <span className="text-[10px] text-c-text-4">
+                        — Off. Claude Desktop can&apos;t reach ZeusPack{claude.changed ? ' after its next restart' : ''}.
+                      </span>
                     )}
                   </div>
                 </div>

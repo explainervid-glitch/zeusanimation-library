@@ -9,7 +9,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { execSync }                                    from 'child_process'
-import { existsSync, writeFileSync, readdirSync, rmSync, readFileSync } from 'fs'
+import { existsSync, writeFileSync, readdirSync, rmSync, readFileSync, copyFileSync } from 'fs'
 import { join, resolve, dirname }                      from 'path'
 import { fileURLToPath }                               from 'url'
 
@@ -68,6 +68,17 @@ try {
   }
 }
 console.log('[Deploy] ✓ Files copied.')
+
+// ── MCP LAUNCHER ────────────────────────────────────────────────────────────
+// Stable, version-independent entry point for teammates' MCP client configs.
+// It reads latest.txt itself, so configs never need editing after a release.
+const MCP_LAUNCHER = resolve(__dirname, '../mcp/zeuspack-mcp/zeuspack-mcp.cmd')
+try {
+  copyFileSync(MCP_LAUNCHER, join(DEPLOY_ROOT, 'zeuspack-mcp.cmd'))
+  console.log('[Deploy] ✓ zeuspack-mcp.cmd updated.')
+} catch (err) {
+  console.warn('[Deploy] ⚠ MCP launcher copy failed (non-fatal):', err.message)
+}
 
 // ── UPDATE latest.txt ───────────────────────────────────────────────────────
 writeFileSync(LATEST_FILE, VERSION, 'utf-8')

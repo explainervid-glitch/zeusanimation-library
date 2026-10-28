@@ -8,6 +8,7 @@ files:
   - '!electron.vite.config.{js,ts,mjs,cjs}'
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
+  - '!mcp/**'
 asarUnpack:
   - resources/**
 win:
@@ -50,4 +51,7 @@ extraResources:
     to: splash.html
   - from: resources/lottie.json
     to: lottie.json
+  # Bundled by scripts/build-mcp.mjs during `npm run build`.
+  - from: mcp/zeuspack-mcp/dist/zeuspack-mcp.mjs
+    to: mcp/zeuspack-mcp.mjs
   

@@ -81,6 +81,8 @@ if (process.contextIsolated) {
       readFlaLibrary:      (payload) => ipcRenderer.invoke('read-fla-library', payload),
       aeStatus:            ()        => ipcRenderer.invoke('ae-status'),
       aeRun:               (payload) => ipcRenderer.invoke('ae-run', payload),
+      mcpClaudeStatus:     ()        => ipcRenderer.invoke('mcp-claude-status'),
+      mcpClaudeSet:        (payload) => ipcRenderer.invoke('mcp-claude-set', payload),
       taggerGenerateVideo: (payload) => ipcRenderer.invoke('tagger-generate-video', payload),
       taggerGenerate:  (payload) => ipcRenderer.invoke('tagger-generate', payload),
       onScanLog:       (cb)      => ipcRenderer.on('scan-log', (_e, msg) => cb(msg)),
