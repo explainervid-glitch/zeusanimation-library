@@ -48,23 +48,34 @@ Desktop, add to its config:
 
 ## Tools
 
-| Tool | |
-|---|---|
-| `zeuspack_status` | Running? active pack, all packs, tagger/RAG reachability |
-| `switch_pack` | Switch active pack by index |
-| `get_asset_tree` | Full styles → types → categories hierarchy |
-| `list_categories` / `list_assets` | Drill down |
-| `search_assets` | Keyword search (SQLite FTS), scoped to a style type |
-| `semantic_search` | Vector search via RAG — **requires `styleId`** |
-| `read_asset` / `write_asset` | Asset JSON metadata |
-| `auto_tag` | Run the vision tagger on one asset |
-| `set_asset_preview` / `delete_asset` | |
-| `list_styles` / `rename_style` / `set_style_hints` / `generate_style_guide` | |
-| `add_category` / `delete_category` | |
-| `rescan` / `reindex_rag` | Maintenance |
+| | Tool | |
+|---|---|---|
+| **Read** | `zeuspack_status` | Running? active pack, packs, template ids, tagger/RAG reachability |
+| | `get_asset_tree` | styles → types → categories, with the ids other tools take |
+| | `list_categories` / `list_assets` | Drill down |
+| | `search_assets` | Keyword search (SQLite FTS), scoped to a style type |
+| | `semantic_search` | Vector search via RAG — **requires `styleId`** |
+| | `read_asset` / `list_styles` | Asset JSON, style names + tagger hints |
+| **Manage** | `write_asset` | Replace an asset's JSON and sync the keyword index |
+| | `set_asset_preview` / `switch_pack` | |
+| | `rename_style` / `set_style_hints` / `generate_style_guide` | |
+| | `rescan` / `reindex_rag` | Maintenance |
+| **Tag** | `auto_tag` | Image or video tagger by type, then syncs the index |
+| **Create** | `create_style` | New style folders, optionally cloning categories |
+| | `add_category` | New category in a style + type |
+| | `create_asset` | New asset from the pack template + starter JSON |
+
+**Delete is disabled.** No tool removes an asset, category or style, and the
+bridge refuses `delete-asset` / `delete-category` / `rag-index-delete` even if
+called directly. To re-enable, add them to `ALLOWED` and add tools here.
+
+Tools take asset types as the tree shows them — `background | character |
+animation | inspiration`. The app's folders call two of these `image` and
+`movement`; tools translate, so callers never use the folder names.
 
 `write_asset` and `set_style_hints` **replace** their target wholesale — read
-first, merge, then write, or you will drop fields.
+first, merge, then write, or you will drop fields. `semantic_search` sees new
+tags only after `reindex_rag`, same as in the app.
 
 ## Security
 
@@ -73,9 +84,10 @@ first, merge, then write, or you will drop fields.
   `%APPDATA%/zeusanimation-library/mcp-bridge.json`. Loopback alone doesn't
   authenticate; without this, any local process could POST `delete-category`.
 - An allowlist in `src/main/bridge/index.js` caps what MCP can reach. Currently
-  excluded: project writes (`send-to-project`, `create-project`,
-  `delete-project-file`), modal dialogs (`select-folder`/`select-file`, which
-  would hang a headless call), `save-settings`, `blender-*` (the Blender MCP
-  covers that directly), and `open-path`/`open-asset-file`.
+  excluded: every delete, writes outside the library (`copy-asset-to`,
+  `delete-project-file`), modal dialogs (`import-asset`, `select-folder`,
+  `select-file` — they would hang a headless call), `save-settings`, the DCC
+  bridges (`blender-*`, `ae-*`, `animate-*`), and anything that launches an
+  external program (`add-asset`, `open-path`, `open-asset-file`).
 
 To widen the scope, add the channel to `ALLOWED` and expose a tool here.

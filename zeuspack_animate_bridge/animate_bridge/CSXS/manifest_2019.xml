@@ -16,10 +16,10 @@
     manifest elements, and an unrecognised element can make it skip the
     extension entirely).
 -->
-<ExtensionManifest Version="5.0" ExtensionBundleId="com.zeus.zeuspackbridge" ExtensionBundleVersion="1.0.0"
+<ExtensionManifest Version="5.0" ExtensionBundleId="com.zeus.zeuspackbridge" ExtensionBundleVersion="1.0.1"
     ExtensionBundleName="ZeusPack Bridge" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
     <ExtensionList>
-        <Extension Id="com.zeus.zeuspackbridge.panel" Version="1.0.0" />
+        <Extension Id="com.zeus.zeuspackbridge.panel" Version="1.0.1" />
     </ExtensionList>
     <ExecutionEnvironment>
         <HostList>

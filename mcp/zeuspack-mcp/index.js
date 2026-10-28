@@ -62,7 +62,9 @@ async function call(name, ...args) {
         'X-Bridge-Token': bridge.token,
       },
       body: JSON.stringify({ name, args }),
-      signal: AbortSignal.timeout(120_000),
+      // Video tagging, rescan and reindex_rag legitimately run for minutes on a
+      // big pack; a shorter cap would abort work the app is still doing.
+      signal: AbortSignal.timeout(600_000),
     })
   } catch (err) {
     // Stale token file from a crashed run looks identical to "not running";
@@ -105,8 +107,27 @@ const tool = (fn) => async (args) => {
   }
 }
 
+// ─── ASSET TYPES ──────────────────────────────────────────────
+// The app names the same four types two ways: the DB, asset tree and tagger
+// say character|animation, while the on-disk folders (and so create-asset /
+// add-category / add-style) say image|movement. Tools speak only the tree's
+// vocabulary and translate here, so the model never has to know there are two.
+const ASSET_TYPES = ['background', 'character', 'animation', 'inspiration']
+const FOLDER_PREFIX = {
+  background: 'background',
+  character: 'image',
+  animation: 'movement',
+  inspiration: 'inspiration',
+}
+const assetTypeSchema = z
+  .enum(ASSET_TYPES)
+  .describe('Type as shown in get_asset_tree: background | character | animation | inspiration')
+
+const VIDEO_EXTS = ['.mp4', '.mov', '.webm', '.avi']
+const isVideo = (p) => !!p && VIDEO_EXTS.some((e) => p.toLowerCase().endsWith(e))
+
 const server = new McpServer(
-  { name: 'zeuspack', version: '1.0.0' },
+  { name: 'zeuspack', version: '1.1.0' },
   { capabilities: { tools: {} } }
 )
 
@@ -117,16 +138,24 @@ server.registerTool(
     title: 'ZeusPack status',
     description:
       'Health check: confirms ZeusPack is running and reports the active pack, ' +
-      'all configured asset paths, and whether the tagger (:8000) and RAG (:8001) ' +
-      'servers are reachable. Call this first when anything else fails.',
+      'all configured asset paths, the template ids create_asset can use, and whether ' +
+      'the tagger (:8000) and RAG (:8001) servers are reachable. Call this first, and ' +
+      'whenever anything else fails.',
     inputSchema: {},
     annotations: { readOnlyHint: true },
   },
   tool(async () => {
     const settings = await call('get-settings')
+    // A ping that fails returns { success: false } with no error text, which
+    // call() turns into a bare "Command failed" — report reachability instead.
+    const ping = (cmd, url) =>
+      call(cmd).then(
+        () => ({ reachable: true, url }),
+        () => ({ reachable: false, url })
+      )
     const [tagger, rag] = await Promise.all([
-      call('tagger-ping').catch((e) => ({ error: e.message })),
-      call('rag-ping').catch((e) => ({ error: e.message })),
+      ping('tagger-ping', settings?.taggerUrl),
+      ping('rag-ping', settings?.ragUrl),
     ])
     const idx = settings?.activePathIndex ?? 0
     return {
@@ -134,6 +163,7 @@ server.registerTool(
       activePack: settings?.assetPaths?.[idx] ?? null,
       activePackIndex: idx,
       packs: settings?.assetPaths ?? [],
+      templates: (settings?.templatePaths ?? []).map((t) => ({ id: t.id, path: t.path })),
       taggerServer: tagger,
       ragServer: rag,
     }
@@ -159,9 +189,10 @@ server.registerTool(
   {
     title: 'Get asset tree',
     description:
-      'Full hierarchy of the active pack: style types (image/background/movement/inspiration) ' +
-      'with their styles and categories, including asset counts. Use this to orient before ' +
-      'drilling into a category. Can be large on big packs.',
+      'Full hierarchy of the active pack: styles (top-level id = styleId) → types ' +
+      '(background / character / animation / inspiration, id = styleTypeId) → categories ' +
+      'with asset counts. Use this to orient before drilling into a category, and to get ' +
+      'the ids every other tool takes. Can be large on big packs.',
     inputSchema: {},
     annotations: { readOnlyHint: true },
   },
@@ -277,30 +308,43 @@ server.registerTool(
   {
     title: 'AI auto-tag an asset',
     description:
-      'Run the vision tagger over an asset\'s thumbnail and write the generated tags to its JSON. ' +
-      'Applies the style\'s tagger hint automatically. Needs the tagger server on :8000. ' +
-      'Slow — expect several seconds per asset.',
+      'Run the AI tagger on one asset and save the result. Animation assets go through the ' +
+      'video tagger (needs an mp4/mov/webm preview); every other type goes through the image ' +
+      'tagger (needs a thumbnail or preview). The tagger merges its tags into the existing JSON ' +
+      '— protected fields like FileName are kept — and the keyword index is then synced, ' +
+      'exactly like the app\'s batch tagger. Applies the style\'s tagger hint automatically. ' +
+      'Pass the asset fields straight from list_assets. Slow: seconds per image, longer for ' +
+      'video. semantic_search only reflects new tags after reindex_rag.',
     inputSchema: {
-      thumbnailPath: z.string().describe('Absolute path to the asset thumbnail/preview image'),
-      assetType: z.string().describe('One of: image, background, movement, inspiration'),
-      jsonPath: z.string().describe('Absolute json_path to write the tags into'),
+      assetId: z.number().int().describe('id from list_assets'),
+      assetType: assetTypeSchema,
+      name: z.string().describe('name from list_assets'),
+      jsonPath: z.string().optional().describe('json_path from list_assets (may be empty)'),
+      thumbnailPath: z.string().optional().describe('thumbnail_path from list_assets'),
+      mp4Path: z.string().optional().describe('mp4_path from list_assets'),
+      rawPath: z.string().optional().describe('raw_path from list_assets'),
     },
-    annotations: { readOnlyHint: false },
+    annotations: { readOnlyHint: false, idempotentHint: false },
   },
-  tool((a) => call('tagger-generate', a))
-)
+  tool(async ({ assetId, assetType, name, jsonPath = '', thumbnailPath, mp4Path, rawPath }) => {
+    // Same source-file choice as runBatch in useBatchStore.js.
+    let tags
+    if (assetType === 'animation') {
+      const videoPath = isVideo(mp4Path) ? mp4Path : isVideo(rawPath) ? rawPath : null
+      if (!videoPath) throw new Error('No mp4 preview found for this animation asset')
+      tags = await call('tagger-generate-video', { videoPath, jsonPath, filename: name })
+    } else {
+      const previewPath = thumbnailPath || mp4Path || rawPath
+      if (!previewPath) throw new Error('No preview image found for this asset')
+      tags = await call('tagger-generate', { thumbnailPath: previewPath, assetType, jsonPath })
+    }
 
-server.registerTool(
-  'delete_asset',
-  {
-    title: 'Delete an asset',
-    description:
-      'Permanently remove an asset: its DB row, its files on disk, and its RAG vector. ' +
-      'Not undoable — confirm with the user before calling.',
-    inputSchema: { assetId: z.number().int().describe('Asset id to delete') },
-    annotations: { readOnlyHint: false, destructiveHint: true },
-  },
-  tool(({ assetId }) => call('delete-asset', { assetId }))
+    // The tagger writes the merged JSON to disk itself but never touches the
+    // app's DB. Writing it back through write-asset-json updates name, detail,
+    // category and the FTS row — what the UI's Save All does after a batch.
+    const saved = await call('write-asset-json', { jsonPath, assetId, data: tags })
+    return { assetId, jsonPath: saved?.jsonPath ?? jsonPath, tags }
+  })
 )
 
 server.registerTool(
@@ -379,38 +423,101 @@ server.registerTool(
   tool((a) => call('generate-style-guide', a))
 )
 
-// ─── CATEGORIES ───────────────────────────────────────────────
+// ─── CREATE ───────────────────────────────────────────────────
+// Delete is disabled for now: no tool here removes an asset, category or style,
+// and the bridge allowlist refuses the delete commands even if called directly.
+server.registerTool(
+  'create_style',
+  {
+    title: 'Create a style',
+    description:
+      'Add a new style to the active pack. Takes the next free style number from disk, creates ' +
+      'one folder per chosen type, and registers it in the DB and stylenames.json. Optionally ' +
+      'clone the category lists from an existing style — otherwise the new style starts with no ' +
+      'categories and every asset added to it lands in ⚠ Uncategorized.',
+    inputSchema: {
+      name: z.string().describe('Display name, e.g. "Style 4"'),
+      description: z.string().optional(),
+      types: z
+        .array(z.enum(ASSET_TYPES))
+        .optional()
+        .describe('Types to create folders for. Defaults to all four.'),
+      copyCategoriesFromStyleId: z
+        .number()
+        .int()
+        .optional()
+        .describe('styleId whose category lists to copy (recommended)'),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false },
+  },
+  tool(({ name, description, types, copyCategoriesFromStyleId }) =>
+    call('add-style', {
+      name,
+      description,
+      types: types?.map((t) => FOLDER_PREFIX[t]),
+      copyFromSuffix: copyCategoriesFromStyleId ?? null,
+    })
+  )
+)
+
 server.registerTool(
   'add_category',
   {
     title: 'Add a category',
-    description: 'Create a category folder under a style + asset type, and register it in the DB.',
+    description:
+      'Add a category to one type within a style and register it in the DB. Required before ' +
+      'create_asset can put an asset there.',
     inputSchema: {
-      styleSuffix: z.string().describe('Style suffix, e.g. "0", "1"'),
-      assetType: z.string().describe('image | background | movement | inspiration'),
+      styleId: z.number().int().describe('Top-level style id from get_asset_tree'),
+      assetType: assetTypeSchema,
       categoryName: z.string(),
     },
-    annotations: { readOnlyHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: false },
   },
-  tool((a) => call('add-category', a))
+  tool(({ styleId, assetType, categoryName }) =>
+    call('add-category', {
+      styleSuffix: String(styleId),
+      assetType: FOLDER_PREFIX[assetType],
+      categoryName,
+    })
+  )
 )
 
 server.registerTool(
-  'delete_category',
+  'create_asset',
   {
-    title: 'Delete a category',
+    title: 'Create a new asset',
     description:
-      'Delete a category, its folder, and every asset inside it. Not undoable — confirm with ' +
-      'the user, and check the asset count with list_assets first.',
+      'Create a new asset from the pack\'s template: copies the template file (Animate/Blender ' +
+      'per pack and type, or another id from zeuspack_status.templates such as "ae") into the ' +
+      'style\'s folder as <fileName>.<ext>, writes a starter JSON {FileName, Detail, Category}, ' +
+      'and registers it in the DB and keyword index. The category must already exist ' +
+      '(add_category). Refuses to overwrite: an existing name returns an error. ' +
+      'The new asset has no preview yet, so auto_tag will not work on it until one is added — ' +
+      'fill its metadata with write_asset instead (find its id via list_assets).',
     inputSchema: {
-      styleSuffix: z.string(),
-      assetType: z.string(),
-      categoryName: z.string(),
-      categoryId: z.number().int(),
+      styleId: z.number().int().describe('Top-level style id from get_asset_tree'),
+      assetType: assetTypeSchema,
+      categoryName: z.string().describe('Existing category within that style + type'),
+      fileName: z.string().describe('File name without extension, e.g. "Agree7"'),
+      detail: z.string().optional().describe('Short one-line description'),
+      templateId: z
+        .string()
+        .optional()
+        .describe('Override the template, e.g. "ae" for After Effects. Usually omit.'),
     },
-    annotations: { readOnlyHint: false, destructiveHint: true },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
   },
-  tool((a) => call('delete-category', a))
+  tool(({ styleId, assetType, categoryName, fileName, detail, templateId }) =>
+    call('create-asset', {
+      styleSuffix: String(styleId),
+      assetType: FOLDER_PREFIX[assetType],
+      categoryName,
+      fileName,
+      detail,
+      templateId,
+    })
+  )
 )
 
 // ─── MAINTENANCE ──────────────────────────────────────────────

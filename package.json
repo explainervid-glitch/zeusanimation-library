@@ -1,6 +1,6 @@
 {
   "name": "zeusanimation-library",
-  "version": "1.0.23",
+  "version": "1.0.24",
   "description": "ZeusPack is a powerful animation library for creating stunning animations in your projects. With a wide range of features and an easy-to-use API, ZeusPack allows you to bring your ideas to life with smooth and captivating animations.",
   "main": "./out/main/index.js",
   "author": "ZeusDev - Tegar",
@@ -17,10 +17,9 @@
     "build:win": "npm run build && electron-builder --win",
     "build:mac": "npm run build && electron-builder --mac",
     "build:linux": "npm run build && electron-builder --linux",
-
-    "deploy":       "node scripts/deploy.mjs",
+    "deploy": "node scripts/deploy.mjs",
     "build:deploy": "npm run build:unpack && node scripts/deploy.mjs",
-    "release":      "npm run build:deploy"
+    "release": "npm run build:deploy"
   },
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",

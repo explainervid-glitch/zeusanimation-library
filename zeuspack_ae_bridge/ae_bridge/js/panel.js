@@ -172,9 +172,11 @@
 
   function runJob(job) {
     log("Job: " + job.action);
+    var started = Date.now();
     csInterface.evalScript(hostCallFor(job), function (result) {
       var parsed = parseResult(result);
       postResult(job.id, parsed);
+      countUsage(USAGE_JOBS[job.action], started, parsed);
       var msg = parsed.message || (parsed.ok ? "ok" : "error");
       log(job.action + " → " + msg, parsed.ok ? "ok" : "err");
       flash(job.action + (parsed.ok ? " ✓" : " ✕"), !parsed.ok);
@@ -222,7 +224,7 @@
   // ExtensionBundleVersion in CSXS/manifest.xml: the update check tests
   // INEQUALITY against the repo's manifest, so a stale value here reports a
   // phantom "update available" against a repo that has not moved.
-  var PANEL_VERSION   = "1.0.23";
+  var PANEL_VERSION   = "1.0.24";
 
   var updateBtn = document.getElementById("updateBtn");
 
@@ -383,6 +385,54 @@
   });
 
   // ═══════════════════════════════════════════════════════════
+  //  ZEPLOY USAGE
+  // ═══════════════════════════════════════════════════════════
+  // The team's deployment tool, zeploy, counts which features get used
+  // (js/zeploy-usage.js writes the counts to a local file its agent reads).
+  // A feature counts once its host call succeeds; a refusal such as "Select
+  // the layers you want to group" counts as nothing. No names, paths or
+  // other project data are recorded.
+  var usage = zeployUsageV1("com.zeus.zeuspackaebridge", installedVersion());
+  usage.open();
+
+  // Panel host calls that are features, by the name each is counted under.
+  var USAGE_CALLS = {
+    zae_applyPreset:         "apply preset",
+    zae_applyPresetPlus:     "apply preset",
+    zae_importAep:           "add to comp",
+    zae_addAsset:            "new asset",
+    zae_saveAnimationPreset: "save preset",
+    zae_savePresetPlus:      "save preset",
+    zae_saveCompAsPreset:    "save comp",
+    zae_makePreviewComp:     "preview comp",
+    zae_exportPreview:       "export preview",
+    zae_exportImagePreview:  "export preview",
+    zae_bindProperties:      "bind controls",
+    zae_groupLayers:         "group",
+    zae_ungroupLayers:       "ungroup",
+    zae_recenterGroup:       "recenter",
+    zae_decompose:           "decompose",
+    zae_followPath:          "follow path",
+    zae_separateShape:       "separate shape",
+    zae_combineShape:        "combine shape",
+    zae_explodeText:         "explode text"
+  };
+  // ZeusPack app jobs that are features (the rest are its own status reads).
+  var USAGE_JOBS = { "import-aep": "app import" };
+
+  // The host's catch-all ("Exception: ...") or a script that returned no JSON
+  // at all ("EvalScript error.").
+  function hostFailed(r) {
+    return /^(Exception|Bad host result): /.test(r.message || "");
+  }
+
+  function countUsage(name, started, r) {
+    if (!name) return;
+    if (r.ok) usage.action(name, Date.now() - started);
+    else if (hostFailed(r)) usage.error(name);
+  }
+
+  // ═══════════════════════════════════════════════════════════
   //  PRESET BROWSER
   // ═══════════════════════════════════════════════════════════
   var presets     = [];   // everything the scan found
@@ -429,7 +479,12 @@
   // literal — JSON.stringify handles the backslashes and quotes.
   function callHost(fn, params, cb) {
     var src = fn + "(" + JSON.stringify(params || {}) + ")";
-    csInterface.evalScript(src, function (result) { cb(parseResult(result)); });
+    var started = Date.now();
+    csInterface.evalScript(src, function (result) {
+      var r = parseResult(result);
+      countUsage(USAGE_CALLS[fn], started, r);
+      cb(r);
+    });
   }
 
   function select(i) {

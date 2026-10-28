@@ -1150,18 +1150,10 @@ export async function registerIpcHandlers() {
         return { success: false, error: `Asset "${fileName}" sudah ada`, duplicate: true }
       }
 
-      // ── Copy template ─────────────────────────────────────────
-      copyFileSync(templatePath, rawDest)
-
-      // ── Buat JSON aset ────────────────────────────────────────
-      const jsonData = {
-        FileName: fileName,
-        Detail:   detail || '',
-        Category: categoryName,
-      }
-      writeFileSync(jsonDest, JSON.stringify(jsonData, null, 4), 'utf-8')
-
-      // ── Insert ke DB ──────────────────────────────────────────
+      // ── Resolve style type + category BEFORE touching disk ────
+      // A bad style/category used to fail only after the template and JSON
+      // were already written, leaving orphan files in the pack that the DB
+      // never knew about.
       const typeMap = {
         background:  'background',
         image:       'character',
@@ -1197,6 +1189,18 @@ export async function registerIpcHandlers() {
         return { success: false, error: `Category "${categoryName}" tidak ditemukan` }
       }
 
+      // ── Copy template ─────────────────────────────────────────
+      copyFileSync(templatePath, rawDest)
+
+      // ── Buat JSON aset ────────────────────────────────────────
+      const jsonData = {
+        FileName: fileName,
+        Detail:   detail || '',
+        Category: categoryName,
+      }
+      writeFileSync(jsonDest, JSON.stringify(jsonData, null, 4), 'utf-8')
+
+      // ── Insert ke DB ──────────────────────────────────────────
       const newAssetId = insertAsset({
         categoryId,
         name:        fileName,

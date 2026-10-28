@@ -18,14 +18,18 @@ import { app, ipcMain, BrowserWindow } from 'electron'
 const HOST = '127.0.0.1'
 const PORT = 8765
 
-// Commands the bridge may dispatch. Scope: read + write assets.
+// Commands the bridge may dispatch. Scope: read, manage, tag, create.
 // Deliberately excluded:
-//   copy-asset-to / delete-project-file — touch the user's
-//     project folders, outside the library itself
-//   select-folder / select-file — open a modal dialog, would hang a headless call
+//   delete-asset / delete-category / rag-index-delete — DELETE IS DISABLED for
+//     now. Nothing reachable from MCP may remove an asset, a category, or its
+//     vectors. Re-enable by adding them back here (and a tool in zeuspack-mcp).
+//   copy-asset-to / delete-project-file — touch folders outside the library
+//   import-asset / select-folder / select-file — open a modal dialog, would
+//     hang a headless call
 //   save-settings — app configuration, not asset data
-//   blender-* — the Blender MCP already covers that surface directly
-//   open-asset-file / open-path — spawn external programs on the user's desktop
+//   blender-* / ae-* / animate-* — DCC bridges, driven from those apps directly
+//   add-asset / open-asset-file / open-path — spawn external programs on the
+//     user's desktop
 const ALLOWED = new Set([
   // read
   'get-asset-tree',
@@ -42,24 +46,23 @@ const ALLOWED = new Set([
   'tagger-ping',
   'tagger-ping-video',
   'rag-ping',
-  // write
+  // manage
   'write-asset-json',
   'rescan-assets',
   'switch-pack',
   'rename-style',
   'set-style-hints',
   'generate-style-guide',
-  'add-category',
-  'delete-category',
-  'add-asset',
-  'create-asset',
-  'delete-asset',
   'set-asset-preview',
-  'tagger-generate',
-  'tagger-generate-video',
   'rag-index-upsert',
   'rag-index-bulk',
-  'rag-index-delete',
+  // tag
+  'tagger-generate',
+  'tagger-generate-video',
+  // create
+  'add-style',
+  'add-category',
+  'create-asset',
 ])
 
 const commands = new Map()

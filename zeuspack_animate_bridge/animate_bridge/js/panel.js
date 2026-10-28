@@ -79,11 +79,53 @@
     catch (e) { return { ok: false, message: "Bad host result: " + String(result) }; }
   }
 
+  // ── zeploy usage ──
+  // The team's deployment tool, zeploy, counts which features get used
+  // (js/zeploy-usage.js writes the counts to a local file its agent reads).
+  // A job counts once Animate finishes it; a refusal such as "No active
+  // Animate document." counts as nothing. No names, paths or other project
+  // data are recorded.
+
+  // ExtensionBundleVersion from CSXS/manifest.xml, so it never needs a second edit.
+  function panelVersion() {
+    try {
+      var file = window.cep.fs.readFile(csInterface.getSystemPath(SystemPath.EXTENSION) + "/CSXS/manifest.xml");
+      var m = file.err === 0 && /ExtensionBundleVersion="([^"]+)"/.exec(file.data);
+      return m ? m[1] : "";
+    } catch (e) {
+      return "";
+    }
+  }
+
+  var usage = zeployUsageV1("com.zeus.zeuspackbridge", panelVersion());
+  usage.open();
+
+  // ZeusPack app jobs that are features (the rest are status reads and pre-loading).
+  var USAGE_JOBS = {
+    "import-fla":    "import fla",
+    "import-symbol": "import symbol",
+    "compile-2d":    "compile 2d"
+  };
+
+  // The host's catch-all ("Exception: ...") or a script that returned no JSON
+  // at all ("EvalScript error.").
+  function hostFailed(r) {
+    return /^(Exception|Bad host result): /.test(r.message || "");
+  }
+
+  function countUsage(name, started, r) {
+    if (!name) return;
+    if (r.ok) usage.action(name, Date.now() - started);
+    else if (hostFailed(r)) usage.error(name);
+  }
+
   function runJob(job) {
     log("Job: " + job.action);
+    var started = Date.now();
     csInterface.evalScript(hostCallFor(job), function (result) {
       var parsed = parseResult(result);
       postResult(job.id, parsed);
+      countUsage(USAGE_JOBS[job.action], started, parsed);
       var msg = parsed.message || (parsed.ok ? "ok" : "error");
       log(job.action + " → " + msg, parsed.ok ? "ok" : "err");
       flash(job.action + (parsed.ok ? " ✓" : " ✕"), !parsed.ok);

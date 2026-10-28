@@ -911,6 +911,7 @@ ae_bridge/
 ├─ index.html          markup + all styles
 ├─ js/
 │  ├─ CSInterface.js   Adobe's CEP library
+│  ├─ zeploy-usage.js  zeploy's usage helper, copied unchanged
 │  └─ panel.js         UI, bridge polling, host dispatch
 ├─ jsx/host.jsx        ExtendScript (ES3) — everything that touches AE
 └─ .debug              remote-debug ports for development
@@ -923,6 +924,13 @@ returns a JSON string `{ ok, message, data }`.
 `host.jsx` targets **ExtendScript (ES3)** — no `let`/`const`, arrow functions,
 `Array.prototype.map`, or template literals. It ships its own `JSON.stringify`
 shim because older hosts lack one.
+
+`panel.js` also counts feature use for zeploy, the team's deployment tool
+(the *ZEPLOY USAGE* section). A host call counts once it succeeds; a refusal
+such as "Select the layers you want to group" counts as nothing. The counts go
+to `%LOCALAPPDATA%\zeploy\usage\com.zeus.zeuspackaebridge.jsonl`, and only on
+PCs where zeploy is installed. No names, paths or project data are recorded.
+To count a new feature, add its `zae_*` function to `USAGE_CALLS`.
 
 ---
 
